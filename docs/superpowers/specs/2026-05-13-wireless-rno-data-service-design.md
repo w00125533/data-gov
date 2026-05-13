@@ -537,6 +537,329 @@ LangChain `ChatOpenAI` 指定 `base_url` + `api_key` 即可。
 
 Dry-run 失败时 error_feedback 写入 State，code_generate 自动修正，最多 3 轮。
 
+### 4.6 语义检索技术实现
+
+`search_tables_by_keyword` 是 Agent 三条路径的入口工具。用户只讲业务指标（"小区每小时的覆盖强度"），不知道 `dws_cell_hourly` / `avg_rsrp`。该工具将业务语义映射到表/字段。
+
+#### 4.6.1 检索空间
+
+SQLite 中 10 张表 + ~70 个字段，每条生成一个索引文本：
+
+```python
+# 表级
+table_doc = {
+    "id": "table:dws_cell_hourly",
+    "type": "table",
+    "text": "dws_cell_hourly 小区小时粒度汇总指标 cell_id 小区标识 "
+            "hour_bucket 小时窗口起点 avg_rsrp 小区小时平均RSRP覆盖强度 "
+            "avg_sinr 小区小时平均SINR信噪比 total_sessions 会话总数 "
+            "drop_rate 掉话率 avg_throughput 平均吞吐量Mbps "
+            "ho_success_rate 切换成功率",
+    "metadata": {
+        "table_name": "dws_cell_hourly",
+        "layer": "DWS",
+        "storage_type": "HIVE",
+        "version": 1
+    }
+}
+
+# 字段级
+field_doc = {
+    "id": "field:dws_cell_hourly.avg_rsrp",
+    "type": "field",
+    "text": "avg_rsrp DOUBLE 小区小时平均RSRP覆盖强度dBm "
+            "表达式 AVG(dwd_session_qos.avg_rsrp)",
+    "metadata": {
+        "table_name": "dws_cell_hourly",
+        "field_name": "avg_rsrp",
+        "data_type": "DOUBLE",
+        "version": 1
+    }
+}
+```
+
+#### 4.6.2 组件选型
+
+| 组件 | 选型 | 理由 |
+|------|------|------|
+| 中文分词 | jieba | 轻量、纯 Python、RNO 术语词典可自定义 |
+| Embedding 模型 | `BAAI/bge-small-zh-v1.5` | 24MB、512 维、MIT 开源、CLS pooling、批量编码 ~5ms/条 (CPU) |
+| 关键词检索 | BM25 (rank-bm25) | 对 RSRP/SINR/cell_id 等技术术语精确匹配，与分词互补 |
+| 向量存储 | ChromaDB (persistent) | Python 原生、SQLite 底层自动持久化、内置 metadata filter、upsert 增量更新 |
+| 精排兜底 | DeepSeek Chat | 口语化/模糊表达时做 LLM rerank |
+
+#### 4.6.3 文本预处理
+
+```python
+import jieba
+
+# 自定义技术术语词典，保护不被切分
+jieba.add_word("覆盖强度", freq=100)
+jieba.add_word("信噪比", freq=100)
+jieba.add_word("掉话率", freq=100)
+jieba.add_word("切换成功率", freq=100)
+jieba.add_word("RSRP", freq=100)
+jieba.add_word("SINR", freq=100)
+
+def tokenize(text: str) -> list[str]:
+    words = jieba.lcut(text)
+    return [w.strip().lower() for w in words if w.strip()]
+```
+
+#### 4.6.4 初始化与增量同步
+
+```
+FastAPI 启动时:
+  1. 加载 bge-small-zh-v1.5 到内存 (24MB, ~1s)
+  2. ChromaDB PersistentClient 连接 ./data/chroma/
+  3. 如果 Chroma 为空 → 从 SQLite 加载元数据 → 构建索引文本
+     → 向量化 → 写入 Chroma → 构建 BM25 倒排
+  4. 如果 Chroma 已有 → 对比 Chroma index_version 与 SQLite MAX(version)
+     → 仅 upsert 变更的 docs → 重建 BM25 (增量, <1ms)
+```
+
+```python
+class HybridSearcher:
+    def __init__(self, chroma_path: str = "./data/chroma"):
+        self.encoder = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+        self.client = chromadb.PersistentClient(path=chroma_path)
+        self.collection = self.client.get_or_create_collection(
+            name="metadata_index",
+            metadata={"hnsw:space": "cosine"}
+        )
+        self.bm25 = None
+
+    def build_index(self, docs: list[dict]):
+        texts = [d["text"] for d in docs]
+        embeddings = self.encoder.encode(texts, normalize_embeddings=True).tolist()
+        self.collection.upsert(
+            ids=[d["id"] for d in docs],
+            embeddings=embeddings,
+            metadatas=[d["metadata"] for d in docs],
+            documents=texts
+        )
+        from rank_bm25 import BM25Okapi
+        self.bm25_docs = docs
+        self.bm25 = BM25Okapi([tokenize(t) for t in texts])
+        self.collection.modify(metadata={"index_version": self._db_version()})
+```
+
+#### 4.6.5 混合检索流程
+
+```
+用户输入: "每个小区的每小时信号覆盖强度"
+        │
+        ├─→ jieba 分词: ["每个","小区","每小时","信号","覆盖强度"]
+        │   → BM25 Okapi 倒排检索 → Top 10
+        │
+        ├─→ bge-small-zh 编码 → 512维归一化向量
+        │   → ChromaDB cosine 检索 → Top 10
+        │
+        ▼
+    RRF (Reciprocal Rank Fusion):
+      score(doc) = Σ 1/(k + rank_i)
+      k = 60 (阻尼常数，防止 Top-1 过主导)
+
+      融合后 → Top 10
+        │
+        ├─→ 置信度判断:
+        │     Top-1 RRF score > 0.15  → 直接返回 (约 80% 查询)
+        │     否则                     → LLM rerank
+        │
+        ▼
+    返回: [{"table": "dws_cell_hourly", "score": 0.87, "fields": [...], "match_type": "hybrid"}, ...]
+```
+
+```python
+def search(self, query: str, k: int = 10,
+           use_rerank: bool = True) -> list[dict]:
+    # 1. BM25
+    bm25_scores = self.bm25.get_scores(tokenize(query))
+    bm25_ranked = sorted(zip(self.bm25_docs, bm25_scores),
+                         key=lambda x: -x[1])
+
+    # 2. Dense (ChromaDB)
+    query_vec = self.encoder.encode(
+        [query], normalize_embeddings=True
+    ).tolist()[0]
+    dense = self.collection.query(
+        query_embeddings=[query_vec],
+        n_results=k,
+        include=["metadatas", "documents", "distances"]
+    )
+
+    # 3. RRF 融合
+    fused = self._rrf_fuse(bm25_ranked, dense, k=k)
+
+    # 4. LLM rerank (仅低置信度触发)
+    if use_rerank and fused[0][1] < self.RERANK_THRESHOLD:
+        fused = self._llm_rerank(query, fused)
+
+    return [{"doc": d, "score": s,
+             "table": d["metadata"]["table_name"]}
+            for d, s in fused]
+```
+
+#### 4.6.6 RRF 融合公式
+
+```python
+def _rrf_fuse(self, bm25_ranked, dense_result, k=60, top_k=10):
+    scores = {}
+    for rank, (doc, _) in enumerate(bm25_ranked):
+        scores[doc["id"]] = scores.get(doc["id"], 0) + 1.0 / (k + rank + 1)
+
+    for rank, doc_id in enumerate(dense_result["ids"][0]):
+        scores[doc_id] = scores.get(doc_id, 0) + 1.0 / (k + rank + 1)
+
+    ranked = sorted(scores.items(), key=lambda x: -x[1])
+    doc_map = {d["id"]: d for d in self.bm25_docs}
+    return [(doc_map[id_], scoring) for id_, scoring in ranked[:top_k]]
+```
+
+#### 4.6.7 LLM Rerank (兜底)
+
+仅在 RRF Top-1 score < 0.15 时触发，约占 20% 查询：
+
+```python
+RERANK_PROMPT = """你是无线网络数据专家。用户用自然语言描述了业务需求，
+请从以下候选元数据对象中选出最匹配的表和字段。
+
+用户需求: {user_query}
+
+候选对象 (JSON):
+{candidates_json}
+
+返回严格的 JSON 格式 (不要 Markdown 包裹):
+{{
+  "top_table": {{"name": "...", "score": 0.95, "reason": "..."}},
+  "top_fields": [{{"name": "...", "table": "...", "score": 0.88, "reason": "..."}}],
+  "alternative_tables": [{{"name": "...", "score": 0.72, "reason": "..."}}]
+}}
+"""
+
+def _llm_rerank(self, query: str, candidates) -> list:
+    """用 DeepSeek Chat 做最后一次精排"""
+    cand_json = json.dumps([{
+        "name": d["metadata"]["table_name"],
+        "type": d["type"],
+        "description": d["text"][:200]
+    } for d, _ in candidates[:10]], ensure_ascii=False)
+
+    resp = self.deepseek_client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "user", "content":
+                   RERANK_PROMPT.format(user_query=query,
+                                        candidates_json=cand_json)}],
+        temperature=0,
+        response_format={"type": "json_object"}
+    )
+    return self._parse_rerank_result(resp, candidates)
+```
+
+#### 4.6.8 延时预算
+
+| 阶段 | 耗时 | 占比 |
+|------|------|------|
+| jieba 分词 | ~1ms | — |
+| BM25 检索 | ~2ms | — |
+| bge-small 编码 (CPU) | ~5ms | — |
+| ChromaDB query | ~1ms | — |
+| RRF 融合 | <1ms | — |
+| **小计 (无 LLM)** | **~10ms** | 80% 查询 |
+| LLM rerank (触发时) | ~500-800ms | 20% 查询 |
+
+### 4.7 语义检索 Benchmark
+
+#### 4.7.1 测试集构建
+
+从元数据 YAML 自动生成 60 条 queries，覆盖 3 种构造方式 + 3 个难度：
+
+```yaml
+# benchmark_queries.yaml
+
+# 类型 A: 规则生成 (30条) — 从 field.description 做同义词替换+语序变化
+- id: Q001
+  query: "小区小时粒度的平均覆盖强度"
+  expected_table: "dws_cell_hourly"
+  expected_fields: ["avg_rsrp"]
+  difficulty: easy
+- id: Q002
+  query: "每个基站每小时的掉话比例"
+  expected_table: "dws_cell_hourly"
+  expected_fields: ["drop_rate"]
+  difficulty: medium
+- id: Q003
+  query: "用户打电话时从一个塔切到另一个塔的成功率"
+  expected_table: "dwd_ho_event"
+  expected_fields: ["ho_result"]
+  difficulty: hard   # 口语化: 塔→cell, 打电话→会话, 切→handover
+
+# 类型 B: LLM 生成 (20条) — 给 DeepSeek 元数据，模拟不同角色提问
+- id: Q031
+  query: "帮我看看最近一段时间信号质量差的用户都有哪些"
+  expected_table: "dwd_session_qos"
+  expected_fields: ["avg_sinr", "avg_rsrp"]
+  difficulty: medium
+
+# 类型 C: 对抗样本 (10条) — 故意模糊/歧义/跨域
+- id: Q051
+  query: "网络状况怎么样"
+  expected_table: "eval_net_health"
+  expected_fields: ["health_index"]
+  difficulty: hard   # 极度模糊
+```
+
+#### 4.7.2 评估指标
+
+```python
+@dataclass
+class SearchBenchmark:
+    # 表级检索
+    table_recall_at_1: float    # Top-1 命中率
+    table_recall_at_3: float    # Top-3 出现率
+    table_mrr: float            # 平均倒数排名  Σ(1/rank) / N
+
+    # 字段级检索
+    field_recall_at_3: float
+    field_ndcg_at_5: float      # 含多目标字段时
+
+    # 效率
+    avg_latency_ms: float
+    p99_latency_ms: float
+
+    # 分层
+    by_difficulty: dict         # {easy: {}, medium: {}, hard: {}}
+```
+
+#### 4.7.3 目标值
+
+| 指标 | 目标 |
+|------|------|
+| Table Recall@1 | > 0.85 |
+| Table Recall@3 | > 0.95 |
+| Table MRR | > 0.90 |
+| Field Recall@3 | > 0.80 |
+| Avg latency (无 LLM) | < 20ms |
+| Avg latency (含 LLM rerank) | < 1s |
+| Hard Recall@1 | > 0.65 |
+
+#### 4.7.4 CI 门禁与增量回归
+
+```
+scripts/benchmark_semantic_search.py
+
+冷启动:
+  $ python scripts/benchmark_semantic_search.py --queries benchmark_queries.yaml
+  → 输出完整指标表 + 每条 query 的检索链路日志
+  → CI: 核心指标不得低于目标的 90%
+
+增量 (每次 schema_evolve 后):
+  $ python scripts/benchmark_semantic_search.py --mode incremental
+  → 自动生成 5 条针对新增对象的 queries
+  → 验证: 新对象可被检索 + 旧对象不受影响 (无回归)
+  → 回归检测: 重新跑全量 60 条，对比上次 score 差异
+```
+
 ---
 
 ## 5. E2E 沙箱
