@@ -418,13 +418,13 @@ data-gov/
 
 ---
 
-## 8. 实施阶段
+## 8. 实施阶段 & E2E 验收用例
 
-| Phase | 内容 | 估时 |
-|-------|------|------|
-| **Phase 1** | Docker 栈搭建 + SQLite 元数据初始化 + 元数据 CRUD API | 基础设施先行 |
-| **Phase 2** | LangGraph Agent 搭建 + 3 条对话路径 + E2E 沙箱 | 核心逻辑 |
-| **Phase 3** | React 前端 + 血缘图 + 对话面板 + Pipeline 可视化 | 可视化呈现 |
+| Phase | 内容 |
+|-------|------|
+| **Phase 1** | Docker 栈搭建 + SQLite 元数据初始化 + 元数据 CRUD API |
+| **Phase 2** | LangGraph Agent 搭建 + 3 条对话路径 + E2E 沙箱 |
+| **Phase 3** | React 前端 + 血缘图 + 对话面板 + Pipeline 可视化 |
 
 ### 依赖关系
 
@@ -432,6 +432,48 @@ data-gov/
 Phase 1 ⇒ Phase 2 ⇒ Phase 3
     (Docker  + 元数据必须先就绪，Agent 才能查 Schema；UI 需要 Agent 和 API 都好)
 ```
+
+### Phase 1 验收用例
+
+| # | 用例 | 步骤 | 预期结果 |
+|---|------|------|----------|
+| P1-1 | 一键启动基础设施 | 执行 `docker compose -f base-compose.yml up -d` | 所有 10 个服务 Running (Health: healthy)，HDFS NameNode UI :9870 可访问，YARN RM UI :8088 可访问 |
+| P1-2 | Hive 外部表可读写 | 通过 Spark Shell 建外部表 → INSERT 10 行 → SELECT COUNT(*) | 返回 10 |
+| P1-3 | Kafka Topic 可生产消费 | 往 `ods_ue_signal` topic 生产 5 条 JSON → consumer 从 earliest 消费 | 消费到 5 条，内容一致 |
+| P1-4 | StarRocks 可查询 | `04_sample_data.py` 执行后，StarRocks FE 查询 `SELECT COUNT(*) FROM ads_cell_profile` | 返回 > 0 |
+| P1-5 | SQLite 元数据初始化 | 执行 `05_sqlite_seed.py`，查询 `SELECT COUNT(*) FROM metadata_tables` | 返回 10 |
+| P1-6 | 元数据 CRUD API | POST 建一张新表 → GET /api/tables → GET /api/fields → PUT 修改字段表达式 → GET 校验 | 每步返回 200，数据一致 |
+| P1-7 | 血缘查询 API | GET `/api/lineage?source=dwd_session_qos` 查下游血缘 | 返回 `dws_cell_hourly`, `dws_area_traffic` 中至少 2 条字段级血缘边 |
+| P1-8 | 反向合成数据入 Hive | 调用 `generate_fake_data(table="dwd_session_qos", rows=5)` → Spark SQL 查询该表 | 返回 5 行，字段值域合法 (rsrp ∈ [-140,-44], sinr ∈ [-20,30]) |
+
+### Phase 2 验收用例
+
+| # | 用例 | 步骤 | 预期结果 |
+|---|------|------|----------|
+| P2-1 | 正向 ETL: NL→Spark SQL | 发送消息 "用 `ods_ue_signal` 按 cell_id 计算每小区小时的平均 RSRP 和 SINR，写入 Hive 表 `dws_cell_hourly`" | 返回 Spark SQL，schema_lookup 工具被调用过，代码语法正确 |
+| P2-2 | 正向 ETL: NL→Flink SQL | 发送消息 "从 Kafka `ods_gnb_alarm` 读告警，按 gnb_id 做 5 分钟滚动窗口 COUNT" | 返回 Flink SQL，含 CREATE TABLE (Kafka source) + TUMBLE 窗口 + sink 定义 |
+| P2-3 | 正向 ETL: NL→Java Flink | 发送消息 "写一个 Flink DataStream 程序，从 Kafka 读 UE 信号，过滤 RSRP<-110 的弱覆盖，写入 HDFS" | 返回完整 Java main class，含 Kafka source / filter / StreamingFileSink |
+| P2-4 | Spark SQL E2E 沙箱执行 | 对 P2-1 生成的 SQL 调 dry_run | 返回 `DryRunResult(success=True, preview_row={...})`，preview_row 含 cell_id/h avg_rsrp/avg_sinr |
+| P2-5 | Flink SQL E2E 沙箱执行 | 对 P2-2 生成的 Flink SQL 调 dry_run | HDFS sink 写入成功，回读 1 行，字段匹配 |
+| P2-6 | Java Flink E2E 沙箱执行 | 对 P2-3 生成的 Java 代码调 dry_run | 编译成功 → JAR 上传 → YARN 提交 → FINISHED → HDFS 回读 1 行，弱覆盖 IMSI 列表合法 |
+| P2-7 | 沙箱编译失败自动重试 | 注入一个有语法错误的 Flink SQL (故意拼错 `SLECT`)，观察重试 | 第 1 轮失败，error_feedback 回传，LLM 修正，第 2 轮通过。iteration_count 最终 = 2 |
+| P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 SQLite 写入成功，GET /api/fields 可查到 |
+| P2-9 | 元数据演进: 一致性校验 | 发送消息 "删除 `ods_ue_signal` 的 `rsrp` 字段" | schema_validate 检测到 `dwd_session_qos.avg_rsrp` 和 `dwd_ho_event` 依赖此字段，返回警告不执行，要求先处理下游 |
+| P2-10 | 反向合成数据生成 | 发送消息 "给定 `eval_user_score` 的评估逻辑，生成 10 行测试数据，覆盖优秀/良好/差三档" | 反推约束 (qoe_score 0-100) → 生成 3 档数据 → 写入 Hive → 读回校验: 确实有 >80 / 50-80 / <50 的行 |
+
+### Phase 3 验收用例
+
+| # | 用例 | 步骤 | 预期结果 |
+|---|------|------|----------|
+| P3-1 | 元数据浏览页面 | 打开 `/metadata` → 看到 10 张表按层分组 → 点击 `dwd_session_qos` → 右侧显示字段列表和计算逻辑 | 每个字段的 expression、upstream_table 可见，分层过滤 Tab 可切换 |
+| P3-2 | 字段级血缘图 (G6) | 在表详情页点击「查看血缘」→ 以 `dws_cell_hourly.avg_rsrp` 为起点向上游展开 | G6 TreeGraph 渲染: `dwd_session_qos.avg_rsrp` → `ods_ue_signal.rsrp`，边标签显示 aggregate 表达式 (AVG) |
+| P3-3 | 血缘图交互 | 双击节点展开/折叠 → 拖拽画布 → 点击边查看 transform_expr | 所有交互流畅无卡顿，边详情 tooltip 弹出 |
+| P3-4 | 对话面板: 流式输出 | 打开 `/chat` → 新建对话 → 输入 P2-1 的消息 | 左侧对话气泡逐字流式输出 (SSE)，classifier badge 显示「正向ETL」 |
+| P3-5 | 对话面板: 代码卡片 + 预览 | 对话完成后 → 右侧代码卡片显示生成的 Spark SQL (Monaco 高亮) → 下方 DryRun 预览表格 1 行 | 语法高亮正确，预览表行列标题匹配生成字段 |
+| P3-6 | 元数据演进: UI 变更确认 | `/chat` 中执行 P2-8 的元数据演进 → 确认弹窗显示 diff (新增 jitter 字段) → 点击确认 | SQLite 写入，跳转 `/schema-evolution` 可看到变更时间线 |
+| P3-7 | Pipeline 可视化: 正向 ETL | 打开 `/pipeline` → 选择正向模式 → 搜索 "dwd_session_qos → eval_user_score" 链路 | G6 渲染完整 DAG: ods_ue_signal → dwd_session_qos → dws_cell_hourly → ads_cell_profile → eval_user_score |
+| P3-8 | Pipeline 可视化: 反向合成 | 切换到反向模式 → 选 "eval_user_score pipeline" | 显示逆向图: eval_user_score 评估逻辑 → 反推每列约束 → 数据生成器入口 |
+| P3-9 | 全链路: NL→生成→预览→确认 | `/chat` 中完成一次完整的正向 ETL 对话 → 代码卡片展示 → 沙箱预览 1 行 → 对话历史可回溯 | 从 NL 消息发出到预览行展示 < 60s (含沙箱执行)，对话历史刷新后仍然完整 |
 
 ---
 
