@@ -66,9 +66,8 @@
 │   │   ├── 2.3.1 导出全量/单表 YAML
 │   │   ├── 2.3.2 YAML 预览 (只读)
 │   │   └── 2.3.3 YAML 版本 diff (git)
-│   └── 2.4 演化历史
-│       ├── 2.4.1 变更时间线 (按表)
-│       └── 2.4.2 字段版本 diff (v1→v2)
+│   └── 2.4 跳转演化历史
+│       └── 表详情页 [演化历史] → /schema-evolution?table=xxx
 │
 ├── 3. 血缘图 (/metadata/lineage)
 │   ├── 3.1 可视化
@@ -123,25 +122,33 @@
 │       ├── 4.4.4 下游影响分析 + 警告
 │       ├── 4.4.5 确认后写入 SQLite + 重写 YAML
 │       └── 4.4.6 变更历史记录 (版本 + 旧值留痕)
+│   └── 4.5 语义检索 (search_tables_by_keyword)
+│       ├── 4.5.1 BM25 倒排索引 (jieba 分词 + 术语保护)
+│       ├── 4.5.2 Dense 向量检索 (bge-small-zh-v1.5 + ChromaDB)
+│       ├── 4.5.3 RRF 融合 + LLM Rerank 兜底
+│       └── 4.5.4 增量同步 (SQLite version → ChromaDB upsert)
 │
 ├── 5. Pipeline 可视化 (/pipeline)
 │   ├── 5.1 正向 ETL DAG
-│   │   ├── 5.1.1 完整链路展示 (ODS → EVAL)
-│   │   ├── 5.1.2 选中表上下游突出
-│   │   └── 5.1.3 直接在图上发起 NL 查询
+│   │   ├── 5.1.1 完整链路展示 (ODS → EVAL, G6 DAG)
+│   │   ├── 5.1.2 选中表上下游突出 + 层级滑块
+│   │   ├── 5.1.3 节点悬浮: 表信息卡片 (字段/存储/表达式)
+│   │   └── 5.1.4 右键 [💬 NL 查询] → /chat 上下文注入
 │   ├── 5.2 反向合成链路
-│   │   ├── 5.2.1 逆向图: 目标 → 约束 → 生成器
-│   │   ├── 5.2.2 每层约束展示
-│   │   └── 5.2.3 直接在图上发起 NL 合成
+│   │   ├── 5.2.1 逆向图: 目标表 → 约束推断 → 生成器
+│   │   ├── 5.2.2 每层约束气泡展示
+│   │   └── 5.2.3 图上直接调整约束值域
 │   └── 5.3 联动
 │       ├── 5.3.1 与 /chat 联动 (图上操作跳转对话)
-│       └── 5.3.2 与 /metadata/lineage 联动 (共享 G6 组件)
+│       ├── 5.3.2 与 /metadata/lineage 联动 (共享 G6 组件)
+│       └── 5.3.3 正向/反向一键切换
 │
 ├── 6. 元数据演进历史 (/schema-evolution)
-│   ├── 6.1 变更时间线 (按时间倒序)
-│   ├── 6.2 按表/字段过滤
-│   ├── 6.3 版本 diff (左右对比面板)
-│   └── 6.4 回滚到历史版本 (可选)
+│   ├── 6.1 变更时间线 (按时间倒序, 跨所有表)
+│   ├── 6.2 按表/字段/操作类型过滤
+│   ├── 6.3 变更详情展开 (旧值→新值 diff)
+│   ├── 6.4 YAML 版本 git diff (调用 git show)
+│   └── 6.5 从 /metadata 表详情跳转 (?table= 预过滤)
 │
 └── 7. Sandbox 沙箱
     ├── 7.1 Maven 编译
@@ -1282,9 +1289,210 @@ context_prompt = """
 | GET | `/api/schema/evolution/:table` | 表级变更历史 |
 | GET | `/api/yaml/export` | 导出 YAML (?table= 可选) |
 
----
+### 6.8 Pipeline 可视化页面 (/pipeline)
 
-## 7. 项目结构 (预览)
+#### 页面布局
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Pipeline 可视化                    [正向 ETL ●] [反向合成 ○]  │
+│                          [搜索表: dws_cell_hourly___]        │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  正向 ETL 模式:                                               │
+│                                                              │
+│  ┌─────────┐    ┌──────────────┐    ┌──────────────┐        │
+│  │ods_ue   │    │dwd_session   │    │dws_cell      │        │
+│  │_signal  │───→│_qos          │───→│_hourly       │        │
+│  │ L1·Kafka│    │ L2·Hive      │    │ L3·Hive      │        │
+│  │ 6字段    │    │ 8字段         │    │ 7字段         │        │
+│  └─────────┘    └──────┬───────┘    └──────┬───────┘        │
+│                        │                   │                │
+│  ┌─────────┐           │                   │                │
+│  │ods_gnb  │           │           ┌───────┴───────┐        │
+│  │_alarm   │──┐        │           │ads_cell       │        │
+│  │ L1·Kafka│  │        │           │_profile       │        │
+│  │ 5字段    │  │  ┌─────┴──────┐   │ L4·StarRocks  │        │
+│  └─────────┘  │  │dwd_ho      │   │ 5字段          │        │
+│               ├─→│_event      │   └───────┬───────┘        │
+│               │  │ L2·Hive    │           │                │
+│               │  │ 7字段       │           ▼                │
+│               │  └─────┬──────┘   ┌───────────────┐        │
+│               │        │          │eval_user      │        │
+│  ┌────────────┴────────┴──────────┤_score         │        │
+│  │ dws_area_traffic               │ L5·StarRocks  │        │
+│  │ L3·Hive                        │ 5字段          │        │
+│  │ 6字段                           └───────────────┘        │
+│  └────────────────────────────────┘                        │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ 左侧图例                      右侧信息面板 (悬浮/选中时)       │
+│ ┌──────────┐     ┌──────────────────────────────────────┐   │
+│ │ ● ODS 层 │     │ 选中: dws_cell_hourly                  │   │
+│ │ ● DWD 层 │     │ 层: DWS · Hive · 7 字段               │   │
+│ │ ● DWS 层 │     │ 描述: 小区小时粒度汇总                 │   │
+│ │ ● ADS 层 │     │ 上游: dwd_session_qos, dwd_ho_event  │   │
+│ │ ● EVAL层 │     │ 下游: ads_cell_profile                │   │
+│ └──────────┘     │ [查看字段详情] [💬 NL 查询]            │   │
+│                  └──────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### 正向模式
+
+- G6 DAG (有向无环图)，节点 = 表，边 = 血缘引用
+- 节点颜色按层区分 (ODS绿 → DWD蓝 → DWS橙 → ADS紫 → EVAL红)
+- 节点大小 = 字段数量映射
+- 边标签显示引用字段数 (如 "3 字段引用于")
+- 搜索框搜索表名 → 该节点高亮 + 上下游路径突出
+- 层级滑块 [1~5] 控制展开半径
+- 悬浮节点: 弹出表信息卡片 (字段/存储/描述/行数)
+- 点击节点: 右侧面板展示详情 + [💬 NL 查询] 按钮 → /chat 跳转
+
+#### 反向合成模式
+
+- 切换 toggle 后图方向反转 (从右到左)
+- 节点从目标表 (如 eval_user_score) 开始
+- 每层边标签显示约束推断结果 (值域/分布)
+- 点击节点可展开约束详情气泡
+
+```
+   反向模式:  ← 约束推断 ←
+  ┌─────────┐    ┌──────────────┐    ┌──────────────────┐
+  │ods_ue   │←───│dwd_session   │←───│ads_cell_profile  │←───┐
+  │_signal  │    │_qos          │    │ 覆盖[0,100]       │    │
+  │ rsrp    │    │ avg_rsrp     │    │ 容量[0,100]       │    │
+  │ [-140,  │    │ AVG(rsrp)    │    │ 稳定[0,100]       │    │
+  │  -44]   │    │              │    │ 移动[0,100]       │    │
+  └─────────┘    └──────────────┘    └──────────┬─────────┘    │
+                                                │              │
+                                                ▼              │
+                                     ┌──────────────────┐      │
+                                     │eval_user_score ★│←─────┘
+                                     │ qoe_score        │
+                                     │ =0.5×cov+0.3×cap │
+                                     │  +0.2×stab       │
+                                     └──────────────────┘
+```
+
+#### 与 /chat 联动
+
+1. 悬浮节点 → [💬 NL 查询] → 路由 `/chat?context=pipeline&table=dws_cell_hourly&mode=forward`
+2. Agent State 注入上下文: 当前表、上下游链路、已有字段
+3. 用户输入如 "从这个表出发查掉话率高于 5% 的小区" → 走正向 ETL 流程
+4. 反向模式下类似: `/chat?context=pipeline&table=eval_user_score&mode=reverse`
+
+### 6.9 元数据演化历史页面 (/schema-evolution)
+
+#### 页面布局
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  元数据演化历史                                                │
+│  [搜索: 表名/字段...]  [表: 全部 ▼]  [操作: 全部 ▼]          │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  变更时间线                                                   │
+│                                                              │
+│  ┌─ 2026-05-13 14:22 ──────────────────────────────────┐    │
+│  │                                                      │    │
+│  │  ┌──────────────────────────────────────────────┐    │    │
+│  │  │ ✏ UPDATE  eval_user_score.qoe_score  v1 → v2 │    │    │
+│  │  │                                               │    │    │
+│  │  │ 旧: 0.5×coverage + 0.3×capacity + 0.2×stab    │    │    │
+│  │  │ 新: 0.6×signal_quality + 0.4×mobility_score   │    │    │
+│  │  │                                               │    │    │
+│  │  │ 影响下游: eval_net_health ⚠                    │    │    │
+│  │  │                  [查看 YAML diff]              │    │    │
+│  │  └──────────────────────────────────────────────┘    │    │
+│  │                                                      │    │
+│  └──────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌─ 2026-05-13 10:32 ──────────────────────────────────┐    │
+│  │                                                      │    │
+│  │  ┌──────────────────────────────────────────────┐    │    │
+│  │  │ ➕ ADD  dwd_session_qos.jitter  (v1)          │    │    │
+│  │  │                                               │    │    │
+│  │  │ 类型: DOUBLE                                   │    │    │
+│  │  │ 表达式: STDDEV(latency) OVER (...)             │    │    │
+│  │  │ 上游: dwd_session_qos.latency                 │    │    │
+│  │  │                  [查看 YAML diff]              │    │    │
+│  │  └──────────────────────────────────────────────┘    │    │
+│  │                                                      │    │
+│  │  ┌──────────────────────────────────────────────┐    │    │
+│  │  │ ✚ ADD  ods_gnb_load  (新表, v1)               │    │    │
+│  │  │                                               │    │    │
+│  │  │ 层: ODS · 存储: Kafka · 5 字段                  │    │    │
+│  │  │ 分区键: timestamp                              │    │    │
+│  │  │                  [查看 YAML]  [查看血缘]        │    │    │
+│  │  └──────────────────────────────────────────────┘    │    │
+│  │                                                      │    │
+│  └──────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌─ 2026-05-13 09:00 (初始) ───────────────────────────┐    │
+│  │  ➕ 批量初始化: 10 张表, ~70 字段                     │    │
+│  └──────────────────────────────────────────────────────┘    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### 功能详单
+
+| 功能 | 入口 | 说明 |
+|------|------|------|
+| 时间线浏览 | 页面主体 | Ant Timeline 组件，按时间倒序 |
+| 按表过滤 | 顶部 [表: 全部 ▼] | Select dropdown，列出所有表 |
+| 按操作过滤 | 顶部 [操作: 全部 ▼] | ADD / UPDATE / DELETE |
+| 按关键词搜索 | 顶部搜索框 | 模糊匹配表名/字段名 |
+| 变更卡片 | 时间线内 | 显示操作类型 icon + 表.字段 + 版本号 + 旧→新 diff |
+| 字段级 diff | 卡片内 inline | 旧公式 → 新公式 左右对比 |
+| YAML diff | [查看 YAML diff] 按钮 | 调 `git diff HEAD~1 -- metadata-yaml/...yaml` 展示 |
+| 查看血缘 | [查看血缘] 按钮 | 跳转 `/metadata/lineage?table=xxx` |
+| 跳转来源 | URL `?table=xxx` | 从 /metadata 跳转时预过滤 |
+
+#### YAML diff 实现
+
+```python
+@router.get("/api/schema/evolution/yaml-diff")
+async def get_yaml_diff(table_name: str, version: int):
+    """用 git show 取历史版本 YAML"""
+    import subprocess
+    yaml_path = f"metadata-yaml/{get_layer(table_name)}/{table_name}.yaml"
+
+    # 当前版本
+    current = Path(yaml_path).read_text(encoding="utf-8")
+
+    # 历史版本: git show COMMIT:path
+    # 通过 version→commit 映射表查找对应 commit
+    commit = get_commit_for_version(table_name, version)
+    if commit:
+        historical = subprocess.check_output(
+            ["git", "show", f"{commit}:{yaml_path}"],
+            text=True
+        )
+    else:
+        historical = "(初始版本)"
+
+    return {"current": current, "historical": historical, "yaml_path": yaml_path}
+```
+
+#### 版本↔commit 映射
+
+元数据变更时在 commit message 中标注 `table:xxx version:N`，反向查找即可：
+
+```python
+# schema_apply 节点写入后 commit 时：
+commit_msg = f"schema_evolve: UPDATE {table_name}.{field_name} v{old}→v{new}"
+# git log --grep "table:dws_cell_hourly version:2" → commit hash
+```
+
+#### 回滚 (可选)
+
+- 每个变更卡片右侧 [↩ 回滚] 按钮
+- 回滚 = 将字段 expression + upstream_field_refs + version 恢复到旧值
+- 回滚本身也是一次 schema_evolve (ADD type, version+1)，记录在时间线中
+
+---
 
 ```
 data-gov/
@@ -1303,6 +1511,9 @@ data-gov/
 │   ├── 03_starrocks_init.sql
 │   ├── 04_sample_data.py
 │   └── 05_sqlite_seed.py
+├── scripts/
+│   ├── benchmark_semantic_search.py   # 语义检索 benchmark
+│   └── generate_benchmark_queries.py  # 测试集生成
 ├── templates/                    # Sandbox 骨架
 │   ├── spark-sql/
 │   ├── flink-sql/
@@ -1319,6 +1530,9 @@ data-gov/
 │   │   ├── tools.py              # Agent tools
 │   │   ├── prompts.py            # System prompts
 │   │   └── deepseek.py           # LLM 连接
+│   ├── search/
+│   │   ├── searcher.py           # HybridSearcher (BM25+Dense+RRF)
+│   │   └── embedder.py           # bge-small-zh embedding + ChromaDB
 │   ├── sandbox/
 │   │   ├── controller.py         # 编排
 │   │   ├── yarn_submit.py        # YARN REST + subprocess
@@ -1336,9 +1550,13 @@ data-gov/
         │   ├── Pipeline.tsx
         │   └── SchemaEvolution.tsx
         ├── components/
-        │   ├── LineageGraph.tsx   # G6 封装
-        │   ├── CodeCard.tsx       # Monaco 只读
-        │   ├── DryRunPreview.tsx  # 1 行表格
+        │   ├── LineageGraph.tsx   # G6 血缘图封装
+        │   ├── CodeCard.tsx       # Monaco 代码卡片
+        │   ├── DryRunPreview.tsx  # 1 行预览表格
+        │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装
+        │   ├── ConstraintSlider.tsx # 反向合成约束调整
+        │   ├── DiffPanel.tsx      # 旧/新公式左右对比
+        │   ├── EvolutionTimeline.tsx # 变更时间线
         │   └── ChatStream.tsx     # SSE 流式对话
         └── api/
             └── client.ts          # fetch 封装
