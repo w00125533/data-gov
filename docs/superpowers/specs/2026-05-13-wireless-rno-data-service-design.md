@@ -114,6 +114,111 @@ CREATE TABLE metadata_lineage (
 - 增/删/改字段前执行一致性校验 (循环依赖检测、断链检测)
 - 变更记录 version + previous_expr 留痕，非完整 temporal versioning
 
+### 2.5 YAML 元数据副本
+
+每张表在 SQLite 之外同步生成一份 YAML 文件，用于人工查阅和版本 diff。存储路径：
+
+```
+metadata-yaml/
+├── L1-ODS/
+│   ├── ods_ue_signal.yaml
+│   └── ods_gnb_alarm.yaml
+├── L2-DWD/
+│   ├── dwd_session_qos.yaml
+│   └── dwd_ho_event.yaml
+├── L3-DWS/
+│   ├── dws_cell_hourly.yaml
+│   └── dws_area_traffic.yaml
+├── L4-ADS/
+│   ├── ads_cell_profile.yaml
+│   └── ads_neighbor_pair.yaml
+└── L5-EVAL/
+    ├── eval_user_score.yaml
+    └── eval_net_health.yaml
+```
+
+YAML 格式示例 (`dws_cell_hourly.yaml`):
+
+```yaml
+table_name: dws_cell_hourly
+layer: DWS
+layer_priority: 3
+description: 小区小时粒度汇总指标
+storage_type: HIVE
+partition_keys: [hour_bucket]
+fields:
+  - name: cell_id
+    type: STRING
+    nullable: false
+    partition: false
+    description: 小区标识
+    # 无 expression → 原始字段，来自上游
+    upstream:
+      - table: dwd_session_qos
+        field: cell_id
+  - name: hour_bucket
+    type: TIMESTAMP
+    nullable: false
+    partition: true
+    description: 小时窗口起点
+    expression: "DATE_TRUNC('HOUR', timestamp)"
+    upstream:
+      - table: dwd_session_qos
+        field: timestamp
+  - name: avg_rsrp
+    type: DOUBLE
+    nullable: true
+    description: 小区小时平均 RSRP
+    expression: "AVG(rsrp)"
+    upstream:
+      - table: dwd_session_qos
+        field: avg_rsrp
+  - name: avg_sinr
+    type: DOUBLE
+    nullable: true
+    description: 小区小时平均 SINR
+    expression: "AVG(sinr)"
+    upstream:
+      - table: dwd_session_qos
+        field: avg_sinr
+  - name: total_sessions
+    type: BIGINT
+    nullable: true
+    description: 会话总数
+    expression: "COUNT(DISTINCT session_id)"
+    upstream:
+      - table: dwd_session_qos
+        field: session_id
+  - name: drop_rate
+    type: DOUBLE
+    nullable: true
+    description: 掉话率
+    expression: "CAST(SUM(CASE WHEN drop_flag=1 THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*)"
+    upstream:
+      - table: dwd_session_qos
+        field: drop_flag
+  - name: avg_throughput
+    type: DOUBLE
+    nullable: true
+    description: 平均吞吐量 (Mbps)
+    expression: "AVG(throughput)"
+    upstream:
+      - table: dwd_session_qos
+        field: throughput
+  - name: ho_success_rate
+    type: DOUBLE
+    nullable: true
+    description: 切换成功率
+    expression: "CAST(SUM(CASE WHEN ho_result='SUCCESS' THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*)"
+    upstream:
+      - table: dwd_ho_event
+        field: ho_result
+```
+
+- SQLite 为运行时权威数据源，YAML 为人工可读副本
+- 元数据演进 (schema_evolve) 变更应用后，同步重写对应 YAML 文件
+- YAML 纳入 git 版本控制，变更历史可通过 git diff 追溯
+
 ---
 
 ## 3. Docker 一体化验证栈
@@ -162,7 +267,8 @@ init-scripts/
 ├── 02_kafka_init.sh
 ├── 03_starrocks_init.sql
 ├── 04_sample_data.py          # 反向合成小批量数据，灌入 Hive + StarRocks
-└── 05_sqlite_seed.py          # 10 张表元数据写入 SQLite
+├── 05_sqlite_seed.py          # 10 张表元数据写入 SQLite
+└── 06_export_yaml.py          # SQLite → metadata-yaml/ 导出 YAML
 ```
 
 ---
@@ -369,6 +475,12 @@ data-gov/
 ├── .env                          # DeepSeek + DB 配置
 ├── base-compose.yml              # 基础设施容器
 ├── app-compose.yml               # FastAPI + React
+├── metadata-yaml/                # 人工可读的 YAML 元数据副本
+│   ├── L1-ODS/
+│   ├── L2-DWD/
+│   ├── L3-DWS/
+│   ├── L4-ADS/
+│   └── L5-EVAL/
 ├── init-scripts/
 │   ├── 01_hive_init.sql
 │   ├── 02_kafka_init.sh
@@ -441,7 +553,7 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P1-2 | Hive 外部表可读写 | 通过 Spark Shell 建外部表 → INSERT 10 行 → SELECT COUNT(*) | 返回 10 |
 | P1-3 | Kafka Topic 可生产消费 | 往 `ods_ue_signal` topic 生产 5 条 JSON → consumer 从 earliest 消费 | 消费到 5 条，内容一致 |
 | P1-4 | StarRocks 可查询 | `04_sample_data.py` 执行后，StarRocks FE 查询 `SELECT COUNT(*) FROM ads_cell_profile` | 返回 > 0 |
-| P1-5 | SQLite 元数据初始化 | 执行 `05_sqlite_seed.py`，查询 `SELECT COUNT(*) FROM metadata_tables` | 返回 10 |
+| P1-5 | SQLite 元数据初始化 + YAML 导出 | 执行 `05_sqlite_seed.py`，查询 `SELECT COUNT(*) FROM metadata_tables`；执行 `06_export_yaml.py` | 返回 10；`metadata-yaml/` 下生成 10 个 .yaml 文件，按层分目录，gate-lint 通过 |
 | P1-6 | 元数据 CRUD API | POST 建一张新表 → GET /api/tables → GET /api/fields → PUT 修改字段表达式 → GET 校验 | 每步返回 200，数据一致 |
 | P1-7 | 血缘查询 API | GET `/api/lineage?source=dwd_session_qos` 查下游血缘 | 返回 `dws_cell_hourly`, `dws_area_traffic` 中至少 2 条字段级血缘边 |
 | P1-8 | 反向合成数据入 Hive | 调用 `generate_fake_data(table="dwd_session_qos", rows=5)` → Spark SQL 查询该表 | 返回 5 行，字段值域合法 (rsrp ∈ [-140,-44], sinr ∈ [-20,30]) |
@@ -457,7 +569,7 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P2-5 | Flink SQL E2E 沙箱执行 | 对 P2-2 生成的 Flink SQL 调 dry_run | HDFS sink 写入成功，回读 1 行，字段匹配 |
 | P2-6 | Java Flink E2E 沙箱执行 | 对 P2-3 生成的 Java 代码调 dry_run | 编译成功 → JAR 上传 → YARN 提交 → FINISHED → HDFS 回读 1 行，弱覆盖 IMSI 列表合法 |
 | P2-7 | 沙箱编译失败自动重试 | 注入一个有语法错误的 Flink SQL (故意拼错 `SLECT`)，观察重试 | 第 1 轮失败，error_feedback 回传，LLM 修正，第 2 轮通过。iteration_count 最终 = 2 |
-| P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 SQLite 写入成功，GET /api/fields 可查到 |
+| P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 SQLite 写入 + 对应 YAML 文件更新，GET /api/fields 可查到，`dwd_session_qos.yaml` 含 `jitter` 字段 |
 | P2-9 | 元数据演进: 一致性校验 | 发送消息 "删除 `ods_ue_signal` 的 `rsrp` 字段" | schema_validate 检测到 `dwd_session_qos.avg_rsrp` 和 `dwd_ho_event` 依赖此字段，返回警告不执行，要求先处理下游 |
 | P2-10 | 反向合成数据生成 | 发送消息 "给定 `eval_user_score` 的评估逻辑，生成 10 行测试数据，覆盖优秀/良好/差三档" | 反推约束 (qoe_score 0-100) → 生成 3 档数据 → 写入 Hive → 读回校验: 确实有 >80 / 50-80 / <50 的行 |
 
