@@ -21,7 +21,7 @@
 | Phase | 内容 |
 |-------|------|
 | Phase 1 | 基础设施 (Docker 栈) + 语义元数据服务 |
-| Phase 2 | NL-to-Code Agent (LangGraph + DeepSeek) + E2E 沙箱 |
+| Phase 2 | NL-to-Code Agent (LangGraph + DeepSeek) + 沙箱 |
 | Phase 3 | Web 可视化 UI (React + Ant Design + AntV G6) |
 
 ### 技术决策总表
@@ -37,18 +37,19 @@
 | 前端 | React 18 + TypeScript + Vite |
 | UI 库 | Ant Design |
 | 血缘图 | AntV G6 |
-| 沙箱提交 | 统一 Java 打包 + YARN REST (Spark) / flink CLI (Flink) |
+| 沙箱提交 | 统一 Java 打包 + spark-submit / flink CLI（均提交到 YARN） |
 
 ### 功能树全景
+
+> 说明：功能树按"用户能用的功能"组织，编号独立于下文 `## N.` 章节编号。下文章节按实现视角组织，二者编号不一定对应。
 
 ```
 无线网络感知数据语义化服务
 │
 ├── 1. 基础设施管理
 │   ├── 1.1 Docker 栈一键启动/停止
-│   ├── 1.2 服务健康检查面板
-│   ├── 1.3 初始化脚本执行
-│   └── 1.4 配置管理 (.env)
+│   ├── 1.2 初始化脚本执行
+│   └── 1.3 配置管理 (.env)
 │
 ├── 2. 元数据管理 (/metadata)
 │   ├── 2.1 浏览
@@ -71,7 +72,7 @@
 │
 ├── 3. 血缘图 (/metadata/lineage)
 │   ├── 3.1 可视化
-│   │   ├── 3.1.1 字段级 DAG (G6 TreeGraph)
+│   │   ├── 3.1.1 字段级 DAG (G6 Graph)
 │   │   ├── 3.1.2 展开/折叠层级 (1~5)
 │   │   ├── 3.1.3 正向/反向切换
 │   │   ├── 3.1.4 节点拖拽 + 缩放
@@ -95,13 +96,13 @@
 │   │   ├── 4.1.2 对话历史列表
 │   │   ├── 4.1.3 SSE 流式输出
 │   │   ├── 4.1.4 意图识别 badge (正向ETL/反向合成/元数据演进)
-│   │   └── 4.1.5 上下文注入 (从 /metadata 或 /lineage 跳转)
+│   │   └── 4.1.5 上下文注入 (从 /metadata /lineage /pipeline 跳转)
 │   ├── 4.2 正向 ETL 流程
 │   │   ├── 4.2.1 业务语义 → 表/字段自动匹配 (search_tables_by_keyword)
 │   │   ├── 4.2.2 候选表推荐 (血缘预览 + 方案对比)
 │   │   ├── 4.2.3 代码生成 (Spark SQL / Flink SQL / Java Flink)
 │   │   ├── 4.2.4 代码卡片展示 (Monaco 高亮, 可编辑)
-│   │   ├── 4.2.5 E2E 沙箱试跑 (YARN 提交)
+│   │   ├── 4.2.5 沙箱试跑 (YARN 提交)
 │   │   ├── 4.2.6 预览结果表格 (1 行)
 │   │   ├── 4.2.7 缺失对象自动补齐子流程 (gap_check → schema_evolve)
 │   │   └── 4.2.8 失败自动重试 (最多 3 轮)
@@ -112,9 +113,9 @@
 │   │   ├── 4.3.4 分档约束滑块调整 (值域 + 行数)
 │   │   ├── 4.3.5 缺失对象自动补齐子流程
 │   │   ├── 4.3.6 数据生成代码产出 (Java Flink 逐层回溯)
-│   │   ├── 4.3.7 E2E 沙箱执行 + 分层写入
+│   │   ├── 4.3.7 沙箱执行 + 分层写入
 │   │   ├── 4.3.8 结果预览 (表格 + 分档柱状图)
-│   │   └── 4.3.9 生成数据持久化 (Hive/StarRocks/Kafka)
+│   │   └── 4.3.9 生成数据写入各表对应存储 (Kafka/Hive/StarRocks)
 │   └── 4.4 元数据演进流程
 │       ├── 4.4.1 业务语义 → 目标表/字段匹配
 │       ├── 4.4.2 变更一致性校验 (重名/断链/循环依赖)
@@ -150,12 +151,17 @@
 │   ├── 6.4 YAML 版本 git diff (调用 git show)
 │   └── 6.5 从 /metadata 表详情跳转 (?table= 预过滤)
 │
-└── 7. Sandbox 沙箱
-    ├── 7.1 Maven 编译
-    ├── 7.2 YARN REST 提交 (Spark) / flink CLI 提交 (Flink)
-    ├── 7.3 HDFS 结果回读
-    ├── 7.4 自动重试 (编译失败/执行失败)
-    └── 7.5 临时目录自动清理
+├── 7. Sandbox 沙箱
+│   ├── 7.1 Maven 编译
+│   ├── 7.2 spark-submit / flink CLI 提交 (均到 YARN)
+│   ├── 7.3 HDFS 结果回读
+│   ├── 7.4 自动重试 (编译失败/执行失败)
+│   └── 7.5 临时目录自动清理
+│
+└── 8. 健康检查面板 (/health)
+    ├── 8.1 各组件连通性状态卡片
+    ├── 8.2 自动刷新 (30s)
+    └── 8.3 异常组件高亮提示
 ```
 
 ---
@@ -197,8 +203,7 @@ CREATE TABLE metadata_tables (
     layer TEXT NOT NULL,           -- ODS / DWD / DWS / ADS / EVAL
     layer_priority INTEGER,
     description TEXT,
-    storage_type TEXT,             -- KAFKA / HIVE / STARROCKS
-    partition_keys TEXT            -- JSON array
+    storage_type TEXT              -- KAFKA / HIVE / STARROCKS
 );
 
 -- 字段元数据
@@ -208,30 +213,36 @@ CREATE TABLE metadata_fields (
     field_name TEXT NOT NULL,
     field_type TEXT NOT NULL,      -- STRING / INT / BIGINT / DOUBLE / TIMESTAMP
     is_nullable INTEGER DEFAULT 1,
-    is_partition INTEGER DEFAULT 0,
+    is_partition INTEGER DEFAULT 0,    -- 分区字段标识 (表的分区键 = 该表 is_partition=1 的字段集)
     expression TEXT,               -- 计算表达式 (SQL fragment)
     description TEXT,
-    upstream_field_refs TEXT,      -- JSON: [{"table":"x","field":"y"}]
+    upstream_field_refs TEXT,      -- JSON: [{"table":"x","field":"y"}], 血缘关系的唯一权威存储
     version INTEGER DEFAULT 1,
     previous_expr TEXT             -- JSON: [{"v":1,"expr":"..."}]
 );
 
--- 血缘关系 (计算加速用)
-CREATE TABLE metadata_lineage (
+-- 元数据变更记录 (审计 + git 关联, schema_evolve 路径写入)
+CREATE TABLE metadata_changes (
     id INTEGER PRIMARY KEY,
-    source_table TEXT NOT NULL,
-    source_field TEXT NOT NULL,
-    target_table TEXT NOT NULL,
-    target_field TEXT NOT NULL,
-    transform_expr TEXT
+    table_name TEXT NOT NULL,
+    field_name TEXT,                   -- 可空 (表级变更时为 NULL)
+    operation TEXT NOT NULL,           -- ADD_TABLE / ADD_FIELD / UPDATE_FIELD / DELETE_FIELD / DELETE_TABLE
+    version INTEGER NOT NULL,          -- 变更后版本号
+    commit_hash TEXT,                  -- git commit hash, schema_apply 同步 commit 后回填
+    old_value TEXT,                    -- JSON, 旧值快照
+    new_value TEXT,                    -- JSON, 新值快照
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
+
+血缘查询通过扫描所有字段的 `upstream_field_refs` 构建 DAG。血缘边的新增/编辑/删除通过对目标字段的 `upstream_field_refs` 变更完成，复用字段 CRUD API。不设独立血缘表。表的分区键集合通过聚合该表所有 `is_partition=1` 的字段得到，不在表级冗余存储。
 
 ### 2.4 元数据演进策略
 
 - 通过 NL 驱动元数据变更 (schema_evolve 路径)
 - 增/删/改字段前执行一致性校验 (循环依赖检测、断链检测)
-- 变更记录 version + previous_expr 留痕，非完整 temporal versioning
+- 变更记录 version + previous_expr 留痕（SQLite 内轻量版本链），非完整 temporal versioning
+- YAML 文件纳入 git 版本控制，提供 git diff 级别的完整历史追溯（与 SQLite 内 version 链互补：version 链用于逻辑追溯，git diff 用于 YAML 级别的审计和回滚）
 
 ### 2.5 YAML 元数据副本
 
@@ -264,7 +275,6 @@ layer: DWS
 layer_priority: 3
 description: 小区小时粒度汇总指标
 storage_type: HIVE
-partition_keys: [hour_bucket]
 fields:
   - name: cell_id
     type: STRING
@@ -390,6 +400,45 @@ init-scripts/
 └── 06_export_yaml.py          # SQLite → metadata-yaml/ 导出 YAML
 ```
 
+### 3.6 服务健康检查面板
+
+Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性状态：
+
+| 组件 | 检查方式 | 正常指标 |
+|------|---------|----------|
+| FastAPI | GET `/api/health` | 200 + uptime |
+| SQLite | `SELECT 1` | < 1ms |
+| HDFS NameNode | HTTP `:9870/jmx` | State=active |
+| YARN RM | HTTP `:8088/ws/v1/cluster/info` | started=true |
+| Hive Metastore | Thrift connect `:9083` | connected |
+| Kafka Broker | AdminClient `:9092` | broker count > 0 |
+| StarRocks FE | MySQL query `:9030` | connected |
+| ChromaDB | heartbeat query | connected |
+| DeepSeek API | HTTP ping (可选) | 200 OK |
+
+后端 API：`GET /api/health` 返回 JSON：
+
+```json
+{
+  "status": "healthy",
+  "uptime_seconds": 1234,
+  "components": {
+    "sqlite": {"status": "ok", "latency_ms": 0.5},
+    "hdfs": {"status": "ok", "state": "active"},
+    "yarn": {"status": "ok", "nodes": 1},
+    "hive": {"status": "ok"},
+    "kafka": {"status": "ok", "brokers": 1},
+    "starrocks": {"status": "ok"},
+    "chromadb": {"status": "ok", "doc_count": 80},
+    "deepseek": {"status": "ok"}
+  }
+}
+```
+
+> FastAPI 自身的状态由顶层 `status` 字段反映（能成功返回 200 即 healthy），故不重复列入 `components`。
+
+前端健康面板组件 `HealthPanel.tsx` 使用 Ant Design `Card` + `Badge` 网格布局，每组件一张状态卡片，自动刷新间隔 30s。
+
 ---
 
 ## 4. NL-to-Code Agent
@@ -484,6 +533,8 @@ def gap_check(state: AgentState) -> dict:
     return {"gaps": gaps, "has_gaps": len(gaps) > 0}
 ```
 
+> 阈值 0.6 用于缺口检测（保守判定，宁多勿漏），不同于语义检索 RRF 置信阈值 0.15（4.6.5 节）。gap_check 的 score 来自 `search_tables_by_keyword` 的最终融合分数，0.6 以下视为"未找到可靠匹配"，触发补齐建议。
+
 #### gap_proposal 节点行为
 
 1. LLM 根据 gaps 生成补齐建议（新建表/新增字段 + 合理的层、存储类型、字段定义）
@@ -530,19 +581,29 @@ class AgentState(TypedDict):
 | `dry_run_flink_sql` | Flink SQL E2E + HDFS 回读 | forward_etl |
 | `dry_run_java_flink` | Java Flink E2E + HDFS 回读 | forward_etl |
 
+> - `lookup_table_schema` / `lookup_lineage` 是 Agent 内部工具，直接读 SQLite（与 HTTP `/api/tables`、`/api/lineage` 共享同一个 service 函数，但不经过 HTTP）。
+> - `dry_run_spark_sql / dry_run_flink_sql / dry_run_java_flink` 三个工具均是 thin wrapper，统一委派给 `SandboxController.execute(code, code_type)`（§5.4）。分三个工具仅为让 Agent 通过工具名表达执行意图。
+
 ### 4.4 DeepSeek 集成
 
 ```env
 DEEPSEEK_API_KEY=sk-xxx
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-chat   # DeepSeek-V3 (模型版本与 deepseek-chat 别名绑定)
 ```
 
 LangChain `ChatOpenAI` 指定 `base_url` + `api_key` 即可。
 
-### 4.5 自动重试
+### 4.5 自动重试（双层）
 
-Dry-run 失败时 error_feedback 写入 State，code_generate 自动修正，最多 3 轮。
+重试分两层，互补不重叠：
+
+| 层 | 触发场景 | 重试上限 | 处理方式 |
+|----|---------|---------|---------|
+| 沙箱层（§5.4 `execute_with_retry`） | 编译失败 / YARN 平台异常 | 2 轮 | 解析 maven / YARN 日志 → LLM 修正代码 → 重新提交 |
+| Agent 层（本节） | 沙箱层耗尽后仍失败 / 业务逻辑错误 / SQL 语义错误 | 3 轮 | error_feedback 写入 State，`code_generate` 节点重新生成代码 |
+
+Agent 层 `iteration_count` 计入包括首次执行在内的总轮次（首次 + 最多 2 次重试 = 3 轮）。沙箱层重试在单次 dry-run 内部完成，不计入 Agent 层 `iteration_count`。
 
 ### 4.6 语义检索技术实现
 
@@ -650,6 +711,12 @@ class HybridSearcher:
         self.bm25 = BM25Okapi([tokenize(t) for t in texts])
         self.collection.modify(metadata={"index_version": self._db_version()})
 ```
+
+异常处理:
+
+- bge-small-zh-v1.5 模型下载失败：FastAPI 启动时 `SentenceTransformer` 加载失败 → 降级为纯 BM25 模式 + 日志告警，语义搜索仍可用（仅 Dense 向量检索不可用）
+- ChromaDB 数据损坏：`PersistentClient` 连接失败 → 自动重建（删除 `./data/chroma/` → 从 SQLite 全量重建索引）
+- 内存压力：bge 模型 24MB + ChromaDB 持久化文件 < 10MB (80 docs × 512维)，总计 < 50MB，无需特殊处理
 
 #### 4.6.5 混合检索流程
 
@@ -869,7 +936,7 @@ scripts/benchmark_semantic_search.py
 
 ---
 
-## 5. E2E 沙箱
+## 5. 沙箱
 
 ### 5.1 统一模型
 
@@ -884,17 +951,17 @@ templates/
 │   └── src/main/java/SandboxSparkJob.java   # ${user_sql} 注入点, sink → hdfs:///tmp/sandbox/{uuid}/
 ├── flink-sql/
 │   ├── pom.xml
-│   └── src/main/java/SandboxFlinkSQLJob.java
+│   └── src/main/java/SandboxFlinkSQLJob.java # ${user_sql} 注入点 (替换 SQL 字符串)，sink → hdfs:///tmp/sandbox/{uuid}/
 └── flink-java/
     ├── pom.xml
-    └── src/main/java/                        # 整个 src 替换，约定 sink 路径
+    └── src/main/java/                        # 整个 src/ 目录替换，约定 sink 路径 hdfs:///tmp/sandbox/{uuid}/
 ```
 
 ### 5.3 提交方式
 
 | 路径 | 编译 | 提交方式 | 结果读回 |
 |------|------|----------|----------|
-| Spark SQL | `mvn package` | Spark REST Submission Server (POST `:6066/v1/submissions/create`) | `spark.read.json(hdfs://tmp/sandbox/{uuid})` → 1 行 |
+| Spark SQL | `mvn package` | `subprocess`: `spark-submit --master yarn --deploy-mode cluster jar` | `spark.read.json(hdfs://tmp/sandbox/{uuid})` → 1 行 |
 | Flink SQL | `mvn package` | `subprocess`: `flink run -m yarn-cluster jar` | 同上 |
 | Java Flink | `mvn package` | `subprocess`: `flink run -m yarn-cluster jar` | 同上 |
 
@@ -903,9 +970,9 @@ templates/
 ```python
 class YarnSandbox:
     async def compile(self, code: str, code_type: str) -> CompileResult
-    async def submit_spark(self, jar_hdfs_path: str) -> str      # → submissionId
-    async def submit_flink(self, jar_hdfs_path: str) -> str      # → jobId (subprocess)
-    async def wait_complete(self, id: str, engine: str) -> bool
+    async def submit_spark(self, jar_hdfs_path: str) -> str      # → applicationId (subprocess: spark-submit)
+    async def submit_flink(self, jar_hdfs_path: str) -> str      # → applicationId (subprocess: flink run)
+    async def wait_complete(self, app_id: str, engine: str) -> bool   # 轮询 YARN RM REST :8088
     async def read_result(self, uuid: str) -> dict               # → 1 row
 
 class SandboxController:
@@ -917,6 +984,15 @@ class SandboxController:
         5. submit_and_wait()
         6. read_result() → 1 row
         7. cleanup sandbox_dir
+
+    async def execute_with_retry(self, code: str, code_type: str,
+                                 max_retries: int = 2) -> DryRunResult:
+        """沙箱级自动重试：针对编译失败和 YARN 执行失败，最多 2 轮。
+        编译失败: 解析 maven 错误 → 提取行号/错误类型 → 修正 → 重试
+        执行失败: 解析 YARN 日志 → 提取异常 → 修正 → 重试
+        与 Agent 层重试 (4.5 节) 分层互补：沙箱层解决编译/平台问题，
+        Agent 层解决业务逻辑/SQL 语义问题。
+        """
 ```
 
 ### 5.5 资源限制
@@ -957,6 +1033,7 @@ class SandboxController:
 | `/chat` | NL 对话 | 对话面板 + 代码卡片 + dry-run 预览 |
 | `/pipeline` | Pipeline 可视化 | 正向 ETL DAG + 反向合成链路 |
 | `/schema-evolution` | 演化历史 | 变更时间线 + 版本 diff |
+| `/health` | 健康检查 | Docker 组件连通性状态面板 (30s 自动刷新) |
 
 ### 6.3 元数据管理界面 (/metadata)
 
@@ -1010,6 +1087,7 @@ class SandboxController:
 | 新建字段 | 字段列表 [+ 新建字段] | 行内或弹窗添加 |
 | 删除字段 | 字段行 ✕ | 下游依赖检查 → 警告或拒绝 |
 | 导出 YAML | 顶部 [导出 YAML] | 全量或按选定表导出到 metadata-yaml/ |
+| YAML 预览 | 表卡片 [预览 YAML] | 只读弹窗展示当前表 YAML 内容 (Monaco 语法高亮)，不落盘 |
 | 查看血缘 | 表卡片 [查看血缘] | 跳转到 `/metadata/lineage?table=xxx` |
 | 创建下游表 | 表卡片 [创建下游表] | 打开新建表弹窗，预填上游引用 |
 
@@ -1034,9 +1112,12 @@ class SandboxController:
 │  │+ 添加字段                               │
 │  └────┴──────┴──────┴──────────────┘        │
 │                                              │
-│              [保存]  [保存为 YAML]  [取消]     │
+│  [保存] (SQLite)  [保存并导出 YAML]  [取消]     │
 └──────────────────────────────────────────────┘
 ```
+
+- [保存]：仅写入 SQLite（运行时立即可用）
+- [保存并导出 YAML]：写入 SQLite + 同步导出对应 YAML 文件到 `metadata-yaml/` 目录 + git commit
 
 #### 字段编辑抽屉 (右侧滑出)
 
@@ -1154,7 +1235,7 @@ class SandboxController:
 右键边:
   ┌──────────────────────┐
   │ ✎ 编辑转换表达式       │  → Monaco 编辑器弹出
-  │ ✕ 删除此血缘边         │  → 确认后删除 metadata_lineage 记录
+  │ ✕ 删除此血缘边         │  → 确认后从目标字段 upstream_field_refs 中移除该引用
   ├──────────────────────┤
   │ 💬 用 NL 修改...      │  → 跳转 /chat
   └──────────────────────┘
@@ -1181,7 +1262,7 @@ class SandboxController:
    │                                       │
    │          [保存] [取消]                  │
    └───────────────────────────────────────┘
-4. 保存 → INSERT metadata_lineage → G6 图实时刷新
+4. 保存 → 更新目标字段 upstream_field_refs → G6 图实时刷新
 ```
 
 #### 跳转 /chat 联动的上下文注入
@@ -1261,7 +1342,7 @@ context_prompt = """
 | Diff 对比面板 | 元数据演进中左右对比旧/新公式 |
 | 影响分析警告 | 元数据演进中列出受影响的下游表 |
 | 缺失补齐卡片 | gap_check 发现缺口时展示建议 |
-| 上下文注入 | 从 /metadata 或 /lineage 跳转时自动注入 |
+| 上下文注入 | 从 /metadata /lineage /pipeline 跳转时自动注入 |
 | 错误定位 | 编译/执行失败时高亮错误行 |
 
 ### 6.7 API 端点
@@ -1277,10 +1358,7 @@ context_prompt = """
 | POST | `/api/fields` | 新建字段 |
 | PUT | `/api/fields/:id` | 编辑字段 (含表达式/上游引用) |
 | DELETE | `/api/fields/:id` | 删除字段 (含断链校验) |
-| GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) |
-| POST | `/api/lineage/edge` | 新建血缘边 |
-| PUT | `/api/lineage/edge/:id` | 编辑血缘边表达式 |
-| DELETE | `/api/lineage/edge/:id` | 删除血缘边 |
+| GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) (扫描所有字段 upstream_field_refs 构建) |
 | POST | `/api/chat/start` | 新建对话 |
 | POST | `/api/chat/message` | 发送消息 → SSE stream |
 | GET | `/api/chat/:id/result` | 获取 dry-run 结果 |
@@ -1288,8 +1366,16 @@ context_prompt = """
 | POST | `/api/schema/apply` | 确认元数据变更 |
 | GET | `/api/schema/evolution/:table` | 表级变更历史 |
 | GET | `/api/yaml/export` | 导出 YAML (?table= 可选) |
+| GET | `/api/yaml/preview/:table` | YAML 预览 (只读, 返回原始 YAML 文本) |
+| GET | `/api/search` | 语义搜索 (?q= ?type=table/field) — BM25 + Dense + RRF |
+| GET | `/api/pipeline` | 全局 Pipeline DAG 数据 (?mode=forward/reverse ?table=) |
+| GET | `/api/health` | 服务健康检查 (FastAPI + Docker 各组件连通性) |
+
+> 分页: 当前元数据规模较小 (10 表 / ~70 字段)，列表接口暂不分页。当表数超过 50 时，`GET /api/tables` 和 `GET /api/fields` 需增加 `?page=&size=` 参数。
 
 ### 6.8 Pipeline 可视化页面 (/pipeline)
+
+> **表级血缘聚合规则**：Pipeline 页面展示的是表级 DAG（节点 = 表）。表级血缘 = 该表所有字段 `upstream_field_refs` 引用的上游表的去重集合；边权 = 引用该上游表的字段数。后端 `/api/pipeline` 通过聚合字段级血缘构建表级 DAG，不在 SQLite 冗余存储表级血缘。
 
 #### 页面布局
 
@@ -1486,13 +1572,9 @@ commit_msg = f"schema_evolve: UPDATE {table_name}.{field_name} v{old}→v{new}"
 # git log --grep "table:dws_cell_hourly version:2" → commit hash
 ```
 
-#### 回滚 (可选)
-
-- 每个变更卡片右侧 [↩ 回滚] 按钮
-- 回滚 = 将字段 expression + upstream_field_refs + version 恢复到旧值
-- 回滚本身也是一次 schema_evolve (ADD type, version+1)，记录在时间线中
-
 ---
+
+## 7. 项目结构
 
 ```
 data-gov/
@@ -1510,7 +1592,8 @@ data-gov/
 │   ├── 02_kafka_init.sh
 │   ├── 03_starrocks_init.sql
 │   ├── 04_sample_data.py
-│   └── 05_sqlite_seed.py
+│   ├── 05_sqlite_seed.py
+│   └── 06_export_yaml.py
 ├── scripts/
 │   ├── benchmark_semantic_search.py   # 语义检索 benchmark
 │   └── generate_benchmark_queries.py  # 测试集生成
@@ -1548,18 +1631,21 @@ data-gov/
         │   ├── Metadata.tsx
         │   ├── Chat.tsx
         │   ├── Pipeline.tsx
-        │   └── SchemaEvolution.tsx
+        │   ├── SchemaEvolution.tsx
+        │   └── Health.tsx
         ├── components/
-        │   ├── LineageGraph.tsx   # G6 血缘图封装
+        │   ├── LineageGraph.tsx   # G6 血缘图封装 (字段级, 被 /metadata/lineage 使用)
+        │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装 (表级, 被 /pipeline 使用)
+        │   ├── graphShared/       # 与 LineageGraph/PipelineDAG 共享: G6 注册行为 (tooltip/drag/zoom/minimap), 层颜色映射, 节点/边样式
         │   ├── CodeCard.tsx       # Monaco 代码卡片
         │   ├── DryRunPreview.tsx  # 1 行预览表格
-        │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装
         │   ├── ConstraintSlider.tsx # 反向合成约束调整
         │   ├── DiffPanel.tsx      # 旧/新公式左右对比
         │   ├── EvolutionTimeline.tsx # 变更时间线
+        │   ├── HealthPanel.tsx    # 健康检查面板
         │   └── ChatStream.tsx     # SSE 流式对话
         └── api/
-            └── client.ts          # fetch 封装
+            └── client.ts          # fetch 封装 (含 SSE ReadableStream)
 ```
 
 ---
@@ -1569,7 +1655,7 @@ data-gov/
 | Phase | 内容 |
 |-------|------|
 | **Phase 1** | Docker 栈搭建 + SQLite 元数据初始化 + 元数据 CRUD API |
-| **Phase 2** | LangGraph Agent 搭建 + 3 条对话路径 + E2E 沙箱 |
+| **Phase 2** | LangGraph Agent 搭建 + 3 条对话路径 + 沙箱 |
 | **Phase 3** | React 前端 + 血缘图 + 对话面板 + Pipeline 可视化 |
 
 ### 依赖关系
@@ -1589,8 +1675,8 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P1-4 | StarRocks 可查询 | `04_sample_data.py` 执行后，StarRocks FE 查询 `SELECT COUNT(*) FROM ads_cell_profile` | 返回 > 0 |
 | P1-5 | SQLite 元数据初始化 + YAML 导出 | 执行 `05_sqlite_seed.py`，查询 `SELECT COUNT(*) FROM metadata_tables`；执行 `06_export_yaml.py` | 返回 10；`metadata-yaml/` 下生成 10 个 .yaml 文件，按层分目录，gate-lint 通过 |
 | P1-6 | 元数据 CRUD API | POST 建一张新表 → GET /api/tables → GET /api/fields → PUT 修改字段表达式 → GET 校验 | 每步返回 200，数据一致 |
-| P1-7 | 血缘查询 API | GET `/api/lineage?source=dwd_session_qos` 查下游血缘 | 返回 `dws_cell_hourly`, `dws_area_traffic` 中至少 2 条字段级血缘边 |
-| P1-8 | 反向合成数据入 Hive | 调用 `generate_fake_data(table="dwd_session_qos", rows=5)` → Spark SQL 查询该表 | 返回 5 行，字段值域合法 (rsrp ∈ [-140,-44], sinr ∈ [-20,30]) |
+| P1-7 | 血缘查询 API | GET `/api/lineage?table=dwd_session_qos&direction=down` 查下游血缘 | 返回 `dws_cell_hourly`, `dws_area_traffic` 中至少 2 条字段级血缘边 |
+| P1-8 | 反向合成数据入对应存储 | 调用 `generate_fake_data(table="dwd_session_qos", rows=5)` → Spark SQL 查询 Hive 表 `dwd_session_qos` | 返回 5 行，字段值域合法 (rsrp ∈ [-140,-44], sinr ∈ [-20,30]) |
 
 ### Phase 2 验收用例
 
@@ -1599,13 +1685,13 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P2-1 | 正向 ETL: NL→Spark SQL | 发送消息 "用 `ods_ue_signal` 按 cell_id 计算每小区小时的平均 RSRP 和 SINR，写入 Hive 表 `dws_cell_hourly`" | 返回 Spark SQL，schema_lookup 工具被调用过，代码语法正确 |
 | P2-2 | 正向 ETL: NL→Flink SQL | 发送消息 "从 Kafka `ods_gnb_alarm` 读告警，按 gnb_id 做 5 分钟滚动窗口 COUNT" | 返回 Flink SQL，含 CREATE TABLE (Kafka source) + TUMBLE 窗口 + sink 定义 |
 | P2-3 | 正向 ETL: NL→Java Flink | 发送消息 "写一个 Flink DataStream 程序，从 Kafka 读 UE 信号，过滤 RSRP<-110 的弱覆盖，写入 HDFS" | 返回完整 Java main class，含 Kafka source / filter / StreamingFileSink |
-| P2-4 | Spark SQL E2E 沙箱执行 | 对 P2-1 生成的 SQL 调 dry_run | 返回 `DryRunResult(success=True, preview_row={...})`，preview_row 含 cell_id/h avg_rsrp/avg_sinr |
-| P2-5 | Flink SQL E2E 沙箱执行 | 对 P2-2 生成的 Flink SQL 调 dry_run | HDFS sink 写入成功，回读 1 行，字段匹配 |
-| P2-6 | Java Flink E2E 沙箱执行 | 对 P2-3 生成的 Java 代码调 dry_run | 编译成功 → JAR 上传 → YARN 提交 → FINISHED → HDFS 回读 1 行，弱覆盖 IMSI 列表合法 |
-| P2-7 | 沙箱编译失败自动重试 | 注入一个有语法错误的 Flink SQL (故意拼错 `SLECT`)，观察重试 | 第 1 轮失败，error_feedback 回传，LLM 修正，第 2 轮通过。iteration_count 最终 = 2 |
+| P2-4 | Spark SQL 沙箱执行 | 对 P2-1 生成的 SQL 调 dry_run | 返回 `DryRunResult(success=True, preview_row={...})`，preview_row 含 cell_id/h avg_rsrp/avg_sinr |
+| P2-5 | Flink SQL 沙箱执行 | 对 P2-2 生成的 Flink SQL 调 dry_run | HDFS sink 写入成功，回读 1 行，字段匹配 |
+| P2-6 | Java Flink 沙箱执行 | 对 P2-3 生成的 Java 代码调 dry_run | 编译成功 → JAR 上传 → YARN 提交 → FINISHED → HDFS 回读 1 行，弱覆盖 IMSI 列表合法 |
+| P2-7 | 沙箱编译失败自动重试 | 注入一个有语法错误的 Flink SQL (故意拼错 `SLECT`)，观察沙箱层 `execute_with_retry` 行为 | 沙箱层第 1 轮编译失败 → 解析 maven 错误 → LLM 修正 → 第 2 轮通过；返回 `DryRunResult(success=True)`，Agent 层 `iteration_count = 1`（沙箱层重试不计入 Agent 层） |
 | P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 SQLite 写入 + 对应 YAML 文件更新，GET /api/fields 可查到，`dwd_session_qos.yaml` 含 `jitter` 字段 |
 | P2-9 | 元数据演进: 一致性校验 | 发送消息 "删除 `ods_ue_signal` 的 `rsrp` 字段" | schema_validate 检测到 `dwd_session_qos.avg_rsrp` 和 `dwd_ho_event` 依赖此字段，返回警告不执行，要求先处理下游 |
-| P2-10 | 反向合成数据生成 | 发送消息 "给定 `eval_user_score` 的评估逻辑，生成 10 行测试数据，覆盖优秀/良好/差三档" | 反推约束 (qoe_score 0-100) → 生成 3 档数据 → 写入 Hive → 读回校验: 确实有 >80 / 50-80 / <50 的行 |
+| P2-10 | 反向合成数据生成 | 发送消息 "给定 `eval_user_score` 的评估逻辑，生成 10 行测试数据，覆盖优秀/良好/差三档" | 反推约束 (qoe_score 0-100) → 生成 3 档数据 → 写入 HDFS → 读回校验: 确实有 >80 / 50-80 / <50 的行 |
 | P2-11 | 缺失对象检测 (gap_check) | 发送消息 "我要每个小区每小时的平均基站负载和信号质量" — 信号质量已有，基站负载无 | gap_check 返回 1 条 missing_table gap，Web 端展示补齐建议卡片，含建议表名/字段/层级 |
 | P2-12 | 缺失对象自动补齐 | 在 P2-11 的补齐建议卡片点击 [确认并继续] | schema_evolve 子流程自动执行: 新建 ods_gnb_load (ODS, Kafka, 5 字段) → SQLite 写入 + YAML 生成 → schema_lookup 重新查询 → 继续 code_generate 产出含基站负载的 SQL |
 | P2-13 | 缺失字段检测 | 人为删除 dwd_session_qos.avg_sinr 字段后，发送 "从会话 QoS 查信噪比分布" | gap_check 检测到 keyword=信噪比 field=avg_sinr 缺失，建议在 dwd_session_qos 补回该字段 |
@@ -1622,7 +1708,7 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P3-6 | 字段级血缘图: G6 渲染 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | G6 TreeGraph 渲染完整上下游: ods → dwd → dws → ads → eval，节点含字段 ● 点 |
 | P3-7 | 血缘图交互 | 双击节点展开/折叠 → 拖拽画布 → 滚轮缩放 → 点击边查看 transform_expr → Mini-map 导航 | 所有交互流畅，边详情在右侧面板显示 |
 | P3-8 | 血缘图维护: 右键菜单 | 右键 `dwd_session_qos` 节点 → 选择 [✚ 在此表上加字段] | 弹出字段编辑抽屉，预填 table=dwd_session_qos |
-| P3-9 | 血缘图维护: 拖拽新建边 | 右键节点 → [⊕ 新建血缘边] → 从 ods_ue_signal.imsi 拖线到 dwd_ho_event.imsi → 填写转换表达式 "直通映射" → 保存 | metadata_lineage 新增 1 条，G6 图实时刷新显示新边 |
+| P3-9 | 血缘图维护: 拖拽新建边 | 右键节点 → [⊕ 新建血缘边] → 从 ods_ue_signal.imsi 拖线到 dwd_ho_event.imsi → 填写转换表达式 "直通映射" → 保存 | 目标字段 upstream_field_refs 更新，G6 图实时刷新显示新边 |
 | P3-10 | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [💬 用 NL 修改...] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 上下文已注入当前表达式和上游信息 |
 | P3-11 | 对话面板: 流式输出 + Badge | 打开 `/chat` → 新建对话 → 输入 "计算每小区小时平均覆盖强度" | SSE 逐字流式输出，classifier badge 显示「正向ETL」，右侧展示血缘 mini 图推荐方案 |
 | P3-12 | 对话面板: 代码卡片 + DryRun 预览 | 对话完成 → 代码卡片显示 Spark SQL (Monaco 高亮) → 点击 [▶ 沙箱试跑] | 右侧代码面板可编辑，DryRun 结果卡片显示 ✅ 成功 + 1 行 Ant Table |
