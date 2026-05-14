@@ -1,0 +1,22 @@
+[project]
+name = "data-gov"
+version = "0.1.0"
+description = "Wireless RNO Data Semantic Service"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "pytest-timeout>=2.2",
+    "requests>=2.31",
+    "kafka-python>=2.0.2",
+    "PyMySQL>=1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+addopts = "-v --tb=short"
+markers = [
+    "infra: integration tests requiring base-compose stack running",
+]
