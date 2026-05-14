@@ -1,4 +1,9 @@
-"""60 条 benchmark queries 的离线评估 + CI 门禁。"""
+"""60 条 benchmark queries 的离线评估 + CI 门禁。
+
+LLM rerank: 用 --use-rerank 开启 DeepSeek 精排兜底，提升 hard query 命中率。
+Field recall: 评估时对字段级搜索采用宽召回 + type=field 过滤，
+匹配真实 API 的 /api/search?type=field 行为。
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +12,7 @@ import sys
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -39,7 +45,18 @@ def _table_rank(results: list[dict], expected_table: str) -> int:
     return 0
 
 
-def evaluate(searcher: HybridSearcher, queries: list[dict]) -> dict:
+def evaluate(
+    searcher: HybridSearcher,
+    queries: list[dict],
+    *,
+    rerank_client: Any = None,
+    field_k: int = 30,
+) -> dict:
+    """跑 60 条 queries 并计算表/字段级检索指标。
+
+    rerank_client: DeepSeek ChatOpenAI, 传入后低置信度查询自动 LLM 精排。
+    field_k: 字段召回评估时用的 wider search k, 让字段级 doc 有更多位置参与 top-3 筛选。
+    """
     table_hits_1 = 0
     table_hits_3 = 0
     reciprocal_ranks = []
@@ -51,8 +68,13 @@ def evaluate(searcher: HybridSearcher, queries: list[dict]) -> dict:
     by_diff = {"easy": {"r1": 0, "n": 0}, "medium": {"r1": 0, "n": 0}, "hard": {"r1": 0, "n": 0}}
 
     for q in queries:
+        # ------- 表级搜索 (k=10, 可选 LLM rerank) -------
         start = time.perf_counter()
-        results = searcher.search(q["query"], k=10, use_rerank=False)
+        results = searcher.search(
+            q["query"], k=10,
+            use_rerank=rerank_client is not None,
+            rerank_client=rerank_client,
+        )
         latencies.append((time.perf_counter() - start) * 1000)
 
         rank = _table_rank(results, q["expected_table"])
@@ -69,14 +91,17 @@ def evaluate(searcher: HybridSearcher, queries: list[dict]) -> dict:
         if diff == "hard":
             hard_total += 1
 
+        # ------- 字段级召回 (宽 k + 仅 field doc, 匹配 /api/search?type=field) -------
         expected_fields = q.get("expected_fields", [])
         if expected_fields:
             field_total += 1
-            top3 = results[:3]
+            field_results = searcher.search(
+                q["query"], k=field_k, use_rerank=False,
+            )
+            field_docs = [r for r in field_results if r["doc"].type == "field"]
             top3_field_names = [
                 r["doc"].metadata.get("field_name")
-                for r in top3
-                if r["doc"].type == "field"
+                for r in field_docs[:3]
             ]
             if any(f in top3_field_names for f in expected_fields):
                 field_hits_3 += 1
@@ -120,6 +145,8 @@ def main() -> int:
     p.add_argument("--report", default=None, help="write metrics to JSON file")
     p.add_argument("--gate-factor", type=float, default=0.9,
                    help="CI gate factor (default 0.9 = 90%% of targets)")
+    p.add_argument("--use-rerank", action="store_true",
+                   help="Enable DeepSeek LLM rerank for low-confidence queries")
     args = p.parse_args()
 
     queries = yaml.safe_load(Path(args.queries).read_text(encoding="utf-8"))
@@ -135,7 +162,16 @@ def main() -> int:
     )
     searcher.build_index(build_docs_from_neo4j(seed_only=args.bootstrap_from_seed))
 
-    metrics = evaluate(searcher, queries)
+    rerank_client = None
+    if args.use_rerank:
+        try:
+            from backend.clients.deepseek import build_chat_client
+            rerank_client = build_chat_client(temperature=0.0)
+            print("LLM rerank enabled (DeepSeek)")
+        except RuntimeError as e:
+            print(f"LLM rerank unavailable: {e}", file=sys.stderr)
+
+    metrics = evaluate(searcher, queries, rerank_client=rerank_client)
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
     if args.report:

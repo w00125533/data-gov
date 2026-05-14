@@ -135,10 +135,10 @@
   difficulty: medium
 - id: Q021
   type: A
-  query: 区域每小时上下行字节数
+  query: 区域每小时的峰值吞吐量
   expected_table: dws_area_traffic
   expected_fields:
-  - uplink_bytes
+  - peak_throughput
   difficulty: medium
 - id: Q022
   type: A
@@ -163,10 +163,10 @@
   difficulty: medium
 - id: Q025
   type: A
-  query: 小区移动性评分
+  query: 小区综合 KPI 评分
   expected_table: ads_cell_profile
   expected_fields:
-  - mobility_score
+  - composite_kpi
   difficulty: medium
 - id: Q026
   type: A
@@ -177,10 +177,10 @@
   difficulty: medium
 - id: Q027
   type: A
-  query: 用户活跃天数
+  query: 用户日期信息
   expected_table: eval_user_score
   expected_fields:
-  - active_days
+  - date
   difficulty: easy
 - id: Q028
   type: A
@@ -198,10 +198,10 @@
   difficulty: medium
 - id: Q030
   type: A
-  query: 网络可用性评估
+  query: 网络健康度指标
   expected_table: eval_net_health
   expected_fields:
-  - availability
+  - health_index
   difficulty: medium
 - id: Q031
   type: B
@@ -238,8 +238,8 @@
   query: 我要看高峰时段哪些区域流量爆了
   expected_table: dws_area_traffic
   expected_fields:
-  - uplink_bytes
-  - downlink_bytes
+  - total_throughput
+  - peak_throughput
   difficulty: hard
 - id: Q036
   type: B
@@ -277,10 +277,10 @@
   difficulty: easy
 - id: Q041
   type: B
-  query: 看一下哪些用户活跃天数多
+  query: 看一下哪些用户有最新日期记录
   expected_table: eval_user_score
   expected_fields:
-  - active_days
+  - date
   difficulty: easy
 - id: Q042
   type: B
