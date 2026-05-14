@@ -7,10 +7,16 @@ Wireless RNO Data Semantic Service — PoC.
 ```bash
 cp .env.example .env
 docker compose -f base-compose.yml up -d
-./scripts/init-stack.sh        # runs all 7 init scripts + brings up backend
-pip install -e ".[dev]"
-pytest -m infra                # P1-1..P1-8 should all pass
+./scripts/init-stack.sh                 # runs all 8 init steps + brings up backend
+python -m pip install -e ".[dev]"
+python -m pytest -m infra -v            # P1-1..P1-8 should all pass
 ```
+
+> **Windows 注意**：
+> - 推荐在 **PowerShell** 中执行上述命令。
+> - 如果使用 **Git Bash**，脚本已内置 `MSYS_NO_PATHCONV=1` 防止 MSYS2 路径自动转换。
+> - 使用 `python -m pytest` 而非直接 `pytest`，避免 `pytest` 不在 PATH 的问题。
+> - 首次冷启动需拉取多个 Docker 镜像（~5GB），请耐心等待。
 
 ## Acceptance coverage (Phase 1)
 
