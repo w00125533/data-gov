@@ -16,7 +16,7 @@ def test_p1_3_kafka_produce_consume_ods_ue_signal():
     ]
 
     producer = KafkaProducer(
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers="localhost:19092",
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         acks="all",
     )
@@ -27,7 +27,7 @@ def test_p1_3_kafka_produce_consume_ods_ue_signal():
 
     consumer = KafkaConsumer(
         topic,
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers="localhost:19092",
         group_id=group_id,
         auto_offset_reset="earliest",
         enable_auto_commit=False,

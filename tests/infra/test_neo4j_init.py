@@ -15,7 +15,7 @@ def test_p1_5b_constraints_exist():
 
 @pytest.mark.infra
 def test_p1_5b_indexes_exist():
-    rows = run_query("SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE type <> 'LOOKUP'")
+    rows = run_query("SHOW INDEXES YIELD name, labelsOrTypes, properties, type WHERE type <> 'LOOKUP'")
     names = {r["name"] for r in rows}
     required = {"field_name_idx", "change_changed_at_idx", "change_table_name_idx"}
     missing = required - names

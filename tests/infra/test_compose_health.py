@@ -82,7 +82,7 @@ def test_kafka_broker_reachable():
 
     def _check():
         try:
-            client = KafkaAdminClient(bootstrap_servers="localhost:9092", request_timeout_ms=3000)
+            client = KafkaAdminClient(bootstrap_servers="localhost:19092", request_timeout_ms=3000)
             brokers = client.describe_cluster()
             client.close()
             return len(brokers.get("brokers", [])) >= 1

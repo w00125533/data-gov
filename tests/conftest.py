@@ -29,7 +29,7 @@ def compose():
 def service_state(service: str) -> dict:
     """Return the JSON state object for one compose service, or {} if absent."""
     result = _compose("ps", "--format", "json", service)
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode != 0 or not (result.stdout or "").strip():
         return {}
     # `docker compose ps --format json` emits one JSON object per line.
     for line in result.stdout.splitlines():
