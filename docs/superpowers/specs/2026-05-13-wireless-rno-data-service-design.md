@@ -506,63 +506,362 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
       END
 ```
 
-#### gap_check 节点逻辑
+#### 节点逐一细化
 
-```python
-def gap_check(state: AgentState) -> dict:
-    """检测用户需求与现有元数据之间的缺口"""
-    required = extract_required_entities(state.messages[-1])
-    gaps = []
+> **节点契约**：所有节点遵循 LangGraph 约定 — 函数签名 `(state: AgentState) -> dict`，返回 partial dict 由 LangGraph merge 进 State；错误通过 `error_feedback` 字段传递；LLM 调用统一通过 DeepSeek 客户端（4.4 节）；调用工具时复用 4.3 节定义。**Prompts 关键约束** 仅在节点内列举必要要点（输出 JSON / 字段名 / temperature），完整 prompt 模板留给后续 Prompts 工程章节。
 
-    for entity in required:
-        match = search_tables_by_keyword(entity.keyword)
-        if match.top_score < 0.6:
-            gaps.append({
-                "type": "missing_table",
-                "keyword": entity.keyword,
-                "suggestion": f"建议新建表 {entity.pinyin}_metrics"
-            })
-        elif entity.field_specified and not field_exists(entity.field, match.top_table):
-            gaps.append({
-                "type": "missing_field",
-                "keyword": entity.field,
-                "table": match.top_table,
-                "suggestion": f"在 {match.top_table} 中新增字段 {entity.field}"
-            })
+##### `classifier`
 
-    return {"gaps": gaps, "has_gaps": len(gaps) > 0}
-```
+- **作用**: 识别用户输入的业务意图，路由到 forward_etl / reverse_synth / schema_evolve 三条主路径之一。
+- **触发**: START（每条新对话）；多轮中检测到意图切换时。
+- **输入** (State): `messages[-3:]`、`intent` (上一轮)、`context_source`。
+- **输出** (State): `intent` ∈ {"forward_etl", "reverse_synth", "schema_evolve"}、`needs_clarification`。
+- **LLM 调用**: 是 — DeepSeek Chat；JSON 输出 `{"intent", "confidence", "reason"}`；`temperature=0`。
+- **调用工具**: 无。
+- **核心逻辑**:
+  ```python
+  def classifier(state):
+      recent = state["messages"][-3:]
+      resp = deepseek.invoke(CLASSIFIER_PROMPT.format(
+          history=recent, prev_intent=state.get("intent"),
+          context_source=state.get("context_source")),
+          response_format={"type": "json_object"})
+      result = json.loads(resp.content)
+      if result["confidence"] < 0.7:
+          return {"intent": state.get("intent") or "forward_etl",
+                  "needs_clarification": True}
+      return {"intent": result["intent"], "needs_clarification": False}
+  ```
+- **下游节点**: 按 `intent` 分支到 `forward_etl` / `reverse_synth` / `schema_evolve`；若 `needs_clarification=True`，先走 `presenter` 输出澄清问题、等用户回复。
+- **错误处理**: JSON 解析失败 → 重试 1 次；仍失败 → 关键词降级（"造数据" → reverse_synth；"加/改字段" → schema_evolve；默认 forward_etl）。
 
-> 阈值 0.6 用于缺口检测（保守判定，宁多勿漏），不同于语义检索 RRF 置信阈值 0.15（4.6.5 节）。gap_check 的 score 来自 `search_tables_by_keyword` 的最终融合分数，0.6 以下视为"未找到可靠匹配"，触发补齐建议。
+##### `forward_etl`
 
-#### gap_proposal 节点行为
+- **作用**: 正向 ETL 路径入口；从用户消息抽取目标/源表初步候选。
+- **触发**: classifier 判定 `intent="forward_etl"`。
+- **输入** (State): `messages`、`context_source`。
+- **输出** (State): `target_tables`、`source_tables`、`code_type` (可选)。
+- **LLM 调用**: 是 — JSON 输出 `{"target_entities":[], "source_hints":[], "code_type_hint":"spark_sql/flink_sql/java_flink/auto"}`。
+- **调用工具**: `search_tables_by_keyword`。
+- **核心逻辑**:
+  ```python
+  def forward_etl(state):
+      parsed = json.loads(deepseek.invoke(EXTRACT_PROMPT.format(
+          msg=state["messages"][-1].content, intent="forward_etl"),
+          response_format={"type":"json_object"}).content)
+      targets = [search_tables_by_keyword(k).top_table for k in parsed["target_entities"]]
+      sources = [search_tables_by_keyword(k).top_table for k in parsed.get("source_hints", [])]
+      hint = parsed.get("code_type_hint")
+      return {"target_tables": targets, "source_tables": sources,
+              "code_type": hint if hint and hint != "auto" else None}
+  ```
+- **下游节点**: `schema_lookup`。
+- **错误处理**: 抽取失败 → 空候选下传，下游 gap_check 兜底；搜索全部低置信 → 不阻塞，由 gap_check 标记。
 
-1. LLM 根据 gaps 生成补齐建议（新建表/新增字段 + 合理的层、存储类型、字段定义）
-2. Web 端呈现建议卡片，用户可：[确认并继续] [我自己定义] [跳过,仅用已有]
-3. 确认后自动进入 schema_evolve 子流程（校验 → 应用 → 写入 SQLite + YAML）
-4. 子流程完成后回到 schema_lookup 重新查询，然后继续主流程 code_generate
+##### `reverse_synth`
+
+- **作用**: 反向合成路径入口；识别目标评估对象的根表。
+- **触发**: classifier 判定 `intent="reverse_synth"`。
+- **输入** (State): `messages`、`context_source`。
+- **输出** (State): `target_tables` (通常 1 个根表)、`row_count_hint`、`buckets_hint`；`source_tables` 留给 `pipeline_parse` 填充。
+- **LLM 调用**: 是 — JSON 输出 `{"eval_target", "row_count_hint", "buckets_hint"}`。
+- **调用工具**: `search_tables_by_keyword`。
+- **核心逻辑**:
+  ```python
+  def reverse_synth(state):
+      parsed = json.loads(deepseek.invoke(EXTRACT_PROMPT.format(
+          msg=state["messages"][-1].content, intent="reverse_synth"),
+          response_format={"type":"json_object"}).content)
+      target = search_tables_by_keyword(parsed["eval_target"]).top_table
+      return {"target_tables": [target], "source_tables": [],
+              "row_count_hint": parsed.get("row_count_hint", 10),
+              "buckets_hint": parsed.get("buckets_hint", [])}
+  ```
+- **下游节点**: `pipeline_parse`。
+- **错误处理**: `eval_target` 无命中 → 由 gap_check 标 missing_table；提取失败 → presenter 让用户重述目标。
+
+##### `schema_evolve`
+
+- **作用**: 元数据演进入口；主流程（用户主动 NL 演进）或子流程（gap_proposal 自动调用）共用。
+- **触发**: classifier 判定 `intent="schema_evolve"`（主）；gap_proposal 用户确认后跳入（子）。
+- **输入** (State): `messages`（主）；`gaps` + `sub_flow_active=True`（子）。
+- **输出** (State): `schema_diff` (待应用变更草案)。
+- **LLM 调用**: 主流程 — 是，从 NL 生成 schema 变更；JSON 严格约束 `[{operation, table, field, ...}]`。子流程 — 否，复用 gap_proposal 已生成的草案。
+- **调用工具**: `lookup_table_schema`。
+- **核心逻辑**:
+  ```python
+  def schema_evolve(state):
+      if state.get("sub_flow_active"):
+          diff = build_diff_from_gap_draft(state)   # 子流程: 复用 gap_proposal 输出
+      else:
+          current = lookup_table_schema(state.get("target_tables", []))
+          diff = json.loads(deepseek.invoke(SCHEMA_EVOLVE_PROMPT.format(
+              user_request=state["messages"][-1].content, current_schema=current),
+              response_format={"type":"json_object"}).content)
+      return {"schema_diff": diff}
+  ```
+- **下游节点**: `schema_validate`。
+- **错误处理**: LLM 输出违反 JSON Schema → 更严 prompt 重提 1 次；仍失败 → presenter "无法解析变更意图"。
+
+##### `schema_validate`
+
+- **作用**: 在写库前做一致性校验（重名 / 断链 / 循环依赖 / 类型兼容）。
+- **触发**: `schema_evolve` 完成后。
+- **输入** (State): `schema_diff`。
+- **输出** (State): `validation_result` (errors / warnings / passed)。
+- **LLM 调用**: 无。
+- **调用工具**: `validate_change`。
+- **核心逻辑**:
+  ```python
+  def schema_validate(state):
+      diff, errors, warnings = state["schema_diff"], [], []
+      for op in diff:
+          if op["operation"] == "ADD_FIELD" and field_exists(op["table"], op["field"]):
+              errors.append(("DUPLICATE", op))
+          if op["operation"] == "DELETE_FIELD":
+              ds = find_downstream(op["table"], op["field"])
+              if ds: errors.append(("BREAK_DOWNSTREAM", op, ds))
+      if has_cycle_after_apply(diff):
+          errors.append(("CYCLE", diff))
+      return {"validation_result": {"errors": errors, "warnings": warnings,
+                                     "passed": len(errors) == 0}}
+  ```
+- **下游节点**: `passed=True` → `schema_apply`；`passed=False` → `presenter`（子流程下同时清 `sub_flow_active`）。
+- **错误处理**: errors 终止本路径；warnings 不阻塞，透传 presenter 给用户提示。
+
+##### `schema_apply`
+
+- **作用**: 把 `schema_diff` 应用到 SQLite，同步重写 YAML 并 git commit，回填 `metadata_changes` 表。
+- **触发**: `schema_validate.passed=True`。
+- **输入** (State): `schema_diff`、`validation_result`。
+- **输出** (State): `applied_changes` (含 version / commit_hash)。
+- **LLM 调用**: 无。
+- **调用工具**: `add_table` / `add_field` / `update_field` / `remove_field`、`sync_yaml`。
+- **核心逻辑**:
+  ```python
+  def schema_apply(state):
+      applied = []
+      with sqlite_transaction():
+          for op in state["schema_diff"]:
+              applied.append(dispatch_change(op))   # CRUD + version+1 + 写 metadata_changes(commit_hash=NULL)
+          sync_yaml(affected_tables(state["schema_diff"]))
+      commit_hash = git_commit(f"schema_evolve: {summarize(state['schema_diff'])}")
+      for a in applied:
+          update_change_commit(a["change_id"], commit_hash)   # 回填 metadata_changes.commit_hash
+      return {"applied_changes": applied}
+  ```
+- **下游节点**: 主流程 → `presenter`；子流程（`sub_flow_active=True` 时进入的）→ `schema_lookup`。
+- **错误处理**: SQLite 写失败 → 事务回滚；YAML 写失败 → 同事务内回滚；git commit 失败 → 库已写入但 `commit_hash=NULL`，由对账脚本下次启动补齐。
+
+##### `schema_lookup`
+
+- **作用**: 取 `target_tables` + `source_tables` 的最新 schema 到 State；子流程返回时清 `sub_flow_active`。
+- **触发**: `forward_etl` 完成后；`schema_apply` 子流程完成后。
+- **输入** (State): `target_tables`、`source_tables`、`sub_flow_active`。
+- **输出** (State): `schemas_resolved`；子流程返回时同步 `sub_flow_active=False`。
+- **LLM 调用**: 无。
+- **调用工具**: `lookup_table_schema`、`lookup_lineage`（必要时回查上游）。
+- **核心逻辑**:
+  ```python
+  def schema_lookup(state):
+      schemas = lookup_table_schema(state["target_tables"] + state["source_tables"])
+      out = {"schemas_resolved": schemas}
+      if state.get("sub_flow_active"):
+          out["sub_flow_active"] = False
+      return out
+  ```
+- **下游节点**: 主流程 → `gap_check`；子流程返回 → 由 `sub_flow_return_point` 指定（通常 `code_generate`）。
+- **错误处理**: 表不存在 → 不抛错，由 gap_check 检测；DB 异常 → `error_feedback` + presenter。
+
+##### `pipeline_parse`
+
+- **作用**: 反向合成专用 — 从根表回溯整条计算链路，构建上游表/字段集合。
+- **触发**: `reverse_synth` 完成后。
+- **输入** (State): `target_tables` (单根表)。
+- **输出** (State): `source_tables` (回溯到的全部上游)、`pipeline_chain` (有序链路 + 每层表达式)。
+- **LLM 调用**: 无。
+- **调用工具**: `lookup_lineage`。
+- **核心逻辑**:
+  ```python
+  def pipeline_parse(state):
+      root = state["target_tables"][0]
+      chain, visited, stack = [], set(), [root]
+      while stack:
+          t = stack.pop()
+          if t in visited: continue
+          visited.add(t)
+          l = lookup_lineage(t, direction="up")
+          chain.append({"table": t, "fields": l.fields, "upstream": l.upstream_tables})
+          stack.extend(l.upstream_tables)
+      return {"source_tables": list(visited - {root}),
+              "pipeline_chain": list(reversed(chain))}   # ODS → EVAL 顺序
+  ```
+- **下游节点**: `gap_check`。
+- **错误处理**: 链路断链（上游表不存在）→ 标 missing_table 传 gap_check。
+
+##### `gap_check`
+
+- **作用**: 检测用户需求实体与现有元数据的缺口，决定是否进入 gap_proposal 补齐子流程。
+- **触发**: `schema_lookup`（正向）或 `pipeline_parse`（反向）后。
+- **输入** (State): `messages`、`target_tables`、`source_tables`、`pipeline_chain` (反向)。
+- **输出** (State): `gaps`、`has_gaps`。
+- **LLM 调用**: 是 — `extract_required_entities` 内部调用；JSON 输出 `[{"keyword", "field_specified", "field"}]`。
+- **调用工具**: `search_tables_by_keyword`、`check_gaps`。
+- **核心逻辑**:
+  ```python
+  def gap_check(state):
+      """检测用户需求与现有元数据之间的缺口"""
+      required = extract_required_entities(state["messages"][-1])
+      gaps = []
+      for entity in required:
+          match = search_tables_by_keyword(entity.keyword)
+          if match.top_score < 0.6:
+              gaps.append({"type": "missing_table", "keyword": entity.keyword,
+                           "suggestion": f"建议新建表 {entity.pinyin}_metrics"})
+          elif entity.field_specified and not field_exists(entity.field, match.top_table):
+              gaps.append({"type": "missing_field", "keyword": entity.field,
+                           "table": match.top_table,
+                           "suggestion": f"在 {match.top_table} 中新增字段 {entity.field}"})
+      return {"gaps": gaps, "has_gaps": len(gaps) > 0}
+  ```
+  > 阈值 0.6 用于缺口检测（保守判定，宁多勿漏），不同于语义检索 RRF 置信阈值 0.15（4.6.5 节）。
+- **下游节点**: `has_gaps=False` → `code_generate`；`has_gaps=True` → `gap_proposal`。
+- **错误处理**: 抽取失败 → 默认 `has_gaps=False`（让 code_generate 尝试，由 dry_run 失败后 Agent 层重试兜底）。
+
+##### `gap_proposal`
+
+- **作用**: 根据 gaps 生成补齐草案（新表/新字段），先渲染给用户确认。
+- **触发**: `gap_check` 返回 `has_gaps=True`。
+- **输入** (State): `gaps`、`messages`。
+- **输出** (State): `schema_diff`、`sub_flow_active=True`、`sub_flow_return_point="code_generate"`、`presenter_payload`。
+- **LLM 调用**: 是 — 草案生成；JSON 含 `[{operation, table, layer, storage_type, fields:[...]}]`，含合理的层级 / 存储推断。
+- **调用工具**: `propose_gap_fix`。
+- **核心逻辑**:
+  ```python
+  def gap_proposal(state):
+      draft = json.loads(deepseek.invoke(PROPOSE_PROMPT.format(
+          gaps=state["gaps"], user_request=state["messages"][-1].content),
+          response_format={"type":"json_object"}).content)
+      return {"schema_diff": draft,
+              "sub_flow_active": True,
+              "sub_flow_return_point": "code_generate",
+              "presenter_payload": {"type": "gap_proposal_card",
+                                    "draft": draft, "gaps": state["gaps"]}}
+  ```
+- **下游节点**: 先 `presenter`（渲染卡片等用户选择）；用户 [确认并继续] → `schema_evolve` 子流程；[我自己定义] / [跳过] → `code_generate`。
+- **错误处理**: 草案违反约束 → 更严 prompt 重提 1 次；仍失败 → presenter "无法自动补齐，请手动定义"。
+
+##### `code_generate`
+
+- **作用**: 根据已确认的 schema 和用户意图生成 Spark SQL / Flink SQL / Java Flink 代码。
+- **触发**: `schema_lookup` 完成后（含 gap 子流程返回）；`dry_run` 失败时 Agent 层重试。
+- **输入** (State): `intent`、`target_tables`、`source_tables`、`messages`、`error_feedback` (重试)、`code_type`。
+- **输出** (State): `generated_code`、`code_type`、`iteration_count` (+1)。
+- **LLM 调用**: 是 — prompt 含 schema、意图、用户原话、目标 code_type、上一次 `error_feedback`（若有）；输出代码块 + 解释，正则提取代码部分。
+- **调用工具**: `lookup_table_schema`（拿最新 schema）。
+- **核心逻辑**:
+  ```python
+  def code_generate(state):
+      schema = lookup_table_schema(state["target_tables"] + state["source_tables"])
+      code_type = state.get("code_type") or infer_code_type(state)
+      resp = deepseek.invoke(CODE_GEN_PROMPT.format(
+          schema=schema, intent=state["intent"],
+          user_request=state["messages"][-1].content,
+          code_type=code_type,
+          error_feedback=state.get("error_feedback")))
+      code = extract_code_block(resp.content, lang=code_type_to_lang(code_type))
+      return {"generated_code": code, "code_type": code_type,
+              "iteration_count": state.get("iteration_count", 0) + 1}
+  ```
+- **下游节点**: `dry_run`。
+- **错误处理**: LLM 输出无代码块 → 更严 prompt 重提一次；仍失败 → presenter 返回 fatal；`iteration_count ≥ 3` → 终止 Agent 层重试。
+
+##### `dry_run`
+
+- **作用**: 把 `generated_code` 提交沙箱执行，回填结果或错误反馈。
+- **触发**: `code_generate` 完成后。
+- **输入** (State): `generated_code`、`code_type`。
+- **输出** (State): `dry_run_result`；失败时 `error_feedback`。
+- **LLM 调用**: 无。
+- **调用工具**: `dry_run_spark_sql` / `dry_run_flink_sql` / `dry_run_java_flink`（按 `code_type` 分派）。
+- **核心逻辑**:
+  ```python
+  def dry_run(state):
+      tool = {"spark_sql": dry_run_spark_sql,
+              "flink_sql": dry_run_flink_sql,
+              "java_flink": dry_run_java_flink}[state["code_type"]]
+      result = tool(state["generated_code"])
+      if not result.success:
+          return {"dry_run_result": result, "error_feedback": result.error_log[:2000]}
+      return {"dry_run_result": result, "error_feedback": None}
+  ```
+- **下游节点**: 成功 → `presenter`；失败 + `iteration_count<3` → `code_generate`（Agent 层重试）；失败 + `iteration_count≥3` → `presenter`（带失败标记）。
+- **错误处理**: 沙箱基础设施异常（YARN/HDFS 不可达）→ 不计入 Agent 层重试，直接 presenter 标 "基础设施异常"。
+
+##### `presenter`
+
+- **作用**: 终止节点 — 将 State 汇总成 UI 载荷并通过 SSE 推送，结束本轮 LangGraph 执行。
+- **触发**: dry_run 成功；多种异常路径；gap_proposal 后等用户确认；classifier `needs_clarification=True`。
+- **输入** (State): `intent`、`generated_code`、`code_type`、`dry_run_result`、`schema_diff`、`gaps`、`error_feedback`、`iteration_count`、`presenter_payload`。
+- **输出**: 不再写 State；通过 SSE 推送 `final_message`。
+- **LLM 调用**: 是（可选）— 把技术结果转对话语气；`temperature=0.3`。
+- **调用工具**: 无。
+- **核心逻辑**:
+  ```python
+  def presenter(state):
+      payload = build_payload_by_intent_and_state(state)
+      # type: code_card / dry_run_preview / schema_diff_card / gap_proposal_card / clarification / error
+      sse_emit(payload)
+      return {"final_message": payload["summary"]}
+  ```
+- **下游节点**: END。
+- **错误处理**: 自身出错也要发 SSE — 至少 "流程异常: {brief}"，不让对话挂死。
 
 ### 4.2 Agent State
 
 ```python
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
+    # —— classifier / 对话基础 ——
     messages: Annotated[list, add_messages]   # 对话历史
     intent: str                                # "forward_etl" | "reverse_synth" | "schema_evolve"
+    context_source: str                        # 上下文来源: "metadata" | "lineage" | "pipeline" | None
+    needs_clarification: bool                  # classifier 低置信度时为 True, 走 presenter 澄清
+
+    # —— forward_etl / schema_lookup ——
     target_tables: list[str]
     source_tables: list[str]
+    schemas_resolved: dict                     # schema_lookup 取回的 {table: schema} 映射
+
+    # —— reverse_synth / pipeline_parse ——
+    row_count_hint: int                        # 反向合成期望行数 (默认 10)
+    buckets_hint: list[dict]                   # 反向合成分档提示 (如 [{"label":"优","range":[80,100]}])
+    pipeline_chain: list[dict]                 # 回溯链路: [{"table","fields","upstream"}], ODS→EVAL 顺序
+
+    # —— code_generate / dry_run ——
     generated_code: str
     code_type: str                             # "spark_sql" | "flink_sql" | "java_flink"
-    dry_run_result: dict
-    schema_diff: dict                          # schema_evolve 的变更预览
-    error_feedback: str
-    iteration_count: int
-    # gap_check 子流程相关
+    dry_run_result: dict                       # {success, preview_row, error_log}
+    error_feedback: str                        # 上一轮失败反馈, 重试时传入 code_generate
+    iteration_count: int                       # Agent 层重试计数, 含首次
+
+    # —— schema_evolve / validate / apply ——
+    schema_diff: dict                          # 待应用变更草案
+    validation_result: dict                    # {errors, warnings, passed}
+    applied_changes: list[dict]                # schema_apply 后落库的变更条目 (含 version / commit_hash)
+
+    # —— gap_check / gap_proposal 子流程 ——
     gaps: list[dict]                           # 缺失对象列表
+    has_gaps: bool                             # gap_check 结论
     resolved_gaps: dict                        # 已补齐的映射 {keyword: table_name}
     sub_flow_active: bool                      # 是否正在子流程中
     sub_flow_return_point: str                 # 子流程完成后回到哪个节点
-    context_source: str                        # 上下文来源: "metadata" | "lineage" | "pipeline" | None
+
+    # —— presenter ——
+    presenter_payload: dict                    # {type, ...} 给 UI 的预构建载荷
+    final_message: str                         # presenter 输出的对话总结文案
 ```
+
+> `total=False` 表示所有字段可选 — 不同路径只写自己关心的子集，LangGraph 自动 merge。
 
 ### 4.3 Tools (Agent 可调用)
 
