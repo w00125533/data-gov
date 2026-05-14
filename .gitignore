@@ -25,3 +25,14 @@ Thumbs.db
 
 # Data
 data/*.db
+
+# Stack data volumes (persisted by compose)
+data/
+metastore_db/
+
+# Python packaging
+*.egg-info/
+.pytest_cache/
+
+# Init script logs
+.init.log
