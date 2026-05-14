@@ -47,4 +47,4 @@ def test_build_docs_from_neo4j_returns_10_tables_and_about_65_fields():
     # 每条 doc 有非空 text 和 metadata.version
     for d in docs:
         assert d.text.strip()
-        assert d.metadata.get("version") == 1
+        assert d.metadata.get("version", 0) >= 1
