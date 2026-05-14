@@ -108,3 +108,15 @@ def test_starrocks_fe_reachable():
             return False
 
     wait_until(_check, timeout=240, desc="StarRocks FE :9030 SELECT 1")
+
+
+@pytest.mark.infra
+def test_neo4j_http_reachable():
+    response = wait_until(
+        lambda: _safe_get("http://localhost:7474/"),
+        timeout=120,
+        desc="Neo4j HTTP :7474",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "neo4j_version" in payload, f"unexpected response payload: {payload!r}"
