@@ -14,16 +14,15 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+COMPOSE_FILE = REPO_ROOT / "base-compose.yml"
 
 
 def _run_spark_sql(sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
-            "docker", "run", "--rm",
-            "--network", "data-gov_default",
-            "-v", f"{REPO_ROOT}/docker/hadoop-conf:/etc/hadoop/conf:ro",
-            "apache/spark:3.5.4",
-            "/opt/spark/bin/spark-sql",
+            "docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "tools",
+            "run", "--rm",
+            "spark",
             "--conf", "spark.sql.catalogImplementation=hive",
             "--conf", "spark.hadoop.hive.metastore.uris=thrift://hive-metastore:9083",
             "--conf", "spark.hadoop.fs.defaultFS=hdfs://namenode:8020",

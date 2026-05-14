@@ -53,12 +53,10 @@ def _write_rows_via_spark(rows: list[tuple]) -> None:
     try:
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--network", "data-gov_default",
-                "-v", f"{REPO_ROOT}/docker/hadoop-conf:/etc/hadoop/conf:ro",
+                "docker", "compose", "-f", str(REPO_ROOT / "base-compose.yml"),
+                "--profile", "tools", "run", "--rm",
                 "-v", f"{sql_path}:/work/insert.sql:ro",
-                "apache/spark:3.5.4",
-                "/opt/spark/bin/spark-sql",
+                "spark",
                 "--conf", "spark.sql.catalogImplementation=hive",
                 "--conf", "spark.hadoop.hive.metastore.uris=thrift://hive-metastore:9083",
                 "--conf", "spark.hadoop.fs.defaultFS=hdfs://namenode:8020",

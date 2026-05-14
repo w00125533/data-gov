@@ -8,12 +8,9 @@ echo "[1/8] Waiting for base infrastructure healthy ..."
 ./scripts/wait-for-healthy.sh 300
 
 echo "[2/8] Applying 01_hive_init.sql ..."
-docker run --rm \
-  --network data-gov_default \
+docker compose -f base-compose.yml --profile tools run --rm \
   -v "$REPO_ROOT/init-scripts:/work:ro" \
-  -v "$REPO_ROOT/docker/hadoop-conf:/etc/hadoop:ro" \
-  apache/spark:3.5.4 \
-  /opt/spark/bin/spark-sql \
+  spark \
     --conf spark.sql.catalogImplementation=hive \
     --conf spark.hadoop.hive.metastore.uris=thrift://hive-metastore:9083 \
     --conf spark.hadoop.fs.defaultFS=hdfs://namenode:8020 \
