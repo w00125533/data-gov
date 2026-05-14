@@ -1,0 +1,413 @@
+- id: Q001
+  type: A
+  query: 查 UE 终端的 RSRP/SINR 采样
+  expected_table: ods_ue_signal
+  expected_fields:
+  - rsrp
+  difficulty: easy
+- id: Q002
+  type: A
+  query: 用户终端的信噪比原始数据
+  expected_table: ods_ue_signal
+  expected_fields:
+  - sinr
+  difficulty: easy
+- id: Q003
+  type: A
+  query: 终端上报的信号原始流
+  expected_table: ods_ue_signal
+  expected_fields: []
+  difficulty: easy
+- id: Q004
+  type: A
+  query: 基站告警的原始数据
+  expected_table: ods_gnb_alarm
+  expected_fields: []
+  difficulty: easy
+- id: Q005
+  type: A
+  query: gnodeB 故障告警流
+  expected_table: ods_gnb_alarm
+  expected_fields:
+  - alarm_type
+  difficulty: medium
+- id: Q006
+  type: A
+  query: 基站故障严重度
+  expected_table: ods_gnb_alarm
+  expected_fields:
+  - severity
+  difficulty: easy
+- id: Q007
+  type: A
+  query: 用户会话级别的 QoS 明细
+  expected_table: dwd_session_qos
+  expected_fields: []
+  difficulty: easy
+- id: Q008
+  type: A
+  query: 会话粒度的平均覆盖强度
+  expected_table: dwd_session_qos
+  expected_fields:
+  - avg_rsrp
+  difficulty: medium
+- id: Q009
+  type: A
+  query: 会话粒度的平均信噪比
+  expected_table: dwd_session_qos
+  expected_fields:
+  - avg_sinr
+  difficulty: medium
+- id: Q010
+  type: A
+  query: 会话延时和抖动
+  expected_table: dwd_session_qos
+  expected_fields:
+  - latency
+  difficulty: medium
+- id: Q011
+  type: A
+  query: 终端切换事件记录
+  expected_table: dwd_ho_event
+  expected_fields: []
+  difficulty: easy
+- id: Q012
+  type: A
+  query: 用户基站间切换是否成功
+  expected_table: dwd_ho_event
+  expected_fields:
+  - ho_result
+  difficulty: medium
+- id: Q013
+  type: A
+  query: 切换的源小区和目标小区
+  expected_table: dwd_ho_event
+  expected_fields:
+  - source_cell
+  difficulty: easy
+- id: Q014
+  type: A
+  query: 小区小时粒度的平均覆盖强度
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - avg_rsrp
+  difficulty: easy
+- id: Q015
+  type: A
+  query: 小区每小时的掉话率
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - drop_rate
+  difficulty: easy
+- id: Q016
+  type: A
+  query: 每个小区每小时的平均吞吐量
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - avg_throughput
+  difficulty: easy
+- id: Q017
+  type: A
+  query: 小区小时粒度切换成功率
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - ho_success_rate
+  difficulty: easy
+- id: Q018
+  type: A
+  query: 小区每小时会话总数
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - total_sessions
+  difficulty: medium
+- id: Q019
+  type: A
+  query: 区域级别每小时的流量统计
+  expected_table: dws_area_traffic
+  expected_fields: []
+  difficulty: easy
+- id: Q020
+  type: A
+  query: 区域级活跃用户数
+  expected_table: dws_area_traffic
+  expected_fields:
+  - active_users
+  difficulty: medium
+- id: Q021
+  type: A
+  query: 区域每小时上下行字节数
+  expected_table: dws_area_traffic
+  expected_fields:
+  - uplink_bytes
+  difficulty: medium
+- id: Q022
+  type: A
+  query: 小区画像的覆盖能力指标
+  expected_table: ads_cell_profile
+  expected_fields:
+  - coverage_score
+  difficulty: medium
+- id: Q023
+  type: A
+  query: 小区容量评分
+  expected_table: ads_cell_profile
+  expected_fields:
+  - capacity_score
+  difficulty: medium
+- id: Q024
+  type: A
+  query: 小区稳定性评分
+  expected_table: ads_cell_profile
+  expected_fields:
+  - stability_score
+  difficulty: medium
+- id: Q025
+  type: A
+  query: 小区移动性评分
+  expected_table: ads_cell_profile
+  expected_fields:
+  - mobility_score
+  difficulty: medium
+- id: Q026
+  type: A
+  query: 用户画像 QoE 评分
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: medium
+- id: Q027
+  type: A
+  query: 用户活跃天数
+  expected_table: eval_user_score
+  expected_fields:
+  - active_days
+  difficulty: easy
+- id: Q028
+  type: A
+  query: 用户综合体验评估打分
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: medium
+- id: Q029
+  type: A
+  query: 网络整体健康度指标
+  expected_table: eval_net_health
+  expected_fields:
+  - health_index
+  difficulty: medium
+- id: Q030
+  type: A
+  query: 网络可用性评估
+  expected_table: eval_net_health
+  expected_fields:
+  - availability
+  difficulty: medium
+- id: Q031
+  type: B
+  query: 帮我看看最近一段时间信号质量差的用户都有哪些
+  expected_table: dwd_session_qos
+  expected_fields:
+  - avg_sinr
+  - avg_rsrp
+  difficulty: medium
+- id: Q032
+  type: B
+  query: 我想知道哪些基站老是告警
+  expected_table: ods_gnb_alarm
+  expected_fields:
+  - gnb_id
+  - alarm_type
+  difficulty: medium
+- id: Q033
+  type: B
+  query: 运维老板要看每个小区的整体打分
+  expected_table: ads_cell_profile
+  expected_fields:
+  - coverage_score
+  difficulty: medium
+- id: Q034
+  type: B
+  query: 查一下用户在 5G 切换时成功的比例
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - ho_success_rate
+  difficulty: hard
+- id: Q035
+  type: B
+  query: 我要看高峰时段哪些区域流量爆了
+  expected_table: dws_area_traffic
+  expected_fields:
+  - uplink_bytes
+  - downlink_bytes
+  difficulty: hard
+- id: Q036
+  type: B
+  query: 评估一下网络是否健康
+  expected_table: eval_net_health
+  expected_fields:
+  - health_index
+  difficulty: medium
+- id: Q037
+  type: B
+  query: 我想分析用户 QoE 体验分数的分布
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: easy
+- id: Q038
+  type: B
+  query: 拉一下小区每小时的平均掉话率
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - drop_rate
+  difficulty: easy
+- id: Q039
+  type: B
+  query: 查覆盖弱的用户的明细
+  expected_table: dwd_session_qos
+  expected_fields:
+  - avg_rsrp
+  difficulty: medium
+- id: Q040
+  type: B
+  query: 把所有终端在基站间的切换都列出来
+  expected_table: dwd_ho_event
+  expected_fields: []
+  difficulty: easy
+- id: Q041
+  type: B
+  query: 看一下哪些用户活跃天数多
+  expected_table: eval_user_score
+  expected_fields:
+  - active_days
+  difficulty: easy
+- id: Q042
+  type: B
+  query: 想看小区在某段时间内的吞吐能力
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - avg_throughput
+  difficulty: medium
+- id: Q043
+  type: B
+  query: 找网络稳定性差的小区
+  expected_table: ads_cell_profile
+  expected_fields:
+  - stability_score
+  difficulty: medium
+- id: Q044
+  type: B
+  query: 做用户体验报告需要打分原始数据
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: medium
+- id: Q045
+  type: B
+  query: ARPU 高但是体验差的用户有哪些
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: hard
+- id: Q046
+  type: B
+  query: 查每个区域每小时的活跃用户数
+  expected_table: dws_area_traffic
+  expected_fields:
+  - active_users
+  difficulty: easy
+- id: Q047
+  type: B
+  query: 我要监测掉线率突增的小区
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - drop_rate
+  difficulty: medium
+- id: Q048
+  type: B
+  query: 想知道告警持续了多久
+  expected_table: ods_gnb_alarm
+  expected_fields:
+  - duration
+  difficulty: medium
+- id: Q049
+  type: B
+  query: 看用户从一个塔切到另一个塔的情况
+  expected_table: dwd_ho_event
+  expected_fields:
+  - source_cell
+  - target_cell
+  difficulty: hard
+- id: Q050
+  type: B
+  query: 做容量评估的输入数据
+  expected_table: ads_cell_profile
+  expected_fields:
+  - capacity_score
+  difficulty: hard
+- id: Q051
+  type: C
+  query: 网络状况怎么样
+  expected_table: eval_net_health
+  expected_fields:
+  - health_index
+  difficulty: hard
+- id: Q052
+  type: C
+  query: 找出网络里有问题的地方
+  expected_table: eval_net_health
+  expected_fields:
+  - health_index
+  difficulty: hard
+- id: Q053
+  type: C
+  query: 啥都不知道, 给我看个总体情况
+  expected_table: eval_net_health
+  expected_fields: []
+  difficulty: hard
+- id: Q054
+  type: C
+  query: 把所有的数据都给我
+  expected_table: ods_ue_signal
+  expected_fields: []
+  difficulty: hard
+- id: Q055
+  type: C
+  query: 做一份分析报告
+  expected_table: eval_user_score
+  expected_fields: []
+  difficulty: hard
+- id: Q056
+  type: C
+  query: 我说的那个表
+  expected_table: dwd_session_qos
+  expected_fields: []
+  difficulty: hard
+- id: Q057
+  type: C
+  query: RSRP 是什么意思
+  expected_table: ods_ue_signal
+  expected_fields:
+  - rsrp
+  difficulty: medium
+- id: Q058
+  type: C
+  query: 查 5G 数据
+  expected_table: ods_ue_signal
+  expected_fields: []
+  difficulty: hard
+- id: Q059
+  type: C
+  query: qoe 评分公式是啥
+  expected_table: eval_user_score
+  expected_fields:
+  - qoe_score
+  difficulty: medium
+- id: Q060
+  type: C
+  query: 切换成功率怎么算
+  expected_table: dws_cell_hourly
+  expected_fields:
+  - ho_success_rate
+  difficulty: medium
