@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # 02_kafka_init.sh — idempotent Kafka topic creation for ODS layer.
+# Run from repo root.  MSYS_NO_PATHCONV prevents Git Bash from mangling
+# /opt/… paths inside docker exec.
 set -euo pipefail
+export MSYS_NO_PATHCONV=1
 
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka:9092}"
 
@@ -8,13 +11,13 @@ create_topic() {
   local name="$1"
   local partitions="${2:-3}"
   local rf="${3:-1}"
-  if MSYS_NO_PATHCONV=1 docker exec kafka //opt/kafka/bin/kafka-topics.sh \
+  if docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server "$BOOTSTRAP" \
       --list 2>/dev/null | grep -qx "$name"; then
     echo "topic $name exists"
     return 0
   fi
-  MSYS_NO_PATHCONV=1 docker exec kafka //opt/kafka/bin/kafka-topics.sh \
+  docker exec kafka /opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server "$BOOTSTRAP" \
       --create \
       --topic "$name" \
