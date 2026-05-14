@@ -134,6 +134,7 @@ def test_p1_1_all_services_healthy():
 
     nn = _safe_get("http://localhost:9870/dfshealth.html")
     assert nn is not None and nn.status_code == 200, "NN UI unreachable"
+    assert "Hadoop" in nn.text, "NN UI does not contain Hadoop"
 
     rm = _safe_get("http://localhost:8088/ws/v1/cluster/info")
     assert rm is not None and rm.status_code == 200, "RM REST unreachable"
