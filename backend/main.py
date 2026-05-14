@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.agent.chat_session import ChatSessionStore
-from backend.api import chat, health, metadata, search
+from backend.api import chat, health, metadata, schema_evolution, search
 from backend.config import get_settings
 from backend.metadata.graph import close_driver, get_driver
 from backend.search.docs import build_docs_from_neo4j
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, tags=["health"])
     app.include_router(metadata.router, tags=["metadata"])
     app.include_router(search.router, tags=["search"])
+    app.include_router(schema_evolution.router, tags=["schema"])
     app.include_router(chat.router, tags=["chat"])
     return app
 
