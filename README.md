@@ -69,5 +69,29 @@ python scripts/benchmark_semantic_search.py --use-rerank
 python scripts/benchmark_semantic_search.py --bootstrap-from-seed
 ```
 
-Deferred to slice 2b: LangGraph Agent (forward_etl / reverse_synth / schema_evolve), `/api/chat/*`, gap_check / gap_proposal.
-Deferred to slice 2c: 沙箱 (Spark SQL / Flink SQL / Java Flink dry_run).
+
+## Acceptance coverage (Phase 2 — slice 2b)
+
+| Case | Verifies | Test |
+|------|----------|------|
+| P2b-1 | classifier 三意图分类 + 关键词降级 | `tests/agent/nodes/test_classifier.py` |
+| P2b-2 | forward_etl / reverse_synth 抽取与表搜索 | `tests/agent/nodes/test_forward_etl.py` + `test_reverse_synth.py` |
+| P2b-3 | pipeline_parse 上溯链路 | `tests/agent/nodes/test_pipeline_parse.py` |
+| P2b-4 | gap_check + gap_proposal 子流程 | `tests/agent/nodes/test_gap_check.py` + `test_gap_proposal.py` |
+| P2b-5 | code_generate + dry_run + Agent 层 3 轮重试 | `tests/agent/nodes/test_code_generate.py` + `test_dry_run.py` + `tests/agent/test_graph_routing.py` |
+| P2b-6 | schema_evolve → validate → apply 全链 | `tests/agent/nodes/test_schema_evolve.py` / `test_schema_validate.py` / `test_schema_apply.py` |
+| P2b-7 | YAML 同步 + git commit + Change.commit_hash | `tests/agent/test_yaml_sync.py` + `test_schema_apply.py` |
+| P2-1 | forward_etl → spark_sql 路径 (mock LLM/sandbox) | `tests/agent/test_graph_e2e.py::test_p2_1_*` |
+| P2-8 | NL→新增字段 → Neo4j + YAML (mock) | `tests/agent/test_graph_e2e.py::test_p2_8_*` |
+| P2-9 | 删除有下游引用的字段被拒绝 | `tests/agent/test_graph_e2e.py::test_p2_9_*` |
+| P2-11 | gap_check missing_table | `tests/agent/test_graph_e2e.py::test_p2_11_*` |
+| Chat | SSE 流式对话 `/api/chat/*` | `tests/agent/test_api_chat.py` |
+| Schema | `/api/schema/apply` + evolution timeline | `tests/agent/test_api_schema.py` |
+
+跑 slice 2b 全部测试：
+
+```bash
+python -m pytest tests/agent -v
+```
+
+**Deferred to slice 2c**：沙箱真实执行 (P2-4..P2-7)、沙箱层 execute_with_retry、sandbox_stub 替换为 SandboxController。
