@@ -29,7 +29,7 @@
 | 决策点 | 选择 |
 |--------|------|
 | 后端框架 | Python FastAPI |
-| 元数据存储 | SQLite |
+| 元数据存储 | Neo4j (图数据库, 表/字段/血缘统一持久化) |
 | Agent 框架 | LangChain + LangGraph |
 | 外部 LLM | DeepSeek (OpenAI 兼容接口) |
 | 配置管理 | `.env` |
@@ -121,13 +121,13 @@
 │       ├── 4.4.2 变更一致性校验 (重名/断链/循环依赖)
 │       ├── 4.4.3 Diff 对比面板 (旧 vs 新, 左右对照)
 │       ├── 4.4.4 下游影响分析 + 警告
-│       ├── 4.4.5 确认后写入 SQLite + 重写 YAML
+│       ├── 4.4.5 确认后写入 Neo4j + 重写 YAML
 │       └── 4.4.6 变更历史记录 (版本 + 旧值留痕)
 │   └── 4.5 语义检索 (search_tables_by_keyword)
 │       ├── 4.5.1 BM25 倒排索引 (jieba 分词 + 术语保护)
 │       ├── 4.5.2 Dense 向量检索 (bge-small-zh-v1.5 + ChromaDB)
 │       ├── 4.5.3 RRF 融合 + LLM Rerank 兜底
-│       └── 4.5.4 增量同步 (SQLite version → ChromaDB upsert)
+│       └── 4.5.4 增量同步 (Neo4j Field.version → ChromaDB upsert)
 │
 ├── 5. Pipeline 可视化 (/pipeline)
 │   ├── 5.1 正向 ETL DAG
@@ -193,60 +193,100 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
 | 9 | `eval_user_score` | L5-EVAL | StarRocks | imsi, date, qoe_score, signal_quality, mobility_score, service_continuity | `ads_cell_profile` |
 | 10 | `eval_net_health` | L5-EVAL | StarRocks | area_id, date, health_index, alarm_severity_weighted, user_complaint_ratio, degradation_trend | `dws_area_traffic`, `ods_gnb_alarm`, `eval_user_score` |
 
-### 2.3 SQLite Schema
+### 2.3 Neo4j Schema
 
-```sql
--- 表元数据
-CREATE TABLE metadata_tables (
-    id INTEGER PRIMARY KEY,
-    table_name TEXT UNIQUE NOT NULL,
-    layer TEXT NOT NULL,           -- ODS / DWD / DWS / ADS / EVAL
-    layer_priority INTEGER,
-    description TEXT,
-    storage_type TEXT              -- KAFKA / HIVE / STARROCKS
-);
+技术栈中已不再使用 SQLite。表/字段/血缘/审计变更全部以图模型持久化在 Neo4j。
 
--- 字段元数据
-CREATE TABLE metadata_fields (
-    id INTEGER PRIMARY KEY,
-    table_id INTEGER REFERENCES metadata_tables(id),
-    field_name TEXT NOT NULL,
-    field_type TEXT NOT NULL,      -- STRING / INT / BIGINT / DOUBLE / TIMESTAMP
-    is_nullable INTEGER DEFAULT 1,
-    is_partition INTEGER DEFAULT 0,    -- 分区字段标识 (表的分区键 = 该表 is_partition=1 的字段集)
-    expression TEXT,               -- 计算表达式 (SQL fragment)
-    description TEXT,
-    upstream_field_refs TEXT,      -- JSON: [{"table":"x","field":"y"}], 血缘关系的唯一权威存储
-    version INTEGER DEFAULT 1,
-    previous_expr TEXT             -- JSON: [{"v":1,"expr":"..."}]
-);
+#### 节点
 
--- 元数据变更记录 (审计 + git 关联, schema_evolve 路径写入)
-CREATE TABLE metadata_changes (
-    id INTEGER PRIMARY KEY,
-    table_name TEXT NOT NULL,
-    field_name TEXT,                   -- 可空 (表级变更时为 NULL)
-    operation TEXT NOT NULL,           -- ADD_TABLE / ADD_FIELD / UPDATE_FIELD / DELETE_FIELD / DELETE_TABLE
-    version INTEGER NOT NULL,          -- 变更后版本号
-    commit_hash TEXT,                  -- git commit hash, schema_apply 同步 commit 后回填
-    old_value TEXT,                    -- JSON, 旧值快照
-    new_value TEXT,                    -- JSON, 新值快照
-    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+```cypher
+// 表节点
+(:Table {
+    id,                  // 内部稳定 ID (UUID)
+    name,                // 表名 (业务唯一)
+    layer,               // ODS / DWD / DWS / ADS / EVAL
+    layer_priority,
+    description,
+    storage_type         // KAFKA / HIVE / STARROCKS
+})
+
+// 字段节点
+(:Field {
+    id,                  // 内部稳定 ID (UUID)
+    name,                // 字段名 (在所属表内唯一)
+    field_type,          // STRING / INT / BIGINT / DOUBLE / TIMESTAMP
+    is_nullable,         // bool
+    is_partition,        // bool (表的分区键 = 所属表中 is_partition=true 的字段集)
+    expression,          // 计算表达式 (SQL fragment)
+    description,
+    version,             // int, 默认 1
+    previous_expr        // JSON 字符串: [{"v":1,"expr":"..."}]
+})
+
+// 元数据变更审计节点 (schema_evolve 路径写入)
+(:Change {
+    id,
+    table_name,          // 字符串字段, 删除目标后仍可查
+    field_name,          // 可空 (表级变更时为空)
+    operation,           // ADD_TABLE / ADD_FIELD / UPDATE_FIELD / DELETE_FIELD / DELETE_TABLE
+    version,             // 变更后版本号
+    commit_hash,         // git commit hash, schema_apply 同步 commit 后回填
+    old_value,           // JSON 字符串, 旧值快照
+    new_value,           // JSON 字符串, 新值快照
+    changed_at           // ISO8601 字符串
+})
 ```
 
-血缘查询通过扫描所有字段的 `upstream_field_refs` 构建 DAG。血缘边的新增/编辑/删除通过对目标字段的 `upstream_field_refs` 变更完成，复用字段 CRUD API。不设独立血缘表。表的分区键集合通过聚合该表所有 `is_partition=1` 的字段得到，不在表级冗余存储。
+#### 关系
+
+```cypher
+// 表-字段隶属关系
+(Table)-[:HAS_FIELD]->(Field)
+
+// 字段级血缘 (target 由 upstream 派生; 语义等同旧 upstream_field_refs)
+(Field)-[:DERIVES_FROM {transform_expr, created_at}]->(Field)
+```
+
+#### 约束与索引
+
+```cypher
+CREATE CONSTRAINT table_id_unique FOR (t:Table) REQUIRE t.id IS UNIQUE;
+CREATE CONSTRAINT table_name_unique FOR (t:Table) REQUIRE t.name IS UNIQUE;
+CREATE CONSTRAINT field_id_unique FOR (f:Field) REQUIRE f.id IS UNIQUE;
+CREATE CONSTRAINT change_id_unique FOR (c:Change) REQUIRE c.id IS UNIQUE;
+
+CREATE INDEX field_name_idx FOR (f:Field) ON (f.name);
+CREATE INDEX change_changed_at_idx FOR (c:Change) ON (c.changed_at);
+CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
+```
+
+应用层强制约束（写入前 Cypher 校验）：
+- `(t:Table)-[:HAS_FIELD]->(f:Field)` 在同一 `(t.name, f.name)` 维度唯一
+- `DERIVES_FROM` 不能成环：写入新边前执行 `MATCH (target)-[:DERIVES_FROM*1..]->(target) RETURN count(*)`，结果必须为 0
+
+#### 写入语义
+
+- 单 Neo4j 事务内同时写元数据节点/边 + 创建对应 `Change` 节点；失败原子回滚
+- 审计 `Change` 节点为孤立节点，不与 Table/Field 建关系：删除操作的目标节点已不存在，关系会丢，字符串属性 `table_name`/`field_name` 独立保存即可。审计为只读追加日志，不参与图遍历
+
+#### 派生查询
+
+不在图中冗余存储以下信息，全部由 Cypher 实时计算：
+
+- 字段级血缘 DAG：`MATCH path=(f:Field {id:$id})-[:DERIVES_FROM*1..$d]->(u) RETURN path`
+- 表级血缘聚合：`MATCH (t1:Table)-[:HAS_FIELD]->(f1)-[:DERIVES_FROM]->(f2)<-[:HAS_FIELD]-(t2) RETURN t1, t2, count(*) AS edge_weight`
+- 表分区键集合：`MATCH (t:Table {name:$n})-[:HAS_FIELD]->(f:Field {is_partition:true}) RETURN f.name`
 
 ### 2.4 元数据演进策略
 
 - 通过 NL 驱动元数据变更 (schema_evolve 路径)
 - 增/删/改字段前执行一致性校验 (循环依赖检测、断链检测)
-- 变更记录 version + previous_expr 留痕（SQLite 内轻量版本链），非完整 temporal versioning
-- YAML 文件纳入 git 版本控制，提供 git diff 级别的完整历史追溯（与 SQLite 内 version 链互补：version 链用于逻辑追溯，git diff 用于 YAML 级别的审计和回滚）
+- 变更记录 version + previous_expr 留痕（Neo4j 中 Field 节点属性 + `Change` 节点轻量版本链），非完整 temporal versioning
+- YAML 文件纳入 git 版本控制，提供 git diff 级别的完整历史追溯（与 Neo4j 内 version 链互补：version 链用于逻辑追溯，git diff 用于 YAML 级别的审计和回滚）
 
 ### 2.5 YAML 元数据副本
 
-每张表在 SQLite 之外同步生成一份 YAML 文件，用于人工查阅和版本 diff。存储路径：
+每张表在 Neo4j 之外同步生成一份 YAML 文件，用于人工查阅和版本 diff。存储路径：
 
 ```
 metadata-yaml/
@@ -344,7 +384,7 @@ fields:
         field: ho_result
 ```
 
-- SQLite 为运行时权威数据源，YAML 为人工可读副本
+- Neo4j 为运行时权威数据源，YAML 为人工可读副本
 - 元数据演进 (schema_evolve) 变更应用后，同步重写对应 YAML 文件
 - YAML 纳入 git 版本控制，变更历史可通过 git diff 追溯
 
@@ -365,6 +405,7 @@ fields:
 | Kafka Broker | 9092 | KRaft 模式 (无 ZK) |
 | StarRocks FE | 9030 / 8030 | OLAP 查询 |
 | StarRocks BE | 9060 | 存储计算 |
+| Neo4j | 7474 (Browser) / 7687 (Bolt) | 元数据 + 血缘唯一权威数据源；APOC plugin；`./data/neo4j/` 卷持久化；`neo4j:5-community` 镜像 |
 
 ### 3.2 App Compose (应用层，独立启停)
 
@@ -396,8 +437,9 @@ init-scripts/
 ├── 02_kafka_init.sh
 ├── 03_starrocks_init.sql
 ├── 04_sample_data.py          # 反向合成小批量数据，灌入 Hive + StarRocks
-├── 05_sqlite_seed.py          # 10 张表元数据写入 SQLite
-└── 06_export_yaml.py          # SQLite → metadata-yaml/ 导出 YAML
+├── 05_neo4j_init.py           # 创建约束/索引 (Constraint + Index DDL)
+├── 06_neo4j_seed.py           # 10 张表 + ~70 字段 + 字段级血缘边写入 Neo4j
+└── 07_export_yaml.py          # Neo4j → metadata-yaml/ 导出 YAML
 ```
 
 ### 3.6 服务健康检查面板
@@ -407,7 +449,7 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
 | 组件 | 检查方式 | 正常指标 |
 |------|---------|----------|
 | FastAPI | GET `/api/health` | 200 + uptime |
-| SQLite | `SELECT 1` | < 1ms |
+| Neo4j | Bolt `RETURN 1` | < 5ms |
 | HDFS NameNode | HTTP `:9870/jmx` | State=active |
 | YARN RM | HTTP `:8088/ws/v1/cluster/info` | started=true |
 | Hive Metastore | Thrift connect `:9083` | connected |
@@ -423,7 +465,7 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
   "status": "healthy",
   "uptime_seconds": 1234,
   "components": {
-    "sqlite": {"status": "ok", "latency_ms": 0.5},
+    "neo4j": {"status": "ok", "latency_ms": 3.2, "node_count": 80},
     "hdfs": {"status": "ok", "state": "active"},
     "yarn": {"status": "ok", "nodes": 1},
     "hive": {"status": "ok"},
@@ -461,7 +503,7 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
     │schema   ││pipeline  │   └──────┬────────┘
     │_lookup  ││_parse    │   ┌──────┴────────┐
     └────┬────┘└─────┬────┘   │schema_apply    │
-         │           │        │(写入SQLite)     │
+         │           │        │(写入Neo4j)      │
          ▼           ▼        └──────┬────────┘
     ┌────────────────────────────┐  │
     │   gap_check                │  │
@@ -631,7 +673,7 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
 
 ##### `schema_apply`
 
-- **作用**: 把 `schema_diff` 应用到 SQLite，同步重写 YAML 并 git commit，回填 `metadata_changes` 表。
+- **作用**: 把 `schema_diff` 应用到 Neo4j，同步重写 YAML 并 git commit，回填 `Change` 节点 `commit_hash`。
 - **触发**: `schema_validate.passed=True`。
 - **输入** (State): `schema_diff`、`validation_result`。
 - **输出** (State): `applied_changes` (含 version / commit_hash)。
@@ -641,17 +683,19 @@ Web UI 提供健康检查面板（路由 `/health`），展示各组件连通性
   ```python
   def schema_apply(state):
       applied = []
-      with sqlite_transaction():
+      with neo4j_session.begin_transaction() as tx:
           for op in state["schema_diff"]:
-              applied.append(dispatch_change(op))   # CRUD + version+1 + 写 metadata_changes(commit_hash=NULL)
-          sync_yaml(affected_tables(state["schema_diff"]))
+              # CRUD 节点/边 + version+1 + 同事务内创建 (:Change {commit_hash:null}) 节点
+              applied.append(dispatch_change(tx, op))
+          sync_yaml(affected_tables(state["schema_diff"]))   # 同事务内 YAML 写入失败则回滚
+          tx.commit()
       commit_hash = git_commit(f"schema_evolve: {summarize(state['schema_diff'])}")
       for a in applied:
-          update_change_commit(a["change_id"], commit_hash)   # 回填 metadata_changes.commit_hash
+          update_change_commit(a["change_id"], commit_hash)   # 回填 Change.commit_hash
       return {"applied_changes": applied}
   ```
 - **下游节点**: 主流程 → `presenter`；子流程（`sub_flow_active=True` 时进入的）→ `schema_lookup`。
-- **错误处理**: SQLite 写失败 → 事务回滚；YAML 写失败 → 同事务内回滚；git commit 失败 → 库已写入但 `commit_hash=NULL`，由对账脚本下次启动补齐。
+- **错误处理**: Neo4j 写失败 → 事务回滚；YAML 写失败 → 同事务内回滚；git commit 失败 → 库已写入但 `commit_hash=null`，由对账脚本下次启动补齐。
 
 ##### `schema_lookup`
 
@@ -875,12 +919,12 @@ class AgentState(TypedDict, total=False):
 | `generate_fake_data` | 反向合成小批量数据 | reverse_synth |
 | `validate_change` | 变更一致性检查 (重名/断链/循环依赖) | schema_evolve |
 | `add_table / add_field / update_field / remove_field` | 元数据变更 | schema_evolve |
-| `sync_yaml` | SQLite 变更后同步重写 YAML 文件 | schema_evolve |
+| `sync_yaml` | Neo4j 变更后同步重写 YAML 文件 | schema_evolve |
 | `dry_run_spark_sql` | Spark SQL E2E + HDFS 回读 | forward_etl |
 | `dry_run_flink_sql` | Flink SQL E2E + HDFS 回读 | forward_etl |
 | `dry_run_java_flink` | Java Flink E2E + HDFS 回读 | forward_etl |
 
-> - `lookup_table_schema` / `lookup_lineage` 是 Agent 内部工具，直接读 SQLite（与 HTTP `/api/tables`、`/api/lineage` 共享同一个 service 函数，但不经过 HTTP）。
+> - `lookup_table_schema` / `lookup_lineage` 是 Agent 内部工具，直接读 Neo4j (Cypher) — 与 HTTP `/api/tables`、`/api/lineage` 共享同一个 service 函数，但不经过 HTTP。
 > - `dry_run_spark_sql / dry_run_flink_sql / dry_run_java_flink` 三个工具均是 thin wrapper，统一委派给 `SandboxController.execute(code, code_type)`（§5.4）。分三个工具仅为让 Agent 通过工具名表达执行意图。
 
 ### 4.4 DeepSeek 集成
@@ -910,7 +954,7 @@ Agent 层 `iteration_count` 计入包括首次执行在内的总轮次（首次 
 
 #### 4.6.1 检索空间
 
-SQLite 中 10 张表 + ~70 个字段，每条生成一个索引文本：
+Neo4j 中 10 张表 + ~70 个字段，每条生成一个索引文本：
 
 ```python
 # 表级
@@ -952,7 +996,7 @@ field_doc = {
 | 中文分词 | jieba | 轻量、纯 Python、RNO 术语词典可自定义 |
 | Embedding 模型 | `BAAI/bge-small-zh-v1.5` | 24MB、512 维、MIT 开源、CLS pooling、批量编码 ~5ms/条 (CPU) |
 | 关键词检索 | BM25 (rank-bm25) | 对 RSRP/SINR/cell_id 等技术术语精确匹配，与分词互补 |
-| 向量存储 | ChromaDB (persistent) | Python 原生、SQLite 底层自动持久化、内置 metadata filter、upsert 增量更新 |
+| 向量存储 | ChromaDB (persistent) | Python 原生、本地文件持久化（ChromaDB 内部使用 SQLite，与本项目元数据存储 Neo4j 无关）、内置 metadata filter、upsert 增量更新 |
 | 精排兜底 | DeepSeek Chat | 口语化/模糊表达时做 LLM rerank |
 
 #### 4.6.3 文本预处理
@@ -979,9 +1023,9 @@ def tokenize(text: str) -> list[str]:
 FastAPI 启动时:
   1. 加载 bge-small-zh-v1.5 到内存 (24MB, ~1s)
   2. ChromaDB PersistentClient 连接 ./data/chroma/
-  3. 如果 Chroma 为空 → 从 SQLite 加载元数据 → 构建索引文本
+  3. 如果 Chroma 为空 → 从 Neo4j 加载元数据 (Cypher: MATCH (t:Table)-[:HAS_FIELD]->(f)) → 构建索引文本
      → 向量化 → 写入 Chroma → 构建 BM25 倒排
-  4. 如果 Chroma 已有 → 对比 Chroma index_version 与 SQLite MAX(version)
+  4. 如果 Chroma 已有 → 对比 Chroma index_version 与 Neo4j MAX(f.version)
      → 仅 upsert 变更的 docs → 重建 BM25 (增量, <1ms)
 ```
 
@@ -1014,7 +1058,7 @@ class HybridSearcher:
 异常处理:
 
 - bge-small-zh-v1.5 模型下载失败：FastAPI 启动时 `SentenceTransformer` 加载失败 → 降级为纯 BM25 模式 + 日志告警，语义搜索仍可用（仅 Dense 向量检索不可用）
-- ChromaDB 数据损坏：`PersistentClient` 连接失败 → 自动重建（删除 `./data/chroma/` → 从 SQLite 全量重建索引）
+- ChromaDB 数据损坏：`PersistentClient` 连接失败 → 自动重建（删除 `./data/chroma/` → 从 Neo4j 全量重建索引）
 - 内存压力：bge 模型 24MB + ChromaDB 持久化文件 < 10MB (80 docs × 512维)，总计 < 50MB，无需特殊处理
 
 #### 4.6.5 混合检索流程
@@ -1411,12 +1455,12 @@ class SandboxController:
 │  │+ 添加字段                               │
 │  └────┴──────┴──────┴──────────────┘        │
 │                                              │
-│  [保存] (SQLite)  [保存并导出 YAML]  [取消]     │
+│  [保存]  [保存并导出 YAML]  [取消]               │
 └──────────────────────────────────────────────┘
 ```
 
-- [保存]：仅写入 SQLite（运行时立即可用）
-- [保存并导出 YAML]：写入 SQLite + 同步导出对应 YAML 文件到 `metadata-yaml/` 目录 + git commit
+- [保存]：仅写入 Neo4j（运行时立即可用）
+- [保存并导出 YAML]：写入 Neo4j + 同步导出对应 YAML 文件到 `metadata-yaml/` 目录 + git commit
 
 #### 字段编辑抽屉 (右侧滑出)
 
@@ -1534,7 +1578,7 @@ class SandboxController:
 右键边:
   ┌──────────────────────┐
   │ ✎ 编辑转换表达式       │  → Monaco 编辑器弹出
-  │ ✕ 删除此血缘边         │  → 确认后从目标字段 upstream_field_refs 中移除该引用
+  │ ✕ 删除此血缘边         │  → 确认后删除 (target)-[:DERIVES_FROM]->(upstream) 边
   ├──────────────────────┤
   │ 💬 用 NL 修改...      │  → 跳转 /chat
   └──────────────────────┘
@@ -1561,7 +1605,7 @@ class SandboxController:
    │                                       │
    │          [保存] [取消]                  │
    └───────────────────────────────────────┘
-4. 保存 → 更新目标字段 upstream_field_refs → G6 图实时刷新
+4. 保存 → 创建 (target)-[:DERIVES_FROM {transform_expr}]->(upstream) 边 → G6 图实时刷新
 ```
 
 #### 跳转 /chat 联动的上下文注入
@@ -1657,7 +1701,7 @@ context_prompt = """
 | POST | `/api/fields` | 新建字段 |
 | PUT | `/api/fields/:id` | 编辑字段 (含表达式/上游引用) |
 | DELETE | `/api/fields/:id` | 删除字段 (含断链校验) |
-| GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) (扫描所有字段 upstream_field_refs 构建) |
+| GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) — Cypher: `MATCH path=(f:Field)-[:DERIVES_FROM*1..$d]->(u) RETURN path` |
 | POST | `/api/chat/start` | 新建对话 |
 | POST | `/api/chat/message` | 发送消息 → SSE stream |
 | GET | `/api/chat/:id/result` | 获取 dry-run 结果 |
@@ -1674,7 +1718,7 @@ context_prompt = """
 
 ### 6.8 Pipeline 可视化页面 (/pipeline)
 
-> **表级血缘聚合规则**：Pipeline 页面展示的是表级 DAG（节点 = 表）。表级血缘 = 该表所有字段 `upstream_field_refs` 引用的上游表的去重集合；边权 = 引用该上游表的字段数。后端 `/api/pipeline` 通过聚合字段级血缘构建表级 DAG，不在 SQLite 冗余存储表级血缘。
+> **表级血缘聚合规则**：Pipeline 页面展示的是表级 DAG（节点 = 表）。表级血缘 = 该表所有字段沿 `:DERIVES_FROM` 关系到达的上游字段所属表的去重集合；边权 = 跨这两张表的字段级血缘边数。后端 `/api/pipeline` 通过 Cypher 聚合查询构建（`MATCH (t1:Table)-[:HAS_FIELD]->(f1)-[:DERIVES_FROM]->(f2)<-[:HAS_FIELD]-(t2) RETURN t1, t2, count(*) AS edge_weight`），不在 Neo4j 冗余存储表级血缘。
 
 #### 页面布局
 
@@ -1891,8 +1935,9 @@ data-gov/
 │   ├── 02_kafka_init.sh
 │   ├── 03_starrocks_init.sql
 │   ├── 04_sample_data.py
-│   ├── 05_sqlite_seed.py
-│   └── 06_export_yaml.py
+│   ├── 05_neo4j_init.py
+│   ├── 06_neo4j_seed.py
+│   └── 07_export_yaml.py
 ├── scripts/
 │   ├── benchmark_semantic_search.py   # 语义检索 benchmark
 │   └── generate_benchmark_queries.py  # 测试集生成
@@ -1904,8 +1949,8 @@ data-gov/
 │   ├── main.py                   # FastAPI entry
 │   ├── config.py                 # .env 加载
 │   ├── metadata/
-│   │   ├── models.py             # SQLite ORM (SQLAlchemy)
-│   │   ├── service.py            # CRUD
+│   │   ├── graph.py              # Neo4j 驱动连接 + Cypher 封装 (官方 neo4j 驱动 / neomodel OGM)
+│   │   ├── service.py            # CRUD (Cypher 实现, HTTP 与 Agent tools 共享)
 │   │   └── seed.py               # 10 张表初始化
 │   ├── agent/
 │   │   ├── graph.py              # LangGraph StateGraph
@@ -1953,7 +1998,7 @@ data-gov/
 
 | Phase | 内容 |
 |-------|------|
-| **Phase 1** | Docker 栈搭建 + SQLite 元数据初始化 + 元数据 CRUD API |
+| **Phase 1** | Docker 栈搭建（含 Neo4j）+ Neo4j 元数据图初始化 + 元数据 CRUD API |
 | **Phase 2** | LangGraph Agent 搭建 + 3 条对话路径 + 沙箱 |
 | **Phase 3** | React 前端 + 血缘图 + 对话面板 + Pipeline 可视化 |
 
@@ -1972,7 +2017,8 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P1-2 | Hive 外部表可读写 | 通过 Spark Shell 建外部表 → INSERT 10 行 → SELECT COUNT(*) | 返回 10 |
 | P1-3 | Kafka Topic 可生产消费 | 往 `ods_ue_signal` topic 生产 5 条 JSON → consumer 从 earliest 消费 | 消费到 5 条，内容一致 |
 | P1-4 | StarRocks 可查询 | `04_sample_data.py` 执行后，StarRocks FE 查询 `SELECT COUNT(*) FROM ads_cell_profile` | 返回 > 0 |
-| P1-5 | SQLite 元数据初始化 + YAML 导出 | 执行 `05_sqlite_seed.py`，查询 `SELECT COUNT(*) FROM metadata_tables`；执行 `06_export_yaml.py` | 返回 10；`metadata-yaml/` 下生成 10 个 .yaml 文件，按层分目录，gate-lint 通过 |
+| P1-5 | Neo4j 元数据初始化 + YAML 导出 | 执行 `05_neo4j_init.py` → `06_neo4j_seed.py`，cypher-shell 查询 `MATCH (t:Table) RETURN count(t)`；执行 `07_export_yaml.py` | 返回 10；`metadata-yaml/` 下生成 10 个 .yaml 文件，按层分目录，gate-lint 通过 |
+| P1-5b | Neo4j 约束已建立 | cypher-shell 执行 `SHOW CONSTRAINTS` 与 `SHOW INDEXES` | 返回 ≥ 4 条约束 (Table.id/Table.name/Field.id/Change.id 唯一) 与 ≥ 3 条索引 (Field.name / Change.changed_at / Change.table_name) |
 | P1-6 | 元数据 CRUD API | POST 建一张新表 → GET /api/tables → GET /api/fields → PUT 修改字段表达式 → GET 校验 | 每步返回 200，数据一致 |
 | P1-7 | 血缘查询 API | GET `/api/lineage?table=dwd_session_qos&direction=down` 查下游血缘 | 返回 `dws_cell_hourly`, `dws_area_traffic` 中至少 2 条字段级血缘边 |
 | P1-8 | 反向合成数据入对应存储 | 调用 `generate_fake_data(table="dwd_session_qos", rows=5)` → Spark SQL 查询 Hive 表 `dwd_session_qos` | 返回 5 行，字段值域合法 (rsrp ∈ [-140,-44], sinr ∈ [-20,30]) |
@@ -1988,11 +2034,11 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P2-5 | Flink SQL 沙箱执行 | 对 P2-2 生成的 Flink SQL 调 dry_run | HDFS sink 写入成功，回读 1 行，字段匹配 |
 | P2-6 | Java Flink 沙箱执行 | 对 P2-3 生成的 Java 代码调 dry_run | 编译成功 → JAR 上传 → YARN 提交 → FINISHED → HDFS 回读 1 行，弱覆盖 IMSI 列表合法 |
 | P2-7 | 沙箱编译失败自动重试 | 注入一个有语法错误的 Flink SQL (故意拼错 `SLECT`)，观察沙箱层 `execute_with_retry` 行为 | 沙箱层第 1 轮编译失败 → 解析 maven 错误 → LLM 修正 → 第 2 轮通过；返回 `DryRunResult(success=True)`，Agent 层 `iteration_count = 1`（沙箱层重试不计入 Agent 层） |
-| P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 SQLite 写入 + 对应 YAML 文件更新，GET /api/fields 可查到，`dwd_session_qos.yaml` 含 `jitter` 字段 |
+| P2-8 | 元数据演进: NL→新增字段 | 发送消息 "给 `dwd_session_qos` 加一个 `jitter` 字段，用相邻采样的 latency 标准差计算" | schema_diff 预览显示 1 条新增字段，用户确认后 Neo4j 新建 Field 节点 + HAS_FIELD 边 + Change 节点，对应 YAML 文件更新，GET /api/fields 可查到，`dwd_session_qos.yaml` 含 `jitter` 字段 |
 | P2-9 | 元数据演进: 一致性校验 | 发送消息 "删除 `ods_ue_signal` 的 `rsrp` 字段" | schema_validate 检测到 `dwd_session_qos.avg_rsrp` 和 `dwd_ho_event` 依赖此字段，返回警告不执行，要求先处理下游 |
 | P2-10 | 反向合成数据生成 | 发送消息 "给定 `eval_user_score` 的评估逻辑，生成 10 行测试数据，覆盖优秀/良好/差三档" | 反推约束 (qoe_score 0-100) → 生成 3 档数据 → 写入 HDFS → 读回校验: 确实有 >80 / 50-80 / <50 的行 |
 | P2-11 | 缺失对象检测 (gap_check) | 发送消息 "我要每个小区每小时的平均基站负载和信号质量" — 信号质量已有，基站负载无 | gap_check 返回 1 条 missing_table gap，Web 端展示补齐建议卡片，含建议表名/字段/层级 |
-| P2-12 | 缺失对象自动补齐 | 在 P2-11 的补齐建议卡片点击 [确认并继续] | schema_evolve 子流程自动执行: 新建 ods_gnb_load (ODS, Kafka, 5 字段) → SQLite 写入 + YAML 生成 → schema_lookup 重新查询 → 继续 code_generate 产出含基站负载的 SQL |
+| P2-12 | 缺失对象自动补齐 | 在 P2-11 的补齐建议卡片点击 [确认并继续] | schema_evolve 子流程自动执行: 新建 ods_gnb_load (ODS, Kafka, 5 字段) → Neo4j 写入 Table+Field+HAS_FIELD+Change 节点 + YAML 生成 → schema_lookup 重新查询 → 继续 code_generate 产出含基站负载的 SQL |
 | P2-13 | 缺失字段检测 | 人为删除 dwd_session_qos.avg_sinr 字段后，发送 "从会话 QoS 查信噪比分布" | gap_check 检测到 keyword=信噪比 field=avg_sinr 缺失，建议在 dwd_session_qos 补回该字段 |
 
 ### Phase 3 验收用例
@@ -2001,13 +2047,13 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 |---|------|------|----------|
 | P3-1 | 元数据浏览页面: 分层+搜索 | 打开 `/metadata` → 看到 10 张表按层分组 → 切换 L1 过滤 → 仅显示 2 张 ODS 表 → 搜索框输入 "会话" | 列表过滤为 dwd_session_qos，右侧字段列表含 avg_rsrp/avg_sinr 等 |
 | P3-2 | 元数据浏览: 字段详情+上游 tooltip | 点击 `dws_cell_hourly` → hover `avg_rsrp` 字段 | tooltip 浮层显示上游: dwd_session_qos.avg_rsrp，表达式: AVG(rsrp) |
-| P3-3 | 元数据维护: 新建表 | 点击 [+ 新建表] → 填写表名/层/存储 → 添加 5 个字段 → 保存 | SQLite 写入成功，GET /api/tables 新增 1 条，metadata-yaml/ 下生成对应 .yaml |
-| P3-4 | 元数据维护: 编辑字段表达式 | 点击 `dws_cell_hourly.drop_rate` → 抽屉打开 → Monaco 编辑表达式 → 保存 | metadata_fields 表达式更新，version +1，previous_expr 留痕 |
+| P3-3 | 元数据维护: 新建表 | 点击 [+ 新建表] → 填写表名/层/存储 → 添加 5 个字段 → 保存 | Neo4j 写入 Table 节点 + 5 个 Field 节点 + 5 条 HAS_FIELD 边成功，GET /api/tables 新增 1 条，metadata-yaml/ 下生成对应 .yaml |
+| P3-4 | 元数据维护: 编辑字段表达式 | 点击 `dws_cell_hourly.drop_rate` → 抽屉打开 → Monaco 编辑表达式 → 保存 | Field 节点 expression 属性更新，version +1，previous_expr (JSON 字符串) 追加旧版本 |
 | P3-5 | 元数据维护: 删除字段被拒绝 | 点击删除 `ods_ue_signal.rsrp` | 系统检测到 dwd_session_qos.avg_rsrp 依赖此字段，弹出下游影响警告，拒绝删除 |
 | P3-6 | 字段级血缘图: G6 渲染 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | G6 TreeGraph 渲染完整上下游: ods → dwd → dws → ads → eval，节点含字段 ● 点 |
 | P3-7 | 血缘图交互 | 双击节点展开/折叠 → 拖拽画布 → 滚轮缩放 → 点击边查看 transform_expr → Mini-map 导航 | 所有交互流畅，边详情在右侧面板显示 |
 | P3-8 | 血缘图维护: 右键菜单 | 右键 `dwd_session_qos` 节点 → 选择 [✚ 在此表上加字段] | 弹出字段编辑抽屉，预填 table=dwd_session_qos |
-| P3-9 | 血缘图维护: 拖拽新建边 | 右键节点 → [⊕ 新建血缘边] → 从 ods_ue_signal.imsi 拖线到 dwd_ho_event.imsi → 填写转换表达式 "直通映射" → 保存 | 目标字段 upstream_field_refs 更新，G6 图实时刷新显示新边 |
+| P3-9 | 血缘图维护: 拖拽新建边 | 右键节点 → [⊕ 新建血缘边] → 从 ods_ue_signal.imsi 拖线到 dwd_ho_event.imsi → 填写转换表达式 "直通映射" → 保存 | Neo4j 新建 (dwd_ho_event.imsi)-[:DERIVES_FROM {transform_expr:"直通映射"}]->(ods_ue_signal.imsi) 边，G6 图实时刷新显示新边 |
 | P3-10 | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [💬 用 NL 修改...] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 上下文已注入当前表达式和上游信息 |
 | P3-11 | 对话面板: 流式输出 + Badge | 打开 `/chat` → 新建对话 → 输入 "计算每小区小时平均覆盖强度" | SSE 逐字流式输出，classifier badge 显示「正向ETL」，右侧展示血缘 mini 图推荐方案 |
 | P3-12 | 对话面板: 代码卡片 + DryRun 预览 | 对话完成 → 代码卡片显示 Spark SQL (Monaco 高亮) → 点击 [▶ 沙箱试跑] | 右侧代码面板可编辑，DryRun 结果卡片显示 ✅ 成功 + 1 行 Ant Table |
@@ -2015,7 +2061,7 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P3-14 | 对话面板: 反向合成约束滑块 | 输入 "给用户评分流程造测试数据" → 约束反推面板展示 | 三档约束表格每行有 Slider 可拖拽调整值域，行数可输入 |
 | P3-15 | 对话面板: 反向合成结果图表 | 点击 [生成数据] → 等待沙箱完成 | 结果区显示写入概览 (各层行数) + 预览 Ant Table + 分档 G2 柱状图 |
 | P3-16 | 对话面板: 元数据演进 Diff | 输入 "把 qoe_score 公式权重改成 0.6/0.4" → diff 预览 | 左右对比面板: 旧公式 vs 新公式，下方 ⚠ eval_net_health 影响警告 |
-| P3-17 | 元数据演进: UI 变更确认 | 点击 [确认更新] | SQLite + YAML 写入，跳转 `/schema-evolution` 可看到变更时间线，字段版本 v1→v2 |
+| P3-17 | 元数据演进: UI 变更确认 | 点击 [确认更新] | Neo4j (Field 更新 + Change 节点新增) + YAML 写入，跳转 `/schema-evolution` 可看到变更时间线，字段版本 v1→v2 |
 | P3-18 | Pipeline 可视化: 正向 ETL | 打开 `/pipeline` → 正向模式 → 搜索链路 | G6 渲染完整 DAG: ods_ue_signal → dwd_session_qos → dws_cell_hourly → ads_cell_profile → eval_user_score |
 | P3-19 | Pipeline 可视化: 反向合成 | 切换反向模式 → 选 eval_user_score pipeline | 逆向图: eval → 约束推断 → 逐层回溯 → 数据生成器入口 |
 | P3-20 | Pipeline→/chat 联动 | 在 Pipeline 图上选中 `dws_cell_hourly` 节点 → 点击 [💬 NL 查询] | 跳转 /chat，自动注入上下文，用户输入 "加一个切换成功率过滤" → 走正向 ETL 流程 |
@@ -2027,6 +2073,6 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 ## 9. 非功能要求
 
 - **安全**: `.env` 不提交，`.gitignore` 排除；API 无鉴权 (本地验证栈)
-- **可调试**: SQLite 文件在 `./data/` 直接查看；HDFS 数据本地可读
+- **可调试**: Neo4j Browser http://localhost:7474 直接查看图与运行 Cypher；HDFS 数据本地可读
 - **清理**: Sandbox 临时目录自动清理；Docker `docker-compose down -v` 全清
 - **文档**: 代码即文档，10 张表元数据自带描述和表达式
