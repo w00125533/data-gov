@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # System deps for any future Maven/Spark needs in later slices; minimal for now.
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/*
 
 # Copy package metadata first to leverage Docker layer cache for deps.
 COPY pyproject.toml /app/
