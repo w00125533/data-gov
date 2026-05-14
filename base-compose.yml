@@ -85,7 +85,7 @@ services:
       datanode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8088/ws/v1/cluster/info | grep -q STARTED"]
+      test: ["CMD-SHELL", "curl -fsS http://resourcemanager:8088/ws/v1/cluster/info | grep -q STARTED"]
       interval: 10s
       timeout: 5s
       retries: 24
@@ -135,6 +135,7 @@ services:
       - ./docker/hive-conf/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
       - ./docker/hadoop-conf/core-site.xml:/opt/hive/conf/core-site.xml:ro
       - ./docker/hadoop-conf/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+      - ./docker/jars/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar:ro
     depends_on:
       hms-db:
         condition: service_healthy
@@ -185,8 +186,6 @@ services:
       - "8030:8030"
       - "9030:9030"
       - "9060:9060"
-    volumes:
-      - ./data/starrocks:/data/deploy/starrocks
     healthcheck:
       test: ["CMD-SHELL", "mysql -h 127.0.0.1 -P 9030 -u root -e 'SELECT 1' > /dev/null 2>&1"]
       interval: 10s
