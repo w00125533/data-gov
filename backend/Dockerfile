@@ -11,6 +11,9 @@ COPY backend/ /app/backend/
 
 RUN pip install --no-cache-dir -e ".[runtime]"
 
+# Pre-warm bge model into the image (~25MB)
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
+
 ENV PYTHONPATH=/app
 EXPOSE 8000
 

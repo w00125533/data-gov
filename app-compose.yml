@@ -11,6 +11,15 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: data-gov-neo4j
       NEO4J_DATABASE: neo4j
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      SEARCH_CHROMA_DIR: /app/data/chroma
+      SEARCH_EMBED_MODEL: BAAI/bge-small-zh-v1.5
+      SEARCH_RERANK_THRESHOLD: "0.15"
+      SEARCH_RRF_K: "60"
+    volumes:
+      - ./data/chroma:/app/data/chroma
     ports:
       - "8000:8000"
     healthcheck:
@@ -18,7 +27,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 18
-      start_period: 20s
+      start_period: 30s
 
 networks:
   default:
