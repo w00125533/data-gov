@@ -120,3 +120,21 @@ def test_neo4j_http_reachable():
     assert response.status_code == 200
     payload = response.json()
     assert "neo4j_version" in payload, f"unexpected response payload: {payload!r}"
+
+
+@pytest.mark.infra
+def test_p1_1_all_services_healthy():
+    """P1-1: every required service is running + healthy; NN/RM UIs reachable."""
+    for service in REQUIRED_SERVICES:
+        state = service_state(service)
+        assert state, f"{service} not present"
+        assert state["State"] == "running", f"{service} state={state['State']!r}"
+        health = state.get("Health", "")
+        assert health in ("healthy", ""), f"{service} health={health!r}"
+
+    nn = _safe_get("http://localhost:9870/dfshealth.html")
+    assert nn is not None and nn.status_code == 200, "NN UI unreachable"
+
+    rm = _safe_get("http://localhost:8088/ws/v1/cluster/info")
+    assert rm is not None and rm.status_code == 200, "RM REST unreachable"
+    assert rm.json()["clusterInfo"]["state"] == "STARTED"
