@@ -78,7 +78,7 @@ def build_docs_from_neo4j(seed_only: bool = False) -> list[SearchDoc]:
         OPTIONAL MATCH (t)-[:HAS_FIELD]->(f:Field)
         WITH t,
              collect(CASE WHEN f IS NULL THEN null ELSE {
-                 name: f.name, type: f.data_type, description: f.description,
+                 name: f.name, type: f.field_type, description: f.description,
                  expression: f.expression, version: f.version
              } END) AS fields
         RETURN t.name AS name, t.layer AS layer, t.storage_type AS storage_type,
