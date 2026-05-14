@@ -52,10 +52,18 @@ def seed_ads_cell_profile() -> int:
     return rows_inserted
 
 
+def seed_hive_dwd_session_qos(rows: int = 10) -> int:
+    """Phase 1 slice 1b extension — Hive seed via Spark."""
+    from backend.seed.fake_data import generate_fake_data
+    return generate_fake_data(table="dwd_session_qos", rows=rows)["rows_written"]
+
+
 def main() -> int:
-    inserted = seed_ads_cell_profile()
-    print(f"Inserted {inserted} rows into ads_cell_profile.")
-    return 0 if inserted > 0 else 1
+    starrocks_count = seed_ads_cell_profile()
+    print(f"Inserted {starrocks_count} rows into ads_cell_profile.")
+    hive_count = seed_hive_dwd_session_qos(rows=10)
+    print(f"Inserted {hive_count} rows into dwd_session_qos.")
+    return 0 if (starrocks_count > 0 and hive_count > 0) else 1
 
 
 if __name__ == "__main__":
