@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from tests.conftest import service_state, wait_until
 
@@ -29,3 +30,22 @@ def test_service_is_healthy(service):
     # Some images may not declare a healthcheck; in that case Health == "".
     health = state.get("Health", "")
     assert health in ("healthy", ""), f"{service} health={health!r}"
+
+
+@pytest.mark.infra
+def test_namenode_web_ui_reachable():
+    response = wait_until(
+        lambda: _safe_get("http://localhost:9870/dfshealth.html"),
+        timeout=120,
+        desc="HDFS NameNode UI :9870",
+    )
+    assert response.status_code == 200
+    assert "Hadoop" in response.text
+
+
+def _safe_get(url: str):
+    try:
+        r = requests.get(url, timeout=3)
+        return r if r.status_code < 500 else None
+    except requests.RequestException:
+        return None
