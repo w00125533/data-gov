@@ -932,7 +932,7 @@ class AgentState(TypedDict, total=False):
 ```env
 DEEPSEEK_API_KEY=sk-xxx
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-chat   # DeepSeek-V3 (模型版本与 deepseek-chat 别名绑定)
+DEEPSEEK_MODEL=deepseek-v4-pro
 ```
 
 LangChain `ChatOpenAI` 指定 `base_url` + `api_key` 即可。
@@ -1163,7 +1163,7 @@ def _llm_rerank(self, query: str, candidates) -> list:
     } for d, _ in candidates[:10]], ensure_ascii=False)
 
     resp = self.deepseek_client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         messages=[{"role": "user", "content":
                    RERANK_PROMPT.format(user_query=query,
                                         candidates_json=cand_json)}],
