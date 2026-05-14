@@ -53,9 +53,20 @@ See `docs/superpowers/specs/2026-05-13-wireless-rno-data-service-design.md` for 
 跑全部 slice 2a 测试：
 
 ```bash
-pytest tests/search -v
-pytest tests/search -v -m infra   # 需 base-compose + Neo4j seeded
+# 单元测试 (无需外部依赖)
+python -m pytest tests/search -v
+
+# 集成测试 (需 base-compose + Neo4j seeded)
+python -m pytest tests/search -v -m infra
+
+# Benchmark CI 门禁 (基础模式: BM25 + Dense RRF)
 python scripts/benchmark_semantic_search.py
+
+# Benchmark CI 门禁 (LLM 增强: 低置信度查询触发 DeepSeek rerank)
+python scripts/benchmark_semantic_search.py --use-rerank
+
+# 使用 seed data 离线跑 (不需要 Neo4j)
+python scripts/benchmark_semantic_search.py --bootstrap-from-seed
 ```
 
 Deferred to slice 2b: LangGraph Agent (forward_etl / reverse_synth / schema_evolve), `/api/chat/*`, gap_check / gap_proposal.
