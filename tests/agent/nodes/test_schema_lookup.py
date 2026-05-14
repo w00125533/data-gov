@@ -33,7 +33,8 @@ def test_resolve_schemas_from_target_and_source():
         }
         result = schema_lookup(state)
 
-    mock_lookup.assert_called_once_with(["dwd_session_qos", "ods_ue_signal"])
+    mock_lookup.assert_called_once()
+    assert sorted(mock_lookup.call_args[0][0]) == ["dwd_session_qos", "ods_ue_signal"]
     assert result["schemas_resolved"] == FAKE_SCHEMA
     assert "sub_flow_active" not in result
 
