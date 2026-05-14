@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     search_rrf_k: int = Field(60, alias="SEARCH_RRF_K")
     search_bootstrap_from_seed: bool = Field(False, alias="SEARCH_BOOTSTRAP_FROM_SEED")
 
+    # Agent (slice 2b)
+    agent_max_iterations: int = Field(3, alias="AGENT_MAX_ITERATIONS")
+    git_author_name: str = Field("Data-Gov Agent", alias="GIT_AUTHOR_NAME")
+    git_author_email: str = Field("agent@data-gov.local", alias="GIT_AUTHOR_EMAIL")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
