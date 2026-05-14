@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from backend.agent._msg import last_msg_content
 from backend.agent.prompts import CODE_GEN_PROMPT
 
 _STORAGE_TO_CODE_TYPE = {"HIVE": "spark_sql", "KAFKA": "flink_sql", "STARROCKS": "spark_sql"}
@@ -37,7 +38,7 @@ def infer_code_type(state: dict) -> str:
 def code_generate(state: dict, *, llm_client: Any) -> dict:
     code_type = state.get("code_type") or infer_code_type(state)
     schemas = state.get("schemas_resolved", {})
-    msg = state.get("messages", [{}])[-1].get("content", "")
+    msg = last_msg_content(state)
     prompt = CODE_GEN_PROMPT.format(
         schema=json.dumps(schemas, ensure_ascii=False),
         intent=state.get("intent", "forward_etl"),

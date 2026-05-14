@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.agent._msg import last_msg_content
+
+
 EXTRACT_ENTITIES_PROMPT = """从用户消息抽取业务实体关键词。
 用户消息: {msg}
 返回严格 JSON 数组:
@@ -21,7 +24,7 @@ def _extract_required_entities(msg: str, llm_client: Any) -> list[dict]:
 def gap_check(
     state: dict, *, llm_client: Any, searcher: Any, threshold: float = 0.6
 ) -> dict:
-    msg = state.get("messages", [{}])[-1].get("content", "")
+    msg = last_msg_content(state)
     required = _extract_required_entities(msg, llm_client)
     gaps: list[dict] = []
     for ent in required:

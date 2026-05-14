@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 from typing import Any
+from backend.agent._msg import msg_content, msg_role
 from backend.agent.prompts import CLASSIFIER_PROMPT
 
 VALID_INTENTS = {"forward_etl", "reverse_synth", "schema_evolve"}
@@ -18,14 +19,14 @@ def _keyword_fallback(text: str) -> str:
 def classifier(state: dict, *, llm_client: Any) -> dict:
     recent = state.get("messages", [])[-3:]
     history_text = "\n".join(
-        f"{m.get('role', 'user')}: {m.get('content', '')}" for m in recent
+        f"{msg_role(m)}: {msg_content(m)}" for m in recent
     )
     prompt = CLASSIFIER_PROMPT.format(
         history=history_text,
         prev_intent=state.get("intent"),
         context_source=state.get("context_source"),
     )
-    last_msg = recent[-1].get("content", "") if recent else ""
+    last_msg = msg_content(recent[-1]) if recent else ""
 
     for _ in range(2):
         try:

@@ -2,12 +2,13 @@
 from __future__ import annotations
 import json
 from typing import Any
+from backend.agent._msg import last_msg_content
 from backend.agent.prompts import EXTRACT_PROMPT
 from backend.agent.tools import search_tables_by_keyword
 
 
 def reverse_synth(state: dict, *, llm_client: Any, searcher: Any) -> dict:
-    msg = state.get("messages", [{}])[-1].get("content", "")
+    msg = last_msg_content(state)
     prompt = EXTRACT_PROMPT.format(msg=msg, intent="reverse_synth")
     try:
         resp = llm_client.invoke(prompt)

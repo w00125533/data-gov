@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 from typing import Any
+from backend.agent._msg import last_msg_content
 from backend.agent.prompts import SCHEMA_EVOLVE_PROMPT
 from backend.agent.tools import lookup_table_schema
 
@@ -9,7 +10,7 @@ from backend.agent.tools import lookup_table_schema
 def schema_evolve(state: dict, *, llm_client: Any) -> dict:
     if state.get("sub_flow_active"):
         return {"schema_diff": state.get("schema_diff", [])}
-    msg = state.get("messages", [{}])[-1].get("content", "")
+    msg = last_msg_content(state)
     current = lookup_table_schema(state.get("target_tables", []))
     prompt = SCHEMA_EVOLVE_PROMPT.format(
         user_request=msg, current_schema=json.dumps(current, ensure_ascii=False)

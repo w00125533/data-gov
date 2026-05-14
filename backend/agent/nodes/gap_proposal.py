@@ -2,12 +2,13 @@
 from __future__ import annotations
 import json
 from typing import Any
+from backend.agent._msg import last_msg_content
 from backend.agent.prompts import PROPOSE_PROMPT
 
 
 def gap_proposal(state: dict, *, llm_client: Any) -> dict:
     gaps = state.get("gaps", [])
-    msg = state.get("messages", [{}])[-1].get("content", "")
+    msg = last_msg_content(state)
     prompt = PROPOSE_PROMPT.format(
         gaps=json.dumps(gaps, ensure_ascii=False), user_request=msg
     )
