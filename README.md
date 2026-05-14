@@ -35,3 +35,28 @@ python -m pytest -m infra -v            # P1-1..P1-8 should all pass
 Deferred to Phase 2 (slices 2a-c): semantic search, LangGraph Agent, sandbox.
 
 See `docs/superpowers/specs/2026-05-13-wireless-rno-data-service-design.md` for full design.
+
+## Acceptance coverage (Phase 2 — slice 2a)
+
+| Case | Verifies | Test |
+|------|----------|------|
+| P2a-1 | 中文 NL 查询命中表 (dws_cell_hourly) | `tests/search/test_searcher_integration.py::test_p2a_1_search_yields_dws_cell_hourly_for_chinese_query` |
+| P2a-2 | 字段级 doc 可被命中 | `tests/search/test_searcher_integration.py::test_p2a_2_search_for_field_returns_field_doc` |
+| P2a-3 | index_version 单调正向 | `tests/search/test_searcher_integration.py::test_p2a_3_index_version_positive_after_build` |
+| P2a-4 | 增量 upsert 立即可查 | `tests/search/test_searcher_integration.py::test_p2a_4_incremental_upsert_visible_in_search` |
+| P2a-5 | 60 条 benchmark 达到目标 90% | `tests/search/test_benchmark.py::test_benchmark_meets_at_least_90pct_of_targets` |
+| P2a-6 | `/api/search?q=&type=&k=` 返回结构 | `tests/search/test_api_search.py::test_get_search_returns_results_for_known_table` |
+| P2a-7 | `/api/health` 含 search 组件 | `tests/search/test_api_search.py::test_health_now_includes_search_component` |
+| P2a-8 | bge 不可用时降级为纯 BM25 | `tests/search/test_searcher.py::test_searcher_skip_dense_when_embedder_unavailable` |
+| P2a-9 | LLM rerank 触发与解析降级 | `tests/search/test_rerank.py::*` |
+
+跑全部 slice 2a 测试：
+
+```bash
+pytest tests/search -v
+pytest tests/search -v -m infra   # 需 base-compose + Neo4j seeded
+python scripts/benchmark_semantic_search.py
+```
+
+Deferred to slice 2b: LangGraph Agent (forward_etl / reverse_synth / schema_evolve), `/api/chat/*`, gap_check / gap_proposal.
+Deferred to slice 2c: 沙箱 (Spark SQL / Flink SQL / Java Flink dry_run).
