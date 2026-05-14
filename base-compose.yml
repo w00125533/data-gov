@@ -177,6 +177,23 @@ services:
       retries: 18
       start_period: 30s
 
+  starrocks:
+    image: starrocks/allin1-ubuntu:3.2-latest
+    container_name: starrocks
+    hostname: starrocks
+    ports:
+      - "8030:8030"
+      - "9030:9030"
+      - "9060:9060"
+    volumes:
+      - ./data/starrocks:/data/deploy/starrocks
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -P 9030 -u root -e 'SELECT 1' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
 networks:
   default:
     name: data-gov_default

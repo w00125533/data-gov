@@ -90,3 +90,21 @@ def test_kafka_broker_reachable():
             return False
 
     wait_until(_check, timeout=180, desc="Kafka broker :9092")
+
+
+@pytest.mark.infra
+def test_starrocks_fe_reachable():
+    import pymysql
+
+    def _check():
+        try:
+            conn = pymysql.connect(host="127.0.0.1", port=9030, user="root", password="", connect_timeout=3)
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                row = cur.fetchone()
+            conn.close()
+            return row == (1,)
+        except Exception:
+            return False
+
+    wait_until(_check, timeout=240, desc="StarRocks FE :9030 SELECT 1")
