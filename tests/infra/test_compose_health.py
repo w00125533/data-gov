@@ -74,3 +74,19 @@ def test_hive_metastore_thrift_port_open():
             return False
 
     wait_until(_check, timeout=180, desc="Hive Metastore :9083")
+
+
+@pytest.mark.infra
+def test_kafka_broker_reachable():
+    from kafka import KafkaAdminClient
+
+    def _check():
+        try:
+            client = KafkaAdminClient(bootstrap_servers="localhost:9092", request_timeout_ms=3000)
+            brokers = client.describe_cluster()
+            client.close()
+            return len(brokers.get("brokers", [])) >= 1
+        except Exception:
+            return False
+
+    wait_until(_check, timeout=180, desc="Kafka broker :9092")
