@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from backend.api import health, metadata, search
+from backend.agent.chat_session import ChatSessionStore
+from backend.api import chat, health, metadata, search
 from backend.config import get_settings
 from backend.metadata.graph import close_driver, get_driver
 from backend.search.docs import build_docs_from_neo4j
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Search index build failed at startup: %s", e)
 
     app.state.searcher = searcher
+    app.state.chat_store = ChatSessionStore()
     yield
     close_driver()
 
@@ -43,12 +45,13 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Wireless RNO Data Semantic Service",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
     )
     app.include_router(health.router, tags=["health"])
     app.include_router(metadata.router, tags=["metadata"])
     app.include_router(search.router, tags=["search"])
+    app.include_router(chat.router, tags=["chat"])
     return app
 
 
