@@ -49,3 +49,15 @@ def _safe_get(url: str):
         return r if r.status_code < 500 else None
     except requests.RequestException:
         return None
+
+
+@pytest.mark.infra
+def test_yarn_resourcemanager_ui_reachable():
+    response = wait_until(
+        lambda: _safe_get("http://localhost:8088/ws/v1/cluster/info"),
+        timeout=180,
+        desc="YARN RM REST :8088",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["clusterInfo"]["state"] == "STARTED"

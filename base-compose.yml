@@ -63,6 +63,59 @@ services:
       retries: 18
       start_period: 30s
 
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    hostname: resourcemanager
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
+      YARN_CONF_yarn_resourcemanager_hostname: resourcemanager
+      SERVICE_PRECONDITION: "namenode:9870 datanode:9864"
+    ports:
+      - "8088:8088"
+      - "8032:8032"
+    volumes:
+      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
+      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
+      - ./docker/hadoop-conf/yarn-site.xml:/etc/hadoop/yarn-site.xml:ro
+      - ./docker/hadoop-conf/mapred-site.xml:/etc/hadoop/mapred-site.xml:ro
+    depends_on:
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8088/ws/v1/cluster/info | grep -q STARTED"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    hostname: nodemanager
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
+      YARN_CONF_yarn_resourcemanager_hostname: resourcemanager
+      SERVICE_PRECONDITION: "resourcemanager:8088"
+    ports:
+      - "8042:8042"
+    volumes:
+      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
+      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
+      - ./docker/hadoop-conf/yarn-site.xml:/etc/hadoop/yarn-site.xml:ro
+      - ./docker/hadoop-conf/mapred-site.xml:/etc/hadoop/mapred-site.xml:ro
+    depends_on:
+      resourcemanager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8042 > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
 networks:
   default:
     name: data-gov_default
