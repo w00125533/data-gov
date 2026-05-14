@@ -1,32 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVICES=(hms-db namenode datanode resourcemanager nodemanager hive-metastore kafka starrocks neo4j)
+CONTAINERS=(hms-db namenode datanode resourcemanager nodemanager hive-metastore kafka starrocks neo4j)
 TIMEOUT_SECONDS="${1:-240}"
 DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
 
-while (( $(date +%s) < DEADLINE )); do
-  all_ok=true
-  for svc in "${SERVICES[@]}"; do
-    state=$(docker compose -f base-compose.yml ps --format json "$svc" 2>/dev/null | head -n1 || echo '')
-    if [[ -z "$state" ]]; then
-      all_ok=false
-      break
-    fi
-    running=$(echo "$state" | grep -oE '"State":"[^"]*"' | head -n1 | cut -d'"' -f4)
-    health=$(echo "$state" | grep -oE '"Health":"[^"]*"' | head -n1 | cut -d'"' -f4)
-    if [[ "$running" != "running" ]] || { [[ -n "$health" ]] && [[ "$health" != "healthy" ]]; }; then
-      all_ok=false
-      break
+check_all_healthy() {
+  local healthy_list missing=0
+  healthy_list=$(docker ps --filter health=healthy --format '{{.Names}}' 2>/dev/null)
+  for c in "${CONTAINERS[@]}"; do
+    if ! echo "$healthy_list" | grep -qxF "$c"; then
+      missing=$((missing + 1))
     fi
   done
-  if $all_ok; then
-    echo "All ${#SERVICES[@]} services healthy."
+  [ "$missing" -eq 0 ]
+}
+
+while (( $(date +%s) < DEADLINE )); do
+  if check_all_healthy; then
+    echo "All ${#CONTAINERS[@]} services healthy."
     exit 0
   fi
   sleep 3
 done
 
 echo "Timed out waiting for services after ${TIMEOUT_SECONDS}s." >&2
-docker compose -f base-compose.yml ps >&2
+docker ps -a --format "table {{.Names}}\t{{.Status}}" >&2
 exit 1
