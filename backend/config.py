@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     search_embed_model: str = Field("BAAI/bge-small-zh-v1.5", alias="SEARCH_EMBED_MODEL")
     search_rerank_threshold: float = Field(0.15, alias="SEARCH_RERANK_THRESHOLD")
     search_rrf_k: int = Field(60, alias="SEARCH_RRF_K")
+    search_bootstrap_from_seed: bool = Field(False, alias="SEARCH_BOOTSTRAP_FROM_SEED")
 
 
 @lru_cache(maxsize=1)
