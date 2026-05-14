@@ -36,3 +36,6 @@ metastore_db/
 
 # Init script logs
 .init.log
+
+# Local ChromaDB persistent store (slice 2a)
+data/chroma/
