@@ -116,6 +116,37 @@ services:
       retries: 18
       start_period: 30s
 
+  hive-metastore:
+    image: apache/hive:4.0.0
+    container_name: hive-metastore
+    hostname: hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      IS_RESUME: "false"
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hms-db:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9083:9083"
+    volumes:
+      - ./docker/hive-conf/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./docker/hadoop-conf/core-site.xml:/opt/hive/conf/core-site.xml:ro
+      - ./docker/hadoop-conf/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+    depends_on:
+      hms-db:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/9083' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
 networks:
   default:
     name: data-gov_default

@@ -1,4 +1,5 @@
 import pytest
+import socket
 import requests
 
 from tests.conftest import service_state, wait_until
@@ -61,3 +62,15 @@ def test_yarn_resourcemanager_ui_reachable():
     assert response.status_code == 200
     payload = response.json()
     assert payload["clusterInfo"]["state"] == "STARTED"
+
+
+@pytest.mark.infra
+def test_hive_metastore_thrift_port_open():
+    def _check():
+        try:
+            with socket.create_connection(("localhost", 9083), timeout=2):
+                return True
+        except OSError:
+            return False
+
+    wait_until(_check, timeout=180, desc="Hive Metastore :9083")
