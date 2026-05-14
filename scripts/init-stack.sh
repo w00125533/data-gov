@@ -8,7 +8,7 @@ echo "[1/8] Waiting for base infrastructure healthy ..."
 ./scripts/wait-for-healthy.sh 300
 
 echo "[2/8] Applying 01_hive_init.sql ..."
-docker compose -f base-compose.yml --profile tools run --rm \
+MSYS_NO_PATHCONV=1 docker compose -f base-compose.yml --profile tools run --rm \
   -v "$REPO_ROOT/init-scripts:/work:ro" \
   spark \
     --conf spark.sql.catalogImplementation=hive \

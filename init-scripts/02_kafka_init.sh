@@ -8,13 +8,13 @@ create_topic() {
   local name="$1"
   local partitions="${2:-3}"
   local rf="${3:-1}"
-  if docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+  if MSYS_NO_PATHCONV=1 docker exec kafka //opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server "$BOOTSTRAP" \
       --list 2>/dev/null | grep -qx "$name"; then
     echo "topic $name exists"
     return 0
   fi
-  docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+  MSYS_NO_PATHCONV=1 docker exec kafka //opt/kafka/bin/kafka-topics.sh \
       --bootstrap-server "$BOOTSTRAP" \
       --create \
       --topic "$name" \
