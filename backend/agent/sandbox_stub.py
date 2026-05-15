@@ -1,23 +1,14 @@
-"""Sandbox 接口占位 - slice 2c 用真实 SandboxController 替换。"""
+"""Sandbox 接口 — slice 2c 起委托给 backend.sandbox.controller.execute。
+
+文件名保留为 sandbox_stub.py 以兼容 slice 2b 已写的导入路径，
+但实质已经不是 stub 而是 thin re-export。
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
+
+from backend.sandbox.controller import execute  # noqa: F401
+from backend.sandbox.models import DryRunResult  # noqa: F401
 
 
 CodeType = Literal["spark_sql", "flink_sql", "java_flink"]
-
-
-@dataclass
-class DryRunResult:
-    success: bool
-    preview_row: Optional[dict] = None
-    error_log: Optional[str] = None
-    application_id: Optional[str] = None
-
-
-def execute(code: str, code_type: CodeType) -> DryRunResult:
-    """slice 2c 实现: copy template + maven_compile + YARN submit + read result。"""
-    raise NotImplementedError(
-        "Sandbox.execute is a stub in slice 2b; real impl arrives in slice 2c."
-    )
