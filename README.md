@@ -94,4 +94,38 @@ python scripts/benchmark_semantic_search.py --bootstrap-from-seed
 python -m pytest tests/agent -v
 ```
 
-**Deferred to slice 2c**：沙箱真实执行 (P2-4..P2-7)、沙箱层 execute_with_retry、sandbox_stub 替换为 SandboxController。
+**Status in slice 2c**：沙箱真实执行、execute_with_retry、sandbox_stub 替换均已落地 — 见下方 slice 2c 验收表。
+
+## Acceptance coverage (Phase 2 — slice 2c)
+
+| Case | Verifies | Test |
+|------|----------|------|
+| P2c-1 | 模板加载与占位符注入 | `tests/sandbox/test_templates.py` |
+| P2c-2 | Maven 编译成功 / 失败错误解析 | `tests/sandbox/test_compile.py` + `test_compile_real.py` (infra) |
+| P2c-3 | HDFS CLI 包装 (put/cat/mkdir/rm/ls) | `tests/sandbox/test_hdfs.py` |
+| P2c-4 | YARN RM REST 轮询 + 终态判定 | `tests/sandbox/test_yarn.py` |
+| P2c-5 | spark-submit / flink run app_id 解析 | `tests/sandbox/test_submit.py` |
+| P2c-6 | SandboxController 全链路单元 (mock) | `tests/sandbox/test_controller.py` |
+| P2c-7 | sandbox 层 execute_with_retry (mock LLM) | `tests/sandbox/test_retry.py` |
+| P2c-8 | sandbox_stub 重新导出真实 controller | `tests/agent/test_sandbox_stub.py` |
+| P2-4 | Spark SQL dry-run (真实 YARN) | `tests/sandbox/test_p2_acceptance.py::test_p2_4_*` |
+| P2-5 | Flink SQL dry-run (Kafka source + TUMBLE) | `tests/sandbox/test_p2_acceptance.py::test_p2_5_*` |
+| P2-6 | Java Flink dry-run | `tests/sandbox/test_p2_acceptance.py::test_p2_6_*` |
+| P2-7 | 沙箱层编译失败自动重试 (真实 LLM) | `tests/sandbox/test_p2_acceptance.py::test_p2_7_*` |
+
+跑 slice 2c 全部测试：
+
+```bash
+# 单元 (不需要外部依赖)
+pytest tests/sandbox -v -m "not infra"
+
+# 集成 (需要 backend 容器内, base-compose + Neo4j seeded)
+docker compose -f app-compose.yml exec backend pytest tests/sandbox -v -m infra
+```
+
+**Phase 2 收尾确认（同时跑 2a + 2b + 2c）**：
+
+```bash
+docker compose -f app-compose.yml exec backend pytest -v -m "not infra"
+docker compose -f app-compose.yml exec backend pytest -v -m infra
+```

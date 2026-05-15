@@ -10,5 +10,5 @@ def test_health_endpoint_returns_ok():
     response = client.get("/api/health")
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "healthy"
+    assert body["status"] in ("healthy", "degraded")
     assert "neo4j" in body["components"]

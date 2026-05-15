@@ -62,10 +62,14 @@ def app_with_mocks(monkeypatch, tmp_path):
     from backend.agent.sandbox_stub import DryRunResult
 
     monkeypatch.setattr(
-        "backend.agent.nodes.dry_run.sandbox.execute",
-        lambda code, code_type: DryRunResult(
+        "backend.agent.nodes.dry_run.execute_with_retry",
+        lambda code, code_type, llm_client=None, max_retries=2: DryRunResult(
             success=True, preview_row={"a": 1}
         ),
+    )
+    monkeypatch.setattr(
+        "backend.agent.nodes.dry_run.build_chat_client",
+        lambda **kw: MagicMock(),
     )
 
     from backend.main import create_app

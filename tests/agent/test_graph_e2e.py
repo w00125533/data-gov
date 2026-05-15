@@ -52,10 +52,14 @@ def test_p2_1_forward_etl_spark_sql_path(monkeypatch):
     )
     searcher = _stub_searcher()
     monkeypatch.setattr(
-        "backend.agent.nodes.dry_run.sandbox.execute",
-        lambda code, code_type: DryRunResult(
+        "backend.agent.nodes.dry_run.execute_with_retry",
+        lambda code, code_type, llm_client=None, max_retries=2: DryRunResult(
             success=True, preview_row={"cell_id": "1"}
         ),
+    )
+    monkeypatch.setattr(
+        "backend.agent.nodes.dry_run.build_chat_client",
+        lambda **kw: MagicMock(),
     )
     with patch("backend.agent.tools.metadata_service.get_table_by_name") as gt:
         gt.return_value = _mock_table(
