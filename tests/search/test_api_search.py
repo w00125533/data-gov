@@ -81,3 +81,11 @@ class TestHealthIntegration:
         assert status in ("ok", "degraded", "error")
         if status == "ok":
             assert body["components"]["search"]["index_version"] > 0
+
+    def test_health_includes_sandbox_components(self, api_client):
+        r = api_client.get("/api/health")
+        assert r.status_code == 200
+        body = r.json()
+        # YARN and HDFS won't be available in unit tests, but the keys must exist
+        assert "yarn" in body["components"]
+        assert "hdfs" in body["components"]

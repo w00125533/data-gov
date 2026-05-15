@@ -50,6 +50,31 @@ def health(request: Request) -> dict:
             components["search"] = {"status": "error", "error": str(e)}
             overall = "degraded"
 
+    # HDFS / YARN — slice 2c
+    from backend.config import get_settings as _gs
+    settings = _gs()
+    try:
+        import requests as _r
+        r = _r.get(f"{settings.yarn_rm_url}/ws/v1/cluster/info", timeout=2)
+        info = r.json().get("clusterInfo", {})
+        components["yarn"] = {"status": "ok", "state": info.get("state", "UNKNOWN")}
+    except Exception as e:
+        components["yarn"] = {"status": "error", "error": str(e)[:200]}
+        overall = "degraded"
+
+    try:
+        nn_url = settings.hdfs_defaultfs.replace("hdfs://", "http://").replace(":8020", ":9870")
+        import requests as _r
+        r = _r.get(f"{nn_url}/jmx?qry=Hadoop:service=NameNode,name=NameNodeStatus", timeout=2)
+        beans = r.json().get("beans", [])
+        nn_state = beans[0].get("State", "UNKNOWN") if beans else "UNKNOWN"
+        components["hdfs"] = {"status": "ok", "namenode_state": nn_state}
+    except Exception as e:
+        components["hdfs"] = {"status": "error", "error": str(e)[:200]}
+        overall = "degraded"
+
+    components["sandbox"] = {"status": "ok", "base_dir": settings.sandbox_base_dir}
+
     return {
         "status": overall,
         "uptime_seconds": int(time.monotonic() - _BOOT_TS),
