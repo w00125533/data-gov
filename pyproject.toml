@@ -29,6 +29,7 @@ test = [
     "PyMySQL>=1.1",
     "httpx>=0.27",
     "pytest-mock>=3.12",
+    "responses>=0.25",
 ]
 dev = [
     "data-gov[runtime,test]",
