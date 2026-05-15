@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     git_author_name: str = Field("Data-Gov Agent", alias="GIT_AUTHOR_NAME")
     git_author_email: str = Field("agent@data-gov.local", alias="GIT_AUTHOR_EMAIL")
 
+    # Sandbox (slice 2c)
+    sandbox_base_dir: str = Field("/tmp/sandbox", alias="SANDBOX_BASE_DIR")
+    sandbox_hdfs_base: str = Field("/tmp/sandbox", alias="SANDBOX_HDFS_BASE")
+    sandbox_total_timeout: int = Field(60, alias="SANDBOX_TOTAL_TIMEOUT")
+    sandbox_compile_timeout: int = Field(20, alias="SANDBOX_COMPILE_TIMEOUT")
+    sandbox_spark_timeout: int = Field(30, alias="SANDBOX_SPARK_TIMEOUT")
+    sandbox_flink_timeout: int = Field(45, alias="SANDBOX_FLINK_TIMEOUT")
+    sandbox_max_retries: int = Field(2, alias="SANDBOX_MAX_RETRIES")
+    yarn_rm_url: str = Field("http://resourcemanager:8088", alias="YARN_RM_URL")
+    hdfs_defaultfs: str = Field("hdfs://namenode:8020", alias="HDFS_DEFAULTFS")
+    hive_metastore_uri: str = Field("thrift://hive-metastore:9083", alias="HIVE_METASTORE_URI")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
