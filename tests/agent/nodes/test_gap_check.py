@@ -69,6 +69,32 @@ class TestGapCheck:
         assert len(result["gaps"]) == 1
         assert result["gaps"][0]["keyword"] == "退服率"
 
+    def test_detects_missing_field_when_table_matches_but_field_is_absent(self):
+        state = {"messages": [{"role": "user", "content": "from session QoS query SINR distribution"}]}
+        llm = MagicMock()
+        llm.invoke.return_value.content = (
+            '[{"keyword": "SINR", "field_specified": true, '
+            '"table": "dwd_session_qos", "field": "avg_sinr"}]'
+        )
+        doc = MagicMock()
+        doc.type = "table"
+        doc.metadata = {"table_name": "dwd_session_qos"}
+        searcher = MagicMock()
+        searcher.search.return_value = [{"score": 0.91, "doc": doc, "table": "dwd_session_qos"}]
+
+        result = gap_check(state, llm_client=llm, searcher=searcher, threshold=0.6)
+
+        assert result["has_gaps"] is True
+        assert result["gaps"] == [
+            {
+                "type": "missing_field",
+                "keyword": "SINR",
+                "table": "dwd_session_qos",
+                "field": "avg_sinr",
+                "suggestion": "建议在表 dwd_session_qos 补回字段 avg_sinr",
+            }
+        ]
+
     def test_extract_required_entities_invalid_json(self):
         llm = MagicMock()
         llm.invoke.return_value.content = "not json"

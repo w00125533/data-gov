@@ -54,8 +54,25 @@ services:
       retries: 30
       start_period: 60s
 
+  frontend:
+    image: node:24-alpine
+    container_name: data-gov-frontend
+    working_dir: /app
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   sandbox-tmp:
+  frontend-node-modules:
 
 networks:
   default:

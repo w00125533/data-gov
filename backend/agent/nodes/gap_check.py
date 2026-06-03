@@ -33,6 +33,32 @@ def gap_check(
             continue
         raw = searcher.search(kw, k=3, use_rerank=False)
         top_score = raw[0]["score"] if raw else 0.0
+        if ent.get("field_specified") and ent.get("field"):
+            field = ent["field"]
+            table = ent.get("table")
+            field_found = False
+            table_found = False
+            for hit in raw:
+                hit_table = hit.get("table")
+                doc = hit.get("doc")
+                metadata = getattr(doc, "metadata", {}) or {}
+                hit_field = metadata.get("field_name")
+                if table is None or hit_table == table or metadata.get("table_name") == table:
+                    table_found = table_found or top_score >= threshold
+                    if hit_field == field:
+                        field_found = True
+                        break
+            if table_found and not field_found:
+                gaps.append(
+                    {
+                        "type": "missing_field",
+                        "keyword": kw,
+                        "table": table or (raw[0].get("table") if raw else None),
+                        "field": field,
+                        "suggestion": f"建议在表 {table or (raw[0].get('table') if raw else '')} 补回字段 {field}",
+                    }
+                )
+                continue
         if top_score < threshold:
             gaps.append(
                 {

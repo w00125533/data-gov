@@ -13,15 +13,23 @@ from backend.clients.deepseek import build_chat_client
 router = APIRouter()
 
 
+class ChatStartRequest(BaseModel):
+    context: str | None = None
+    table: str | None = None
+    field: str | None = None
+    mode: str | None = None
+
+
 class ChatMessageRequest(BaseModel):
     session_id: str
     content: str
 
 
 @router.post("/api/chat/start")
-def chat_start(request: Request) -> dict:
-    sess = request.app.state.chat_store.new()
-    return {"session_id": sess.id}
+def chat_start(request: Request, payload: ChatStartRequest | None = None) -> dict:
+    context = payload.model_dump(exclude_none=True) if payload else {}
+    sess = request.app.state.chat_store.new(state={"context": context})
+    return {"session_id": sess.id, "context": context}
 
 
 @router.post("/api/chat/message")
@@ -35,7 +43,7 @@ async def chat_message(request: Request, payload: ChatMessageRequest):
     store.append_message(sess.id, role="user", content=payload.content)
     llm_client = build_chat_client(temperature=0.0)
     graph = build_graph(llm_client=llm_client, searcher=searcher)
-    initial_state = {"messages": list(sess.messages)}
+    initial_state = {"messages": list(sess.messages), **sess.state}
     queue: Queue = Queue()
 
     def runner():
@@ -45,7 +53,9 @@ async def chat_message(request: Request, payload: ChatMessageRequest):
                     safe_partial = {k: (str(v) if not isinstance(v, (dict, list, str, int, float, bool, type(None))) else v) for k, v in partial.items()}
                     queue.put({"event": "node_complete", "node": node, "partial": safe_partial})
                     if node == "presenter" and partial.get("final_message"):
-                        queue.put({"event": "presenter_payload", "summary": partial.get("final_message")})
+                        presenter_payload = partial.get("presenter_payload") or {"type": "presenter", "summary": partial.get("final_message")}
+                        store.set_last_result(sess.id, presenter_payload)
+                        queue.put({"event": "presenter_payload", "summary": partial.get("final_message"), "payload": presenter_payload})
             queue.put({"event": "done"})
         except Exception as e:
             queue.put({"event": "error", "detail": str(e)})

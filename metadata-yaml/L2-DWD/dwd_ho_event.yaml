@@ -1,0 +1,49 @@
+table_name: dwd_ho_event
+layer: DWD
+layer_priority: 2
+description: 切换事件明细
+storage_type: HIVE
+fields:
+- name: ho_cause
+  type: STRING
+  nullable: true
+  partition: false
+  description: 失败原因
+- name: ho_latency
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 切换时延 (ms)
+- name: ho_result
+  type: STRING
+  nullable: false
+  partition: false
+  description: SUCCESS/FAIL
+- name: ho_type
+  type: STRING
+  nullable: false
+  partition: false
+  description: 切换类型
+- name: imsi
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 用户标识
+  upstream:
+  - field: imsi
+    table: ods_ue_signal
+- name: source_cell
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 源小区
+  upstream:
+  - field: cell_id
+    table: ods_ue_signal
+- name: target_cell
+  type: STRING
+  nullable: false
+  partition: false
+  description: 目标小区

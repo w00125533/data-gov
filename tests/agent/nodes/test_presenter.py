@@ -66,4 +66,6 @@ class TestPresenter:
         called_payload = sse_emit.call_args[0][0]
         assert called_payload["type"] == "code_card"
         assert called_payload["summary"] == "执行成功"
-        assert result == {"final_message": "执行成功"}
+        assert result["final_message"] == "执行成功"
+        assert result["presenter_payload"]["type"] == "code_card"
+        assert result["presenter_payload"]["code"] == "OK"

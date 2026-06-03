@@ -20,10 +20,10 @@ class ChatSessionStore:
         self._sessions: dict[str, ChatSession] = {}
         self._lock = Lock()
 
-    def new(self) -> ChatSession:
+    def new(self, state: Optional[dict] = None) -> ChatSession:
         with self._lock:
             sid = f"chat_{uuid.uuid4().hex[:12]}"
-            s = ChatSession(id=sid)
+            s = ChatSession(id=sid, state=state or {})
             self._sessions[sid] = s
             return s
 

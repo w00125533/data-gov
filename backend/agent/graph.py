@@ -30,6 +30,8 @@ def after_gap_check(state: dict) -> str:
 
 
 def after_gap_proposal(state: dict) -> str:
+    if state.get("auto_apply_gaps") and state.get("schema_diff"):
+        return "schema_validate"
     return "presenter"
 
 
@@ -93,7 +95,9 @@ def build_graph(*, llm_client: Any, searcher: Any):
     )
 
     g.add_conditional_edges(
-        "gap_proposal", after_gap_proposal, {"presenter": "presenter"}
+        "gap_proposal",
+        after_gap_proposal,
+        {"presenter": "presenter", "schema_validate": "schema_validate"},
     )
 
     g.add_edge("schema_evolve", "schema_validate")

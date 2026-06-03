@@ -1,0 +1,56 @@
+table_name: ads_neighbor_pair
+layer: ADS
+layer_priority: 4
+description: 邻区切换对统计
+storage_type: STARROCKS
+fields:
+- name: avg_ho_latency
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(ho_latency)
+  description: 平均切换时延
+  upstream:
+  - field: ho_latency
+    table: dwd_ho_event
+- name: ho_count
+  type: BIGINT
+  nullable: true
+  partition: false
+  expression: COUNT(*)
+  description: 切换次数
+  upstream:
+  - field: ho_result
+    table: dwd_ho_event
+- name: ho_success_rate
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(CASE WHEN ho_result='SUCCESS' THEN 1 ELSE 0 END)
+  description: 切换成功率
+  upstream:
+  - field: ho_result
+    table: dwd_ho_event
+- name: recommend_priority
+  type: INT
+  nullable: true
+  partition: false
+  description: 邻区优先级建议
+- name: source_cell
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 源小区
+  upstream:
+  - field: source_cell
+    table: dwd_ho_event
+- name: target_cell
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 目标小区
+  upstream:
+  - field: target_cell
+    table: dwd_ho_event

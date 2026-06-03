@@ -55,6 +55,10 @@ class TestAfterGapProposal:
         assert after_gap_proposal({}) == "presenter"
         assert after_gap_proposal({"anything": 42}) == "presenter"
 
+    def test_confirmed_gap_proposal_routes_to_schema_validate(self):
+        state = {"auto_apply_gaps": True, "schema_diff": [{"operation": "ADD_TABLE"}]}
+        assert after_gap_proposal(state) == "schema_validate"
+
 
 # ---------------------------------------------------------------------------
 # after_schema_validate

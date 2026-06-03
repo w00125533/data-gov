@@ -1,0 +1,31 @@
+table_name: ods_gnb_alarm
+layer: ODS
+layer_priority: 1
+description: 基站告警原始流
+storage_type: KAFKA
+fields:
+- name: alarm_time
+  type: TIMESTAMP
+  nullable: false
+  partition: true
+  description: 告警时刻
+- name: alarm_type
+  type: STRING
+  nullable: false
+  partition: false
+  description: 告警类型枚举
+- name: duration
+  type: BIGINT
+  nullable: true
+  partition: false
+  description: 持续秒数
+- name: gnb_id
+  type: STRING
+  nullable: false
+  partition: false
+  description: 基站标识
+- name: severity
+  type: INT
+  nullable: false
+  partition: false
+  description: 严重度 1..5

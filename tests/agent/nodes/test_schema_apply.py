@@ -30,6 +30,7 @@ def test_schema_apply_dispatches_add_table():
     with (
         patch("backend.agent.nodes.schema_apply.tools.add_table") as mock_add_table,
         patch("backend.agent.nodes.schema_apply._record_change") as mock_record,
+        patch("backend.agent.nodes.schema_apply._update_change_commit") as mock_update,
         patch("backend.agent.nodes.schema_apply.yaml_sync.sync_yaml"),
         patch("backend.agent.nodes.schema_apply.yaml_sync.git_commit") as mock_git,
     ):
@@ -46,6 +47,7 @@ def test_schema_apply_dispatches_add_table():
         result = schema_apply(state)
 
     mock_add_table.assert_called_once_with(ADD_TABLE_OP)
+    mock_update.assert_called_once_with("chg_abc123", "abc123def456")
     assert len(result["applied_changes"]) == 1
     ch = result["applied_changes"][0]
     assert ch["operation"] == "ADD_TABLE"

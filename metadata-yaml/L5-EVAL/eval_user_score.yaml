@@ -1,0 +1,49 @@
+table_name: eval_user_score
+layer: EVAL
+layer_priority: 5
+description: 用户日 QoE 评分
+storage_type: STARROCKS
+fields:
+- name: date
+  type: DATE
+  nullable: false
+  partition: true
+  description: 日期
+- name: imsi
+  type: STRING
+  nullable: false
+  partition: false
+  description: 用户标识
+- name: mobility_score
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: f(capacity_score)
+  description: 移动性分量
+  upstream:
+  - field: capacity_score
+    table: ads_cell_profile
+- name: qoe_score
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: 0.5*signal_quality + 0.3*mobility_score + 0.2*service_continuity
+  description: 复合 QoE 评分 0-100
+- name: service_continuity
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: f(stability_score)
+  description: 业务连续性分量
+  upstream:
+  - field: stability_score
+    table: ads_cell_profile
+- name: signal_quality
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: f(coverage_score)
+  description: 信号质量分量
+  upstream:
+  - field: coverage_score
+    table: ads_cell_profile

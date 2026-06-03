@@ -1,0 +1,36 @@
+table_name: ods_ue_signal
+layer: ODS
+layer_priority: 1
+description: UE 信号采样原始流
+storage_type: KAFKA
+fields:
+- name: cell_id
+  type: STRING
+  nullable: false
+  partition: false
+  description: 小区标识
+- name: imsi
+  type: STRING
+  nullable: false
+  partition: false
+  description: 用户标识 (PII)
+- name: rsrp
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 参考信号接收功率 (dBm), 值域 [-140,-44]
+- name: rsrq
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 参考信号接收质量 (dB)
+- name: sinr
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 信噪比 (dB), 值域 [-20,30]
+- name: timestamp
+  type: TIMESTAMP
+  nullable: false
+  partition: true
+  description: 采样时刻

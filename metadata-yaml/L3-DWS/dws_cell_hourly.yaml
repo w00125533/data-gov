@@ -1,0 +1,74 @@
+table_name: dws_cell_hourly
+layer: DWS
+layer_priority: 3
+description: 小区小时粒度汇总指标
+storage_type: HIVE
+fields:
+- name: avg_rsrp
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(rsrp)
+  description: 小时均 RSRP
+  upstream:
+  - field: avg_rsrp
+    table: dwd_session_qos
+- name: avg_sinr
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(sinr)
+  description: 小时均 SINR
+  upstream:
+  - field: avg_sinr
+    table: dwd_session_qos
+- name: avg_throughput
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(throughput)
+  description: 平均吞吐
+  upstream:
+  - field: throughput
+    table: dwd_session_qos
+- name: cell_id
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 小区标识
+  upstream:
+  - field: imsi
+    table: dwd_session_qos
+- name: drop_rate
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: SUM(drop_flag)/COUNT(*)
+  description: 掉话率
+  upstream:
+  - field: drop_flag
+    table: dwd_session_qos
+- name: ho_success_rate
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(CASE WHEN ho_result='SUCCESS' THEN 1 ELSE 0 END)
+  description: 切换成功率
+  upstream:
+  - field: ho_result
+    table: dwd_ho_event
+- name: hour_bucket
+  type: TIMESTAMP
+  nullable: false
+  partition: true
+  description: 小时窗口起点
+- name: total_sessions
+  type: BIGINT
+  nullable: true
+  partition: false
+  expression: COUNT(DISTINCT session_id)
+  description: 会话数
+  upstream:
+  - field: session_id
+    table: dwd_session_qos

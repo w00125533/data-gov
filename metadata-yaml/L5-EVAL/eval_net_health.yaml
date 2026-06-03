@@ -1,0 +1,51 @@
+table_name: eval_net_health
+layer: EVAL
+layer_priority: 5
+description: 区域日网络健康指数
+storage_type: STARROCKS
+fields:
+- name: alarm_severity_weighted
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: SUM(severity*duration)
+  description: 加权告警严重度
+  upstream:
+  - field: duration
+    table: ods_gnb_alarm
+  - field: severity
+    table: ods_gnb_alarm
+- name: area_id
+  type: STRING
+  nullable: false
+  partition: false
+  description: 区域标识
+- name: date
+  type: DATE
+  nullable: false
+  partition: true
+  description: 日期
+- name: degradation_trend
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: trend(total_throughput)
+  description: 退化趋势
+  upstream:
+  - field: total_throughput
+    table: dws_area_traffic
+- name: health_index
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: 0.5*(1-alarm_severity_weighted) + 0.5*health_from_qoe
+  description: 健康指数
+- name: user_complaint_ratio
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: f(qoe_score)
+  description: 用户投诉比
+  upstream:
+  - field: qoe_score
+    table: eval_user_score

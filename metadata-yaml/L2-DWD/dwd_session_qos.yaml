@@ -1,0 +1,67 @@
+table_name: dwd_session_qos
+layer: DWD
+layer_priority: 2
+description: 会话级 QoS 明细
+storage_type: HIVE
+fields:
+- name: avg_rsrp
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(rsrp)
+  description: 会话平均 RSRP
+  upstream:
+  - field: rsrp
+    table: ods_ue_signal
+- name: avg_rsrq
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(rsrq)
+  description: 会话平均 RSRQ
+  upstream:
+  - field: rsrq
+    table: ods_ue_signal
+- name: avg_sinr
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(sinr)
+  description: 会话平均 SINR
+  upstream:
+  - field: sinr
+    table: ods_ue_signal
+- name: drop_flag
+  type: INT
+  nullable: false
+  partition: false
+  description: 掉话标记 0/1
+- name: imsi
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 用户标识
+  upstream:
+  - field: imsi
+    table: ods_ue_signal
+- name: latency
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 端到端时延 (ms)
+- name: packet_loss
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 丢包率
+- name: session_id
+  type: STRING
+  nullable: false
+  partition: false
+  description: 会话标识
+- name: throughput
+  type: DOUBLE
+  nullable: true
+  partition: false
+  description: 吞吐量 (Mbps)

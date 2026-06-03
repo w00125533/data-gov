@@ -1,0 +1,53 @@
+table_name: ads_cell_profile
+layer: ADS
+layer_priority: 4
+description: 小区日画像 KPI
+storage_type: STARROCKS
+fields:
+- name: capacity_score
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: weighted(avg_throughput)
+  description: 容量得分
+  upstream:
+  - field: avg_throughput
+    table: dws_cell_hourly
+- name: cell_id
+  type: STRING
+  nullable: false
+  partition: false
+  expression: passthrough
+  description: 小区标识
+  upstream:
+  - field: cell_id
+    table: dws_cell_hourly
+- name: composite_kpi
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: 0.4*coverage_score + 0.3*capacity_score + 0.3*stability_score
+  description: 复合 KPI
+- name: coverage_score
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: weighted(avg_rsrp)
+  description: 覆盖得分 0-100
+  upstream:
+  - field: avg_rsrp
+    table: dws_cell_hourly
+- name: date
+  type: DATE
+  nullable: false
+  partition: true
+  description: 日期
+- name: stability_score
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: 1 - drop_rate
+  description: 稳定性得分
+  upstream:
+  - field: drop_rate
+    table: dws_cell_hourly

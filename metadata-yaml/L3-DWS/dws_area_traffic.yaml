@@ -1,0 +1,52 @@
+table_name: dws_area_traffic
+layer: DWS
+layer_priority: 3
+description: 区域小时流量汇总
+storage_type: HIVE
+fields:
+- name: active_users
+  type: BIGINT
+  nullable: true
+  partition: false
+  expression: COUNT(DISTINCT imsi)
+  description: 活跃用户
+  upstream:
+  - field: imsi
+    table: dwd_session_qos
+- name: area_id
+  type: STRING
+  nullable: false
+  partition: false
+  description: 区域标识
+- name: avg_latency
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: AVG(latency)
+  description: 平均时延
+  upstream:
+  - field: latency
+    table: dwd_session_qos
+- name: hour_bucket
+  type: TIMESTAMP
+  nullable: false
+  partition: true
+  description: 小时窗口
+- name: peak_throughput
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: MAX(throughput)
+  description: 峰值吞吐
+  upstream:
+  - field: throughput
+    table: dwd_session_qos
+- name: total_throughput
+  type: DOUBLE
+  nullable: true
+  partition: false
+  expression: SUM(throughput)
+  description: 总吞吐
+  upstream:
+  - field: throughput
+    table: dwd_session_qos

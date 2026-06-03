@@ -25,4 +25,4 @@ def presenter(state: dict, *, sse_emit: Optional[Callable[[dict], None]] = None)
     if sse_emit is not None:
         sse_emit(payload)
     summary = payload.get("summary") or "已完成"
-    return {"final_message": summary}
+    return {"final_message": summary, "presenter_payload": payload}
