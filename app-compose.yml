@@ -80,7 +80,6 @@ volumes:
 networks:
   default:
     name: data-gov_default
-    external: true
   shared-data-infra:
     external: true
     name: shared-data-infra

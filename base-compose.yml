@@ -1,26 +1,5 @@
 name: data-gov
 
-services:
-  neo4j:
-    image: neo4j:5-community
-    container_name: neo4j
-    hostname: neo4j
-    environment:
-      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/data-gov-neo4j}
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - ./data/neo4j:/data
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474/ | grep -q neo4j_version"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-
 networks:
   default:
     name: data-gov_default

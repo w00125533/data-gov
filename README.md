@@ -8,19 +8,19 @@ Wireless RNO Data Semantic Service — PoC.
 cp .env.example .env
 cd ../shared-data-infra
 docker compose -f compose.yaml -f compose.lakehouse.yaml -f compose.streaming.yaml -f compose.starrocks.yaml \
-  --profile lakehouse --profile yarn --profile spark-tools --profile streaming --profile starrocks up -d
+  --profile data-gov --profile lakehouse --profile yarn --profile spark-tools --profile streaming --profile starrocks up -d
 
 cd ../data-gov
-docker compose -f base-compose.yml up -d # starts project-local Neo4j
 ./scripts/init-stack.sh                 # starts required shared profiles if needed, runs init steps + backend
 python -m pip install -e ".[dev]"
 python -m pytest -m infra -v            # P1-1..P1-8 should all pass
 ```
 
-`base-compose.yml` no longer owns HDFS/YARN, Hive Metastore, Kafka, StarRocks or Spark tools.
-Those services are provided by `../shared-data-infra`; data-gov keeps its own
-Neo4j data volume, connects backend to the external `shared-data-infra` network,
-and runs Spark SQL init/test work through the shared `spark-tools` profile.
+`base-compose.yml` no longer owns infrastructure services. Neo4j, HDFS/YARN,
+Hive Metastore, Kafka, StarRocks and Spark tools are provided by
+`../shared-data-infra`; data-gov connects backend to the external
+`shared-data-infra` network and runs Spark SQL init/test work through the shared
+`spark-tools` profile.
 
 > **Windows 注意**：
 > - 推荐在 **PowerShell** 中执行上述命令。

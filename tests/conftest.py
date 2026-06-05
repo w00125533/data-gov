@@ -24,6 +24,7 @@ SHARED_SERVICES = {
     "hive-metastore",
     "kafka",
     "starrocks",
+    "neo4j",
 }
 
 

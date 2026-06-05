@@ -11,21 +11,19 @@ if [ ! -f "$SHARED_INFRA_DIR/compose.yaml" ]; then
   exit 1
 fi
 
-echo "[0/10] Starting shared lakehouse, streaming and StarRocks infrastructure ..."
+echo "[0/10] Starting shared data-gov, lakehouse, streaming and StarRocks infrastructure ..."
 docker compose \
   -f "$SHARED_INFRA_DIR/compose.yaml" \
   -f "$SHARED_INFRA_DIR/compose.lakehouse.yaml" \
   -f "$SHARED_INFRA_DIR/compose.streaming.yaml" \
   -f "$SHARED_INFRA_DIR/compose.starrocks.yaml" \
+  --profile data-gov \
   --profile lakehouse \
   --profile yarn \
   --profile spark-tools \
   --profile streaming \
   --profile starrocks \
   up -d
-
-echo "[0/10] Starting data-gov local services ..."
-docker compose -f base-compose.yml up -d
 
 echo "[1/10] Waiting for base infrastructure healthy ..."
 ./scripts/wait-for-healthy.sh 300
