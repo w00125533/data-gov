@@ -7,7 +7,6 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COMPOSE_FILE = REPO_ROOT / "base-compose.yml"
 SHARED_INFRA_ROOT = REPO_ROOT.parent / "shared-data-infra"
 SHARED_COMPOSE_FILES = [
     SHARED_INFRA_ROOT / "compose.yaml",
@@ -15,30 +14,6 @@ SHARED_COMPOSE_FILES = [
     SHARED_INFRA_ROOT / "compose.streaming.yaml",
     SHARED_INFRA_ROOT / "compose.starrocks.yaml",
 ]
-SHARED_SERVICES = {
-    "hms-db",
-    "namenode",
-    "datanode",
-    "resourcemanager",
-    "nodemanager",
-    "hive-metastore",
-    "kafka",
-    "starrocks",
-    "neo4j",
-}
-
-
-def _compose(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), *args],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-
-
 def _shared_compose(*args: str) -> subprocess.CompletedProcess:
     command = ["docker", "compose"]
     for compose_file in SHARED_COMPOSE_FILES:
@@ -55,14 +30,13 @@ def _shared_compose(*args: str) -> subprocess.CompletedProcess:
 
 @pytest.fixture(scope="session")
 def compose():
-    """Helper to run `docker compose -f base-compose.yml ...`."""
-    return _compose
+    """Helper to run shared infrastructure compose commands."""
+    return _shared_compose
 
 
 def service_state(service: str) -> dict:
     """Return the JSON state object for one compose service, or {} if absent."""
-    compose = _shared_compose if service in SHARED_SERVICES else _compose
-    result = compose("ps", "--format", "json", service)
+    result = _shared_compose("ps", "--format", "json", service)
     if result.returncode != 0 or not (result.stdout or "").strip():
         return {}
     # `docker compose ps --format json` emits one JSON object per line.

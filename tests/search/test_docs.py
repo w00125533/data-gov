@@ -38,7 +38,7 @@ def test_search_doc_ids_are_namespaced():
 
 @pytest.mark.infra
 def test_build_docs_from_neo4j_returns_10_tables_and_about_65_fields():
-    """需要 base-compose + Neo4j seeded."""
+    """需要 shared infra + Neo4j seeded."""
     docs = build_docs_from_neo4j()
     tables = [d for d in docs if d.type == "table"]
     fields = [d for d in docs if d.type == "field"]

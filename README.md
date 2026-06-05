@@ -16,11 +16,10 @@ python -m pip install -e ".[dev]"
 python -m pytest -m infra -v            # P1-1..P1-8 should all pass
 ```
 
-`base-compose.yml` no longer owns infrastructure services. Neo4j, HDFS/YARN,
-Hive Metastore, Kafka, StarRocks and Spark tools are provided by
-`../shared-data-infra`; data-gov connects backend to the external
-`shared-data-infra` network and runs Spark SQL init/test work through the shared
-`spark-tools` profile.
+All infrastructure services are provided by `../shared-data-infra`: Neo4j,
+HDFS/YARN, Hive Metastore, Kafka, StarRocks and Spark tools. data-gov connects
+backend to the external `shared-data-infra` network and runs Spark SQL init/test
+work through the shared `spark-tools` profile.
 
 > **Windows 注意**：
 > - 推荐在 **PowerShell** 中执行上述命令。
@@ -32,7 +31,7 @@ Hive Metastore, Kafka, StarRocks and Spark tools are provided by
 
 | Case | Verifies | Test |
 |------|----------|------|
-| P1-1 | All 9 base-compose services healthy + NN/RM UIs reachable | `tests/infra/test_compose_health.py::test_p1_1_all_services_healthy` |
+| P1-1 | Shared infrastructure services healthy + NN/RM UIs reachable | `tests/infra/test_compose_health.py::test_p1_1_all_services_healthy` |
 | P1-2 | Hive external table create/insert/select via Spark | `tests/infra/test_hive_external_table.py::test_p1_2_hive_external_table_roundtrip` |
 | P1-3 | Kafka produce/consume on `ods_ue_signal` | `tests/infra/test_kafka_pubsub.py::test_p1_3_kafka_produce_consume_ods_ue_signal` |
 | P1-4 | StarRocks `ads_cell_profile` rows after seeding | `tests/infra/test_starrocks_query.py::test_p1_4_starrocks_ads_cell_profile_has_rows` |
@@ -66,7 +65,7 @@ See `docs/superpowers/specs/2026-05-13-wireless-rno-data-service-design.md` for 
 # 单元测试 (无需外部依赖)
 python -m pytest tests/search -v
 
-# 集成测试 (需 base-compose + Neo4j seeded)
+# 集成测试 (需 shared infra + Neo4j seeded)
 python -m pytest tests/search -v -m infra
 
 # Benchmark CI 门禁 (基础模式: BM25 + Dense RRF)
@@ -129,7 +128,7 @@ python -m pytest tests/agent -v
 # 单元 (不需要外部依赖)
 pytest tests/sandbox -v -m "not infra"
 
-# 集成 (需要 backend 容器内, base-compose + Neo4j seeded)
+# 集成 (需要 backend 容器内, shared infra + Neo4j seeded)
 docker compose -f app-compose.yml exec backend pytest tests/sandbox -v -m infra
 ```
 
