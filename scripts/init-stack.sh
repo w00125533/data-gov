@@ -4,6 +4,27 @@ export MSYS_NO_PATHCONV=1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+SHARED_INFRA_DIR="${SHARED_INFRA_DIR:-$REPO_ROOT/../shared-data-infra}"
+
+if [ ! -f "$SHARED_INFRA_DIR/compose.yaml" ]; then
+  echo "Shared infrastructure repo not found: $SHARED_INFRA_DIR" >&2
+  exit 1
+fi
+
+echo "[0/10] Starting shared lakehouse, streaming and StarRocks infrastructure ..."
+docker compose \
+  -f "$SHARED_INFRA_DIR/compose.yaml" \
+  -f "$SHARED_INFRA_DIR/compose.lakehouse.yaml" \
+  -f "$SHARED_INFRA_DIR/compose.streaming.yaml" \
+  -f "$SHARED_INFRA_DIR/compose.starrocks.yaml" \
+  --profile lakehouse \
+  --profile yarn \
+  --profile streaming \
+  --profile starrocks \
+  up -d
+
+echo "[0/10] Starting data-gov local services ..."
+docker compose -f base-compose.yml up -d
 
 echo "[1/10] Waiting for base infrastructure healthy ..."
 ./scripts/wait-for-healthy.sh 300
@@ -21,7 +42,10 @@ echo "[3/10] Creating Kafka topics ..."
 ./init-scripts/02_kafka_init.sh
 
 echo "[4/10] Applying 03_starrocks_init.sql ..."
-docker exec -i starrocks mysql -h 127.0.0.1 -P 9030 -u root < init-scripts/03_starrocks_init.sql
+docker compose \
+  -f "$SHARED_INFRA_DIR/compose.yaml" \
+  -f "$SHARED_INFRA_DIR/compose.starrocks.yaml" \
+  exec -T starrocks mysql -h 127.0.0.1 -P 9030 -u root < init-scripts/03_starrocks_init.sql
 
 echo "[5/10] Initializing Neo4j schema (constraints + indexes) ..."
 python init-scripts/05_neo4j_init.py

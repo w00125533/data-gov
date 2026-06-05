@@ -1,198 +1,6 @@
 name: data-gov
 
 services:
-  hms-db:
-    image: postgres:15-alpine
-    container_name: hms-db
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-hive}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hive}
-      POSTGRES_DB: ${POSTGRES_DB:-metastore}
-    ports:
-      - "15432:5432"
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hive} -d ${POSTGRES_DB:-metastore}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-
-  namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
-    container_name: namenode
-    hostname: namenode
-    environment:
-      CLUSTER_NAME: data-gov
-      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
-    ports:
-      - "9870:9870"
-      - "8020:8020"
-    volumes:
-      - ./data/hdfs/namenode:/hadoop/dfs/name
-      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9870/dfshealth.html > /dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-
-  datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
-    container_name: datanode
-    hostname: datanode
-    environment:
-      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
-      SERVICE_PRECONDITION: "namenode:9870"
-    ports:
-      - "9864:9864"
-    volumes:
-      - ./data/hdfs/datanode:/hadoop/dfs/data
-      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
-    depends_on:
-      namenode:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9864 > /dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-
-  resourcemanager:
-    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
-    container_name: resourcemanager
-    hostname: resourcemanager
-    environment:
-      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
-      YARN_CONF_yarn_resourcemanager_hostname: resourcemanager
-      SERVICE_PRECONDITION: "namenode:9870 datanode:9864"
-    ports:
-      - "8088:8088"
-      - "8032:8032"
-    volumes:
-      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
-      - ./docker/hadoop-conf/yarn-site.xml:/etc/hadoop/yarn-site.xml:ro
-      - ./docker/hadoop-conf/mapred-site.xml:/etc/hadoop/mapred-site.xml:ro
-    depends_on:
-      namenode:
-        condition: service_healthy
-      datanode:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://resourcemanager:8088/ws/v1/cluster/info | grep -q STARTED"]
-      interval: 10s
-      timeout: 5s
-      retries: 24
-      start_period: 30s
-
-  nodemanager:
-    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
-    container_name: nodemanager
-    hostname: nodemanager
-    environment:
-      CORE_CONF_fs_defaultFS: hdfs://namenode:8020
-      YARN_CONF_yarn_resourcemanager_hostname: resourcemanager
-      SERVICE_PRECONDITION: "resourcemanager:8088"
-    ports:
-      - "8042:8042"
-    volumes:
-      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
-      - ./docker/hadoop-conf/yarn-site.xml:/etc/hadoop/yarn-site.xml:ro
-      - ./docker/hadoop-conf/mapred-site.xml:/etc/hadoop/mapred-site.xml:ro
-    depends_on:
-      resourcemanager:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8042 > /dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-
-  hive-metastore:
-    image: apache/hive:4.0.0
-    container_name: hive-metastore
-    hostname: hive-metastore
-    environment:
-      SERVICE_NAME: metastore
-      DB_DRIVER: postgres
-      IS_RESUME: "false"
-      SERVICE_OPTS: >-
-        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
-        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hms-db:5432/metastore
-        -Djavax.jdo.option.ConnectionUserName=hive
-        -Djavax.jdo.option.ConnectionPassword=hive
-    ports:
-      - "9083:9083"
-    volumes:
-      - ./docker/hive-conf/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
-      - ./docker/hadoop-conf/core-site.xml:/opt/hive/conf/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
-      - ./docker/jars/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar:ro
-    depends_on:
-      hms-db:
-        condition: service_healthy
-      namenode:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/9083' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-
-  kafka:
-    image: apache/kafka:3.8.0
-    container_name: kafka
-    hostname: kafka
-    environment:
-      KAFKA_NODE_ID: "1"
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:19092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:19092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
-      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-    ports:
-      - "9092:9092"
-      - "19092:19092"
-    volumes:
-      - ./data/kafka:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-
-  starrocks:
-    image: starrocks/allin1-ubuntu:3.2-latest
-    container_name: starrocks
-    hostname: starrocks
-    ports:
-      - "8030:8030"
-      - "9030:9030"
-      - "9060:9060"
-    healthcheck:
-      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -P 9030 -u root -e 'SELECT 1' > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 90s
-
   neo4j:
     image: neo4j:5-community
     container_name: neo4j
@@ -217,10 +25,17 @@ services:
     image: apache/spark:3.5.4
     profiles: [tools]
     entrypoint: ["/opt/spark/bin/spark-sql"]
+    networks:
+      - default
+      - shared-data-infra
     volumes:
       - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
       - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
+      - ./docker/hive-conf/hive-site.xml:/etc/hive/conf/hive-site.xml:ro
 
 networks:
   default:
     name: data-gov_default
+  shared-data-infra:
+    external: true
+    name: shared-data-infra

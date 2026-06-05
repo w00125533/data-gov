@@ -6,6 +6,7 @@ reverse_synth path. The signature is kept stable.
 from __future__ import annotations
 
 import json
+import os
 import random
 import subprocess
 import tempfile
@@ -14,6 +15,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SHARED_INFRA_DIR = Path(os.environ.get("SHARED_INFRA_DIR", REPO_ROOT.parent / "shared-data-infra"))
+SHARED_COMPOSE = [
+    "docker", "compose",
+    "-f", str(SHARED_INFRA_DIR / "compose.yaml"),
+    "-f", str(SHARED_INFRA_DIR / "compose.lakehouse.yaml"),
+]
 
 
 def _generate_dwd_session_qos_rows(rows: int, seed: int = 42) -> list[tuple]:
@@ -117,10 +124,10 @@ def _write_json_rows_to_hdfs(table: str, rows: list[dict]) -> str:
     remote_tmp = f"/tmp/{local_path.name}"
     try:
         commands = [
-            ["docker", "exec", "namenode", "hdfs", "dfs", "-mkdir", "-p", hdfs_dir],
-            ["docker", "cp", str(local_path), f"namenode:{remote_tmp}"],
-            ["docker", "exec", "namenode", "hdfs", "dfs", "-put", "-f", remote_tmp, hdfs_path],
-            ["docker", "exec", "namenode", "rm", "-f", remote_tmp],
+            [*SHARED_COMPOSE, "exec", "-T", "namenode", "hdfs", "dfs", "-mkdir", "-p", hdfs_dir],
+            [*SHARED_COMPOSE, "cp", str(local_path), f"namenode:{remote_tmp}"],
+            [*SHARED_COMPOSE, "exec", "-T", "namenode", "hdfs", "dfs", "-put", "-f", remote_tmp, hdfs_path],
+            [*SHARED_COMPOSE, "exec", "-T", "namenode", "rm", "-f", remote_tmp],
         ]
         for cmd in commands:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)

@@ -47,6 +47,9 @@ services:
       - sandbox-tmp:/tmp/sandbox
     ports:
       - "8000:8000"
+    networks:
+      - default
+      - shared-data-infra
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health | grep -q '\"status\":\"healthy\"'"]
       interval: 10s
@@ -78,3 +81,6 @@ networks:
   default:
     name: data-gov_default
     external: true
+  shared-data-infra:
+    external: true
+    name: shared-data-infra
