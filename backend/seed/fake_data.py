@@ -61,8 +61,8 @@ def _write_rows_via_spark(rows: list[tuple]) -> None:
     try:
         result = subprocess.run(
             [
-                "docker", "compose", "-f", str(REPO_ROOT / "base-compose.yml"),
-                "--profile", "tools", "run", "--rm",
+                *SHARED_COMPOSE,
+                "--profile", "spark-tools", "run", "--rm",
                 "-v", f"{sql_path}:/work/insert.sql:ro",
                 "spark",
                 "--conf", "spark.sql.catalogImplementation=hive",

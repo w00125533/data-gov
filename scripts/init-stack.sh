@@ -19,6 +19,7 @@ docker compose \
   -f "$SHARED_INFRA_DIR/compose.starrocks.yaml" \
   --profile lakehouse \
   --profile yarn \
+  --profile spark-tools \
   --profile streaming \
   --profile starrocks \
   up -d
@@ -30,7 +31,11 @@ echo "[1/10] Waiting for base infrastructure healthy ..."
 ./scripts/wait-for-healthy.sh 300
 
 echo "[2/10] Applying 01_hive_init.sql ..."
-docker compose -f base-compose.yml --profile tools run --rm \
+docker compose \
+  -f "$SHARED_INFRA_DIR/compose.yaml" \
+  -f "$SHARED_INFRA_DIR/compose.lakehouse.yaml" \
+  --profile spark-tools \
+  run --rm \
   -v "$REPO_ROOT/init-scripts:/work:ro" \
   spark \
     --conf spark.sql.catalogImplementation=hive \

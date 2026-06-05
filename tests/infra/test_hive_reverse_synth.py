@@ -9,14 +9,19 @@ from backend.seed.fake_data import generate_fake_data
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "base-compose.yml"
+SHARED_INFRA_ROOT = REPO_ROOT.parent / "shared-data-infra"
+SHARED_COMPOSE = [
+    "docker", "compose",
+    "-f", str(SHARED_INFRA_ROOT / "compose.yaml"),
+    "-f", str(SHARED_INFRA_ROOT / "compose.lakehouse.yaml"),
+]
 
 
 def _spark_sql(sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
-            "docker", "compose", "-f", str(COMPOSE_FILE), "--profile", "tools",
-            "run", "--rm",
+            *SHARED_COMPOSE,
+            "--profile", "spark-tools", "run", "--rm",
             "spark",
             "--conf", "spark.sql.catalogImplementation=hive",
             "--conf", "spark.hadoop.hive.metastore.uris=thrift://hive-metastore:9083",

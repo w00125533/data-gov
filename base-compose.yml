@@ -21,21 +21,6 @@ services:
       retries: 18
       start_period: 30s
 
-  spark:
-    image: apache/spark:3.5.4
-    profiles: [tools]
-    entrypoint: ["/opt/spark/bin/spark-sql"]
-    networks:
-      - default
-      - shared-data-infra
-    volumes:
-      - ./docker/hadoop-conf/core-site.xml:/etc/hadoop/core-site.xml:ro
-      - ./docker/hadoop-conf/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
-      - ./docker/hive-conf/hive-site.xml:/etc/hive/conf/hive-site.xml:ro
-
 networks:
   default:
     name: data-gov_default
-  shared-data-infra:
-    external: true
-    name: shared-data-infra
