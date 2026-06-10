@@ -11,6 +11,9 @@ venv/
 node_modules/
 dist/
 
+# Java / Maven
+target/
+
 # IDEs
 .idea/
 .vscode/
