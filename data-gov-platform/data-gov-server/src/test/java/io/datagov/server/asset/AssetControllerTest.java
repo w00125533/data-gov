@@ -127,6 +127,110 @@ class AssetControllerTest {
     }
 
     @Test
+    void registerSameAssetCodeUpdatesExistingAsset() throws Exception {
+        mockMvc.perform(post("/api/assets/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "assetCode": "dim_asset_upsert",
+                                  "assetName": "Original Asset",
+                                  "assetType": "TABLE",
+                                  "engine": "STARROCKS",
+                                  "lifecycleStatus": "DRAFT",
+                                  "fields": [
+                                    {
+                                      "fieldName": "asset_id",
+                                      "fieldType": "varchar",
+                                      "ordinalPosition": 1
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.asset.assetName").value("Original Asset"))
+                .andExpect(jsonPath("$.asset.schemaVersion").value(1));
+
+        mockMvc.perform(post("/api/assets/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "assetCode": "dim_asset_upsert",
+                                  "assetName": "Updated Asset",
+                                  "assetType": "TABLE",
+                                  "engine": "STARROCKS",
+                                  "lifecycleStatus": "ACTIVE",
+                                  "fields": [
+                                    {
+                                      "fieldName": "asset_id",
+                                      "fieldType": "varchar",
+                                      "ordinalPosition": 1
+                                    },
+                                    {
+                                      "fieldName": "asset_name",
+                                      "fieldType": "varchar",
+                                      "ordinalPosition": 2
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.asset.assetName").value("Updated Asset"))
+                .andExpect(jsonPath("$.asset.schemaVersion").value(2))
+                .andExpect(jsonPath("$.fields", hasSize(2)));
+
+        mockMvc.perform(get("/api/assets"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.assetCode == 'dim_asset_upsert')]", hasSize(1)));
+
+        mockMvc.perform(get("/api/assets/dim_asset_upsert"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.asset.assetName").value("Updated Asset"))
+                .andExpect(jsonPath("$.fields", hasSize(2)));
+    }
+
+    @Test
+    void omittedFieldOrdinalsPreserveRequestOrder() throws Exception {
+        mockMvc.perform(post("/api/assets/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "assetCode": "dim_request_order",
+                                  "assetName": "Request Order Asset",
+                                  "assetType": "TABLE",
+                                  "engine": "STARROCKS",
+                                  "fields": [
+                                    {
+                                      "fieldName": "zeta_field",
+                                      "fieldType": "varchar"
+                                    },
+                                    {
+                                      "fieldName": "alpha_field",
+                                      "fieldType": "varchar"
+                                    },
+                                    {
+                                      "fieldName": "middle_field",
+                                      "fieldType": "varchar"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fields[0].fieldName").value("zeta_field"))
+                .andExpect(jsonPath("$.fields[0].ordinalPosition").value(1))
+                .andExpect(jsonPath("$.fields[1].fieldName").value("alpha_field"))
+                .andExpect(jsonPath("$.fields[1].ordinalPosition").value(2))
+                .andExpect(jsonPath("$.fields[2].fieldName").value("middle_field"))
+                .andExpect(jsonPath("$.fields[2].ordinalPosition").value(3));
+
+        mockMvc.perform(get("/api/assets/dim_request_order/schema"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].fieldName").value("zeta_field"))
+                .andExpect(jsonPath("$[1].fieldName").value("alpha_field"))
+                .andExpect(jsonPath("$[2].fieldName").value("middle_field"));
+    }
+
+    @Test
     void unknownAssetReturns404() throws Exception {
         mockMvc.perform(get("/api/assets/missing_asset"))
                 .andExpect(status().isNotFound())

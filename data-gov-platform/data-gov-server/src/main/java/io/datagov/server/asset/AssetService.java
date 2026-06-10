@@ -3,12 +3,14 @@ package io.datagov.server.asset;
 import io.datagov.common.dto.AssetDtos;
 import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.LifecycleStatus;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 @Service
 public class AssetService {
@@ -43,7 +45,28 @@ public class AssetService {
                 now);
 
         if (existing == null) {
-            assetRepository.insertAsset(asset);
+            try {
+                assetRepository.insertAsset(asset);
+            } catch (DuplicateKeyException ex) {
+                AssetDtos.AssetResponse racedAsset = assetRepository.findAssetByCode(request.assetCode())
+                        .orElseThrow(() -> ex);
+                asset = new AssetDtos.AssetResponse(
+                        racedAsset.assetId(),
+                        request.assetCode(),
+                        request.assetName(),
+                        request.assetType(),
+                        request.engine(),
+                        request.domain(),
+                        request.owner(),
+                        request.description(),
+                        request.lifecycleStatus() == null ? LifecycleStatus.DRAFT : request.lifecycleStatus(),
+                        racedAsset.schemaVersion() + 1,
+                        queryable,
+                        federatedQueryable,
+                        racedAsset.createdAt(),
+                        now);
+                assetRepository.updateAsset(asset);
+            }
         } else {
             assetRepository.updateAsset(asset);
         }
@@ -87,20 +110,23 @@ public class AssetService {
         if (fields == null) {
             return List.of();
         }
-        return fields.stream()
-                .map(field -> new AssetDtos.FieldResponse(
+        return IntStream.range(0, fields.size())
+                .mapToObj(index -> {
+                    AssetDtos.FieldRequest field = fields.get(index);
+                    return new AssetDtos.FieldResponse(
                         newId("field_"),
                         assetId,
                         field.fieldName(),
                         field.fieldType(),
-                        field.ordinalPosition(),
+                        field.ordinalPosition() == null ? index + 1 : field.ordinalPosition(),
                         field.nullable() == null || field.nullable(),
                         Boolean.TRUE.equals(field.partitionKey()),
                         Boolean.TRUE.equals(field.primaryKey()),
                         Boolean.TRUE.equals(field.eventTime()),
                         field.description(),
                         field.expression(),
-                        1))
+                        1);
+                })
                 .toList();
     }
 
