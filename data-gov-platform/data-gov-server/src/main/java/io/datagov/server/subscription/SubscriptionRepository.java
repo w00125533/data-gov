@@ -159,6 +159,14 @@ public class SubscriptionRepository {
         }
     }
 
+    public void updateLastRuntimeSeenAt(String subscriptionId, Instant now) {
+        jdbcTemplate.update("""
+                update subscription
+                set last_runtime_seen_at = ?, updated_at = ?
+                where subscription_id = ?
+                """, Timestamp.from(now), Timestamp.from(now), subscriptionId);
+    }
+
     public GovernanceDtos.SubscriptionResponse updateSubscription(
             String subscriptionId,
             GovernanceDtos.UpdateSubscriptionRequest request,

@@ -1,6 +1,8 @@
 package io.datagov.server.common;
 
 import io.datagov.server.asset.AssetNotFoundException;
+import io.datagov.server.query.QueryExecutionException;
+import io.datagov.server.query.QueryValidationException;
 import io.datagov.server.subscription.AssetCodeMismatchException;
 import io.datagov.server.subscription.SubscriptionDataAccessException;
 import io.datagov.server.subscription.SubscriptionNotFoundException;
@@ -47,6 +49,25 @@ public class ApiExceptionHandler {
                 .body(Map.of(
                         "error", "SUBSCRIPTION_DATA_ACCESS_ERROR",
                         "detail", ex.getMessage()));
+    }
+
+    @ExceptionHandler(QueryValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleQueryValidation(QueryValidationException ex) {
+        return ResponseEntity.badRequest()
+                .body(Map.of(
+                        "error", ex.getErrorCode(),
+                        "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(QueryExecutionException.class)
+    public ResponseEntity<Map<String, Object>> handleQueryExecution(QueryExecutionException ex) {
+        HttpStatus status = "STARROCKS_NOT_CONFIGURED".equals(ex.getErrorCode())
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.INTERNAL_SERVER_ERROR;
+        return ResponseEntity.status(status)
+                .body(Map.of(
+                        "error", ex.getErrorCode(),
+                        "message", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
