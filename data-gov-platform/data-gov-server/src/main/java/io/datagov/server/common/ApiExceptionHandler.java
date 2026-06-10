@@ -1,6 +1,7 @@
 package io.datagov.server.common;
 
 import io.datagov.server.asset.AssetNotFoundException;
+import io.datagov.server.subscription.SubscriptionNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -18,6 +19,14 @@ public class ApiExceptionHandler {
                         "error", "ASSET_NOT_FOUND",
                         "message", ex.getMessage(),
                         "assetCode", ex.getAssetCode()));
+    }
+
+    @ExceptionHandler(SubscriptionNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleSubscriptionNotFound(SubscriptionNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of(
+                        "error", "SUBSCRIPTION_NOT_FOUND",
+                        "detail", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
