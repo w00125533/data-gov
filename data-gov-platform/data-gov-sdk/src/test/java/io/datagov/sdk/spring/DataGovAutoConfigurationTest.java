@@ -4,6 +4,7 @@ import io.datagov.sdk.DataGovClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,5 +45,16 @@ class DataGovAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(DataGovClient.class);
                     assertThat(context).doesNotHaveBean(DataGovStartupRegistrar.class);
                 });
+    }
+
+    @Test
+    void requestFactoryUsesConfiguredRegistrationTimeout() {
+        DataGovProperties properties = new DataGovProperties();
+        properties.setRegisterTimeoutMs(1234);
+
+        SimpleClientHttpRequestFactory factory = DataGovAutoConfiguration.requestFactory(properties);
+
+        assertThat(factory).extracting("connectTimeout").isEqualTo(1234);
+        assertThat(factory).extracting("readTimeout").isEqualTo(1234);
     }
 }
