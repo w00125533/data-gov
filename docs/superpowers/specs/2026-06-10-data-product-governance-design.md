@@ -14,7 +14,7 @@
 - 产品 API 优先，SQL Gateway 作为补充查询入口。
 - Kafka 进入资产目录和订阅通知体系，但不进入统一查询。
 - 订阅不是消费事实，也不是核心血缘；订阅表示使用意图和变化通知关注。
-- 运行态消费事实由查询记录和作业运行记录表达。
+- 运行态消费事实第一期由查询记录表达，Flink/Spark 作业先保留声明态注册。
 - Java SDK 用于降低微服务、Flink、Spark 作业接入成本。
 
 ## 2. 范围
@@ -22,12 +22,12 @@
 ### 2.1 第一期开启
 
 - 数据资产注册、发现、Schema 查询。
-- GaussDB 关系模型承载元数据、血缘、订阅、运行态记录、事件和 drift。
+- GaussDB 关系模型承载元数据、血缘、订阅、查询记录、事件和 drift。
 - StarRocks 查询网关，支持产品 API 查询和受控 SQL 查询。
 - 基础跨源 join：StarRocks 内表、Hive、Iceberg、GaussDB 之间的只读查询。
 - Kafka 资产注册、发现、Schema、订阅声明、通知和血缘关系。
 - Java SDK 启动注册订阅声明。
-- Java SDK 上报 Flink/Spark 作业运行。
+- Java SDK 注册 Flink/Spark 作业声明，并监听订阅通知。
 - 事件通知和声明态/运行态差异分析。
 
 ### 2.2 第一阶段不做
@@ -53,8 +53,8 @@
 Java SDK
   - 启动注册订阅声明
   - 产品 API 查询透传 subscription_id
-  - Flink/Spark 作业运行上报
-  - 通知拉取
+  - Flink/Spark 作业声明注册
+  - Kafka 通知监听回调
 
 Data-Gov Server (Spring Boot)
   - Asset Registry
@@ -71,7 +71,6 @@ GaussDB
   - 血缘主库
   - 订阅声明
   - 查询审计
-  - 作业运行记录
   - 事件、通知、drift
 
 StarRocks
@@ -130,9 +129,10 @@ Kafka 不强行抽象成普通表。Kafka 可以统一注册、发现、订阅�
 运行态事实由以下记录表达：
 
 - `query_record`：产品 API 和 SQL Gateway 查询。
-- `job_run_record`：Flink/Spark 作业运行。
 
 运行态回答“谁实际使用了什么、什么时候、成功与否、使用了哪些字段”。
+
+Flink/Spark 作业第一期通过 SDK 注册作业声明、输入输出资产和订阅关系，不上报作业开始和完成事件；运行态观测和自动血缘生成后续单独规划。
 
 ### 4.4 血缘
 
@@ -293,7 +293,7 @@ query_record
 
 第一期不拆 `query_record_asset`，多资产引用放入 JSON。
 
-### 5.6 作业运行
+### 5.6 作业声明
 
 ```text
 consumer_job
@@ -309,26 +309,7 @@ consumer_job
 - updated_at            timestamp
 ```
 
-```text
-job_run_record
-- run_id                varchar primary key
-- job_id                varchar references consumer_job(job_id)
-- subscription_id       varchar null references subscription(subscription_id)
-- input_asset_ids       jsonb
-- output_asset_ids      jsonb
-- input_asset_codes     jsonb
-- output_asset_codes    jsonb
-- input_fields          jsonb
-- output_fields         jsonb
-- status                varchar not null
-- rows_read             bigint
-- rows_written          bigint
-- started_at            timestamp
-- finished_at           timestamp
-- error_message         text
-```
-
-第一期不建 `job_io_record`。
+第一期不建 `job_run_record` 和 `job_io_record`。`consumer_job` 仅表达开发态/启动态声明，运行生命周期、行数统计、错误信息和自动血缘生成不进入第一期。
 
 ### 5.7 血缘
 
@@ -377,10 +358,9 @@ subscription_notification
 - subscription_id       varchar references subscription(subscription_id)
 - consumer_id           varchar references consumer(consumer_id)
 - status                varchar not null
-- channel               varchar
+- kafka_topic           varchar
 - created_at            timestamp
 - sent_at               timestamp
-- acked_at              timestamp
 ```
 
 ```text
@@ -435,10 +415,10 @@ metadata              -- 原 metadata 能力的 GaussDB 实现
 subscription          -- 订阅声明、通知偏好
 query                 -- 产品 API、SQL Gateway、StarRocks 执行
 lineage               -- 血缘、影响分析
-sdk                   -- SDK 启动注册、作业上报
+sdk                   -- SDK 启动注册、作业声明、通知监听
 event                 -- 资产事件、通知
 governance            -- usage_drift
-job                   -- consumer_job、job_run_record
+job                   -- consumer_job
 ```
 
 建议技术栈：
@@ -482,8 +462,6 @@ PATCH /api/subscriptions/{subscriptionId}
 ```http
 POST /api/sdk/subscriptions/register
 POST /api/sdk/jobs/register
-POST /api/sdk/jobs/{jobId}/runs/start
-POST /api/sdk/jobs/{jobId}/runs/{runId}/finish
 ```
 
 启动注册请求示例：
@@ -528,8 +506,6 @@ SQL Gateway 支持只读 `SELECT` 和基础跨源 join，要求引用已注册�
 GET  /api/assets/{assetId}/lineage?direction=up&depth=5
 GET  /api/assets/{assetId}/impact
 POST /api/assets/{assetId}/events
-GET  /api/notifications
-PATCH /api/notifications/{notificationId}/ack
 POST /api/governance/drift-check
 GET  /api/governance/drifts
 PATCH /api/governance/drifts/{driftId}
@@ -643,7 +619,7 @@ QueryResult result = dataGovClient.asset("ads_cell_profile")
 ### 9.2 Flink/Spark Java 作业集成
 
 ```java
-DataGovJobReporter reporter = DataGovJobReporter.builder()
+DataGovJobRegistrar registrar = DataGovJobRegistrar.builder()
     .endpoint("http://data-gov-server:8080")
     .jobName("cell-hourly-agg")
     .jobType(JobType.FLINK)
@@ -652,26 +628,17 @@ DataGovJobReporter reporter = DataGovJobReporter.builder()
     .outputAsset("dwd_session_qos")
     .build();
 
-reporter.register();
-String runId = reporter.startRun();
-
-try {
-    // job logic
-    reporter.finishRun(runId, JobRunStatus.SUCCESS);
-} catch (Exception e) {
-    reporter.finishRun(runId, JobRunStatus.FAILED, e);
-    throw e;
-}
+registrar.register();
 ```
 
-作业完成时，服务端 upsert `lineage_edge`。
+作业注册只写入 `consumer_job`、输入输出资产声明和订阅声明，不自动写入 `lineage_edge`。第一期血缘由资产注册、导入或手工维护接口进入治理库。
 
 ### 9.3 SDK 错误处理
 
 默认不阻断业务启动：
 
 - 注册失败：记录 warning，业务继续。
-- 作业上报失败：记录 warning，可重试。
+- 作业声明注册失败：记录 warning，可重试。
 - 查询失败：作为业务查询异常抛出。
 
 可配置：
@@ -680,23 +647,39 @@ try {
 data-gov:
   fail-fast: false
   register-timeout-ms: 3000
-  report-timeout-ms: 3000
   retry:
     max-attempts: 3
 ```
 
 ## 10. 事件通知与 Drift
 
-资产变化写入 `asset_event`，再根据 `subscription.notify_on` 生成 `subscription_notification`。
+资产变化写入 `asset_event`，再根据 `subscription.notify_on` 匹配订阅，生成 `subscription_notification` 并异步发送 Kafka 消息。
 
-第一期通知通道只做 API 拉取：
+第一期通知通道使用 Kafka：
 
-```http
-GET /api/notifications?consumerName=rno-dashboard&status=PENDING
-PATCH /api/notifications/{notificationId}/ack
+```text
+topic: data-gov.subscription-notifications
+key: consumer_name + environment
+payload:
+  notificationId
+  eventId
+  subscriptionId
+  assetCode
+  eventType
+  severity
+  eventPayload
+  createdAt
 ```
 
-SDK 可定时拉取通知，默认写日志，不自动 ack。
+服务端只负责将匹配到的通知投递到 Kafka，并记录 `PENDING`、`SENT`、`FAILED` 等平台发送状态；不提供通知拉取和业务处理回执 API。消费方通过 Java SDK 内置 Kafka listener 订阅通知 topic，SDK 收到消息后触发业务侧回调：
+
+```java
+dataGovClient.onNotification(notification -> {
+    log.info("data asset event: {}", notification.eventType());
+});
+```
+
+业务侧是否重试、告警或记录处理结果由消费方自行决定；第一期不在治理服务中维护消费者业务处理回执。
 
 Drift 检测第一期实现：
 
@@ -725,8 +708,9 @@ Drift 检测第一期实现：
 ### 阶段 3：订阅和 Java SDK
 
 - 实现 SDK 启动注册。
-- 实现 job 注册和运行上报。
-- 支持 `declaration_hash`、`last_registered_at`、`last_runtime_seen_at`。
+- 实现 job 声明注册。
+- 支持 `declaration_hash`、`last_registered_at`。
+- 实现 SDK Kafka listener 和通知回调。
 
 ### 阶段 4：StarRocks 查询网关
 
@@ -738,7 +722,7 @@ Drift 检测第一期实现：
 ### 阶段 5：事件、通知、影响分析和 drift
 
 - 实现资产事件。
-- 实现通知拉取和 ack。
+- 实现 Kafka 异步通知投递。
 - 实现影响分析。
 - 实现第一批 drift 检测。
 
@@ -748,12 +732,12 @@ Drift 检测第一期实现：
 - Kafka topic 可注册为 `STREAM` 资产，查询时返回明确错误。
 - 资产发现、Schema 查询、上下游血缘查询可用。
 - Java 微服务启动后可自动注册订阅。
-- Flink/Spark Java 作业可注册 job、上报运行，并生成资产级血缘。
+- Flink/Spark Java 作业可通过 SDK 注册 job 声明、输入输出资产和订阅关系。
 - 产品 API 可通过 StarRocks 查询表型资产。
 - SQL Gateway 可执行只读查询并改写已注册资产为 StarRocks 三段名。
 - 至少验证一个基础跨源 join。
 - 查询写入 `query_record`。
-- Schema 变化事件能生成订阅通知。
+- Schema 变化事件能生成订阅通知并投递到 Kafka。
 - 未声明使用或字段超声明能生成 drift。
 
 ## 13. 基础设施约束
@@ -791,7 +775,7 @@ flowchart LR
     Subscribe((声明订阅与通知关注))
     ProductQuery((产品 API 查询))
     SqlQuery((SQL Gateway 查询))
-    JobReport((作业运行上报))
+    JobRegister((作业声明注册))
     LineageQuery((血缘与影响分析))
     EventNotify((接收资产变化通知))
     DriftReview((查看声明/运行态差异))
@@ -803,20 +787,20 @@ flowchart LR
     Dev --> ProductQuery
     Dev --> EventNotify
     JobDev --> Subscribe
-    JobDev --> JobReport
+    JobDev --> JobRegister
     Analyst --> AssetDiscover
     Analyst --> SqlQuery
     Analyst --> LineageQuery
     Service --> ProductQuery
     Service --> EventNotify
-    Job --> JobReport
+    Job --> JobRegister
 ```
 
 关键用例说明：
 
 - 治理管理员负责资产注册、元数据维护、事件发布、影响分析和 drift 处理。
 - 微服务通过 Java SDK 启动注册订阅声明，并通过产品 API 查询资产。
-- Flink/Spark 作业通过 Java SDK 注册作业、声明输入输出并上报运行结果。
+- Flink/Spark 作业通过 Java SDK 注册作业，并声明输入输出资产和通知关注。
 - 分析用户和平台通过发现能力查找数据产品，通过 SQL Gateway 做受控查询。
 
 ### 14.2 逻辑视图
@@ -856,8 +840,6 @@ classDiagram
 
     class JobService {
       +registerJob()
-      +startRun()
-      +finishRun()
     }
 
     class LineageService {
@@ -870,6 +852,7 @@ classDiagram
       +createAssetEvent()
       +matchSubscriptions()
       +createNotifications()
+      +publishKafkaNotification()
     }
 
     class GovernanceService {
@@ -916,8 +899,6 @@ erDiagram
     CONSUMER ||--o{ CONSUMER_JOB : owns
     CONSUMER ||--o{ QUERY_RECORD : runs
     SUBSCRIPTION ||--o{ QUERY_RECORD : used_by
-    SUBSCRIPTION ||--o{ JOB_RUN_RECORD : used_by
-    CONSUMER_JOB ||--o{ JOB_RUN_RECORD : runs
     DATA_ASSET ||--o{ LINEAGE_EDGE : source
     DATA_ASSET ||--o{ LINEAGE_EDGE : target
     LINEAGE_EDGE ||--o{ LINEAGE_FIELD_EDGE : contains
@@ -989,14 +970,6 @@ erDiagram
       varchar job_type
     }
 
-    JOB_RUN_RECORD {
-      varchar run_id PK
-      varchar job_id FK
-      jsonb input_asset_codes
-      jsonb output_asset_codes
-      varchar status
-    }
-
     LINEAGE_EDGE {
       varchar edge_id PK
       varchar source_asset_id FK
@@ -1032,7 +1005,7 @@ erDiagram
 
 - `subscription_field` 合并到 `subscription.declared_fields`，降低第一期表数量。
 - `query_record_asset` 合并到 `query_record.referenced_asset_codes`，适配跨源 join 的多资产引用。
-- `job_io_record` 合并到 `job_run_record.input/output_*`，长期血缘仍由 `lineage_edge` 表达。
+- 第一期不建 `job_run_record` 和 `job_io_record`；Flink/Spark 只注册作业声明，长期血缘仍由 `lineage_edge` 表达。
 - Kafka key/value schema 不拆分字段表结构，第一期通过 `asset_physical_binding.properties` 承载扩展信息。
 
 ### 14.4 运行时序视图
@@ -1046,7 +1019,7 @@ sequenceDiagram
     participant Server as Data-Gov Server
     participant DB as GaussDB
 
-    App->>SDK: ApplicationReadyEvent / reporter.register()
+    App->>SDK: ApplicationReadyEvent / sdk.register()
     SDK->>SDK: 读取配置或 Builder 声明
     SDK->>SDK: 计算 declaration_hash
     SDK->>Server: POST /api/sdk/subscriptions/register
@@ -1103,30 +1076,20 @@ sequenceDiagram
     Server-->>Client: QueryResult
 ```
 
-#### 14.4.4 Flink/Spark 作业运行上报与血缘生成
+#### 14.4.4 Flink/Spark 作业声明注册
 
 ```mermaid
 sequenceDiagram
     participant Job as Flink/Spark 作业
-    participant SDK as DataGovJobReporter
+    participant SDK as DataGovJobRegistrar
     participant Server as Data-Gov Server
     participant DB as GaussDB
 
-    Job->>SDK: reporter.register()
+    Job->>SDK: registrar.register()
     SDK->>Server: POST /api/sdk/jobs/register
     Server->>DB: upsert consumer, consumer_job, subscription
     Server-->>SDK: job_id, subscription_id
-    Job->>SDK: reporter.startRun()
-    SDK->>Server: POST /api/sdk/jobs/{jobId}/runs/start
-    Server->>DB: insert job_run_record RUNNING
-    Server-->>SDK: run_id
     Job->>Job: 执行业务处理
-    Job->>SDK: reporter.finishRun()
-    SDK->>Server: POST /api/sdk/jobs/{jobId}/runs/{runId}/finish
-    Server->>DB: update job_run_record
-    Server->>DB: upsert lineage_edge(input -> output)
-    Server->>DB: create LINEAGE_CHANGE event when needed
-    Server-->>SDK: finish accepted
 ```
 
 #### 14.4.5 资产事件通知
@@ -1136,6 +1099,7 @@ sequenceDiagram
     participant Admin as 治理管理员/质量任务
     participant Server as Data-Gov Server
     participant DB as GaussDB
+    participant Kafka as Kafka
     participant SDK as Java SDK
     participant App as 微服务/作业
 
@@ -1143,13 +1107,10 @@ sequenceDiagram
     Server->>DB: insert asset_event
     Server->>DB: 查询 ACTIVE subscriptions where notify_on contains event_type
     Server->>DB: insert subscription_notification
-    SDK->>Server: GET /api/notifications
-    Server->>DB: 查询 PENDING 通知
-    Server-->>SDK: notifications
-    SDK-->>App: 日志或回调
-    App->>SDK: ack
-    SDK->>Server: PATCH /api/notifications/{id}/ack
-    Server->>DB: update notification status ACKED
+    Server->>Kafka: publish data-gov.subscription-notifications
+    Server->>DB: update notification status SENT/FAILED
+    Kafka-->>SDK: consume notification
+    SDK-->>App: listener callback
 ```
 
 ### 14.5 技术视图
@@ -1183,6 +1144,10 @@ flowchart TB
         HiveCat["Hive external catalog"]
         IcebergCat["Iceberg external catalog"]
         GaussCat["GaussDB JDBC catalog"]
+    end
+
+    subgraph EventInfra["Event Infra"]
+        KafkaTopic["Kafka topic\ndata-gov.subscription-notifications"]
     end
 
     subgraph Producers["Producers / Consumers"]
@@ -1219,6 +1184,8 @@ flowchart TB
     Event --> Gauss
     Gov --> Gauss
     Flyway --> Gauss
+    Event --> KafkaTopic
+    KafkaTopic --> SDK
 
     Query --> StarRocks
     StarRocks --> HiveCat
@@ -1233,7 +1200,7 @@ flowchart TB
 - 数据库迁移使用 Flyway。
 - 元数据、血缘、订阅、事件和审计存储在 GaussDB。
 - 查询执行通过 StarRocks JDBC，不直接暴露 Hive/GaussDB/Iceberg 给上层。
-- Java SDK 提供 Spring Boot 自动配置和 Flink/Spark 作业 Reporter。
+- Java SDK 提供 Spring Boot 自动配置、Flink/Spark 作业声明注册器和 Kafka 通知 listener。
 
 ### 14.6 部署视图
 
@@ -1266,6 +1233,10 @@ flowchart LR
 
     Server --> Gauss
     Server --> StarRocks
+    Server --> Kafka
+    Kafka --> Micro
+    Kafka --> FlinkJob
+    Kafka --> SparkJob
     StarRocks --> Hive
     StarRocks --> Gauss
     StarRocks --> HDFS
@@ -1313,7 +1284,7 @@ flowchart LR
 
 理由：
 
-- 需求已经从纯图查询扩展到资产、订阅、查询审计、作业运行、事件通知和 drift，关系模型更直接。
+- 需求已经从纯图查询扩展到资产、订阅、查询审计、作业声明、事件通知和 drift，关系模型更直接。
 - GaussDB 更容易和企业业务系统、报表、审计和平台服务集成。
 - 递归 CTE 可以覆盖第一期上下游血缘展开。
 
@@ -1403,7 +1374,7 @@ flowchart LR
 代价：
 
 - 订阅本身不能回答“谁实际使用了数据”。
-- 需要 query_record、job_run_record 和 drift 共同补齐治理闭环。
+- 第一期只能由 `query_record` 和 drift 补齐事实校验；Flink/Spark 作业运行态观测后续再扩展。
 
 结论：
 
@@ -1418,7 +1389,7 @@ flowchart LR
 理由：
 
 - 接入成本低，不需要改造 CI。
-- 适合先验证跨微服务订阅感知和运行态上报闭环。
+- 适合先验证跨微服务订阅感知和通知触达闭环。
 - Java SDK 可自动携带 subscription_id、declaration_hash、consumer 信息。
 
 代价：
@@ -1429,7 +1400,7 @@ flowchart LR
 结论：
 
 - 第一期开 SDK 启动注册。
-- 通过 `last_registered_at`、`last_runtime_seen_at`、`declaration_hash` 和 `STALE_DECLARATION` drift 缓解腐烂。
+- 通过 `last_registered_at`、`declaration_hash` 和 `STALE_DECLARATION` drift 缓解声明腐烂。
 - CI manifest 可作为后续增强。
 
 ### 15.8 第一期只做 Java SDK
@@ -1457,7 +1428,7 @@ flowchart LR
 
 - `subscription_field` 合入 `subscription.declared_fields`。
 - `query_record_asset` 合入 `query_record.referenced_asset_codes`。
-- `job_io_record` 合入 `job_run_record.input/output_*`。
+- 第一期不建 `job_run_record` 和 `job_io_record`。
 - `consumer_instance` 合入 `consumer`。
 - 去掉 `security_level`、`schema_part`、`key_field`、`sdk_version`。
 
@@ -1477,40 +1448,44 @@ flowchart LR
 - 接受第一期简化。
 - 当字段级分析、访问统计或实例观测成为刚需时，再拆明细表。
 
-### 15.10 查询和作业运行态分离
+### 15.10 查询事实和作业声明分离
 
-决策：微服务产品 API 和 SQL Gateway 查询进入 `query_record`；Flink/Spark 作业进入 `job_run_record`。
+决策：微服务产品 API 和 SQL Gateway 查询进入 `query_record`；Flink/Spark 作业第一期只进入 `consumer_job` 和订阅声明，不建运行生命周期记录。
 
 理由：
 
-- 同步查询和作业运行生命周期不同。
-- Flink/Spark 通常是长期或批处理作业，可能产生输出资产和血缘。
+- 同步查询可以由平台代理执行，天然能形成可靠消费事实。
+- Flink/Spark 作业运行生命周期差异较大，直接上报开始/完成事件容易引入不稳定契约。
 - 查询记录主要用于审计和实际访问证明。
+- 作业输入输出声明和真实血缘不是同一件事，第一期不在作业完成时自动生成血缘。
 
 代价：
 
-- 影响分析需要同时合并 query、job、lineage、subscription 多个来源。
+- 第一阶段无法回答 Flink/Spark 每次运行的行数、状态和错误。
+- 作业侧真实消费证明弱于查询记录，需要后续通过作业观测或引擎日志补齐。
 
 结论：
 
-- 保持模型语义清晰。
-- `/api/assets/{assetId}/impact` 负责聚合多来源影响视图。
+- 保持 `query_record` 的事实属性，`consumer_job` 仅表达作业声明。
+- `/api/assets/{assetId}/impact` 第一阶段聚合 subscription、query 和 lineage，作业运行事实后续扩展。
 
-### 15.11 事件通知先做 API 拉取
+### 15.11 事件通知使用 Kafka 异步投递
 
-决策：第一期通知只做 API 拉取和 ack，不做邮件、IM、Webhook。
+决策：第一期通知通过 Kafka topic 异步发送，由 Java SDK listener 消费并回调业务代码；不做通知 API 拉取、业务处理回执、邮件、IM、Webhook。
 
 理由：
 
-- 简化外部依赖。
-- SDK 可定时拉取并写日志或触发业务回调。
-- 先验证订阅通知机制本身。
+- Kafka 已在现有技术栈内，适合承载异步事件通知。
+- 通知是订阅变化触达，不需要同步阻塞资产变更流程。
+- SDK listener 比业务侧定时拉取更自然，也更适合 Flink/Spark 和微服务统一接入。
 
 代价：
 
-- 实时性和触达能力弱于 Webhook/IM。
+- 需要依赖 Kafka topic、consumer group 和 offset 语义。
+- 治理服务第一期只记录平台发送状态，不维护消费者业务处理结果。
 
 结论：
 
-- 第一期开 `GET /api/notifications` 和 `PATCH /api/notifications/{id}/ack`。
+- 第一期开 `data-gov.subscription-notifications` Kafka topic。
+- SDK 提供通知监听回调，消费方自行处理重试、告警和业务处理记录。
 - Webhook、邮件、IM 后续按需要扩展。
