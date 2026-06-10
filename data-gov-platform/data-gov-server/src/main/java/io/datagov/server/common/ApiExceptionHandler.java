@@ -1,6 +1,8 @@
 package io.datagov.server.common;
 
 import io.datagov.server.asset.AssetNotFoundException;
+import io.datagov.server.subscription.AssetCodeMismatchException;
+import io.datagov.server.subscription.SubscriptionDataAccessException;
 import io.datagov.server.subscription.SubscriptionNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,11 +23,29 @@ public class ApiExceptionHandler {
                         "assetCode", ex.getAssetCode()));
     }
 
+    @ExceptionHandler(AssetCodeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleAssetCodeMismatch(AssetCodeMismatchException ex) {
+        return ResponseEntity.badRequest()
+                .body(Map.of(
+                        "error", "ASSET_CODE_MISMATCH",
+                        "detail", ex.getMessage(),
+                        "pathAssetCode", ex.getPathAssetCode(),
+                        "bodyAssetCode", ex.getBodyAssetCode()));
+    }
+
     @ExceptionHandler(SubscriptionNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleSubscriptionNotFound(SubscriptionNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of(
                         "error", "SUBSCRIPTION_NOT_FOUND",
+                        "detail", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SubscriptionDataAccessException.class)
+    public ResponseEntity<Map<String, Object>> handleSubscriptionDataAccess(SubscriptionDataAccessException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                        "error", "SUBSCRIPTION_DATA_ACCESS_ERROR",
                         "detail", ex.getMessage()));
     }
 

@@ -6,11 +6,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -24,6 +26,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class SubscriptionControllerTest {
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void registerAsset() throws Exception {
@@ -91,6 +96,7 @@ class SubscriptionControllerTest {
                 .andExpect(jsonPath("$.usageMode").value("API_QUERY"))
                 .andExpect(jsonPath("$.declaredFields", hasSize(2)))
                 .andExpect(jsonPath("$.notifyOn", hasSize(2)))
+                .andExpect(jsonPath("$.lastRuntimeSeenAt", nullValue()))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andReturn()
                 .getResponse()
@@ -127,6 +133,64 @@ class SubscriptionControllerTest {
     }
 
     @Test
+    void createSubscriptionRejectsMismatchedBodyAssetCode() throws Exception {
+        mockMvc.perform(post("/api/assets/ads_cell_profile/subscriptions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "consumer": {
+                                    "consumerName": "rno-dashboard",
+                                    "consumerType": "MICROSERVICE",
+                                    "environment": "prod"
+                                  },
+                                  "subscription": {
+                                    "assetCode": "dwd_session_qos",
+                                    "usageMode": "API_QUERY"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("ASSET_CODE_MISMATCH"));
+    }
+
+    @Test
+    void patchStatusOnlyPreservesExistingDeclarationFields() throws Exception {
+        String response = createSubscription();
+        String subscriptionId = com.jayway.jsonpath.JsonPath.read(response, "$.subscriptionId");
+
+        mockMvc.perform(patch("/api/subscriptions/{subscriptionId}", subscriptionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "PAUSED"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.purpose").value("dashboard display"))
+                .andExpect(jsonPath("$.declaredFields", hasSize(2)))
+                .andExpect(jsonPath("$.declaredFields[0]").value("cell_id"))
+                .andExpect(jsonPath("$.declaredFields[1]").value("coverage_score"))
+                .andExpect(jsonPath("$.notifyOn", hasSize(2)))
+                .andExpect(jsonPath("$.notifyOn[0]").value("SCHEMA_CHANGE"))
+                .andExpect(jsonPath("$.notifyOn[1]").value("DEPRECATION"))
+                .andExpect(jsonPath("$.status").value("PAUSED"));
+    }
+
+    @Test
+    void malformedStoredSubscriptionJsonReturnsServerError() throws Exception {
+        String response = createSubscription();
+        String subscriptionId = com.jayway.jsonpath.JsonPath.read(response, "$.subscriptionId");
+        jdbcTemplate.update(
+                "update subscription set declared_fields = ? where subscription_id = ?",
+                "{not-json",
+                subscriptionId);
+
+        mockMvc.perform(get("/api/subscriptions/{subscriptionId}", subscriptionId))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error").value("SUBSCRIPTION_DATA_ACCESS_ERROR"));
+    }
+
+    @Test
     void subscribingMissingAssetReturns404() throws Exception {
         mockMvc.perform(post("/api/assets/missing_asset/subscriptions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -145,5 +209,30 @@ class SubscriptionControllerTest {
                                 """))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ASSET_NOT_FOUND"));
+    }
+
+    private String createSubscription() throws Exception {
+        return mockMvc.perform(post("/api/assets/ads_cell_profile/subscriptions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "consumer": {
+                                    "consumerName": "rno-dashboard",
+                                    "consumerType": "MICROSERVICE",
+                                    "environment": "prod"
+                                  },
+                                  "subscription": {
+                                    "assetCode": "ads_cell_profile",
+                                    "usageMode": "API_QUERY",
+                                    "purpose": "dashboard display",
+                                    "fields": ["cell_id", "coverage_score"],
+                                    "notifyOn": ["SCHEMA_CHANGE", "DEPRECATION"]
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
     }
 }

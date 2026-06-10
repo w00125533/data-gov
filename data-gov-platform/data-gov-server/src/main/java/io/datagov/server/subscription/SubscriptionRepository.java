@@ -27,8 +27,6 @@ public class SubscriptionRepository {
     };
     private static final TypeReference<List<AssetEventType>> EVENT_LIST_TYPE = new TypeReference<>() {
     };
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
-    };
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -113,12 +111,11 @@ public class SubscriptionRepository {
             jdbcTemplate.update("""
                     insert into subscription (
                         subscription_id, asset_id, consumer_id, usage_mode, purpose, declared_fields, notify_on,
-                        source_type, declaration_hash, last_registered_at, last_runtime_seen_at, status, created_at,
-                        updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        source_type, declaration_hash, last_registered_at, status, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     subscriptionId, assetId, consumerId, usageMode.name(), purpose, writeList(fields),
-                    writeList(notifyOn), sourceType.name(), declarationHash, Timestamp.from(now), Timestamp.from(now),
+                    writeList(notifyOn), sourceType.name(), declarationHash, Timestamp.from(now),
                     SubscriptionStatus.ACTIVE.name(), Timestamp.from(now), Timestamp.from(now));
             return findSubscription(subscriptionId).orElseThrow();
         }
@@ -126,12 +123,11 @@ public class SubscriptionRepository {
         jdbcTemplate.update("""
                 update subscription
                 set purpose = ?, declared_fields = ?, notify_on = ?, source_type = ?, declaration_hash = ?,
-                    last_registered_at = ?, last_runtime_seen_at = ?, status = ?, updated_at = ?
+                    last_registered_at = ?, status = ?, updated_at = ?
                 where subscription_id = ?
                 """,
                 purpose, writeList(fields), writeList(notifyOn), sourceType.name(), declarationHash,
-                Timestamp.from(now), Timestamp.from(now), SubscriptionStatus.ACTIVE.name(), Timestamp.from(now),
-                existingId.get());
+                Timestamp.from(now), SubscriptionStatus.ACTIVE.name(), Timestamp.from(now), existingId.get());
         return findSubscription(existingId.get()).orElseThrow();
     }
 
@@ -164,24 +160,27 @@ public class SubscriptionRepository {
     }
 
     public GovernanceDtos.SubscriptionResponse updateSubscription(
-            GovernanceDtos.SubscriptionResponse current,
+            String subscriptionId,
             GovernanceDtos.UpdateSubscriptionRequest request,
             Instant now
     ) {
-        UsageMode usageMode = request.usageMode() == null ? current.usageMode() : request.usageMode();
-        String purpose = request.purpose() == null ? current.purpose() : request.purpose();
-        List<String> fields = request.fields() == null ? current.declaredFields() : request.fields();
-        List<AssetEventType> notifyOn = request.notifyOn() == null ? current.notifyOn() : request.notifyOn();
-        SubscriptionStatus status = request.status() == null ? current.status() : request.status();
-
         jdbcTemplate.update("""
                 update subscription
-                set usage_mode = ?, purpose = ?, declared_fields = ?, notify_on = ?, status = ?, updated_at = ?
+                set usage_mode = case when ? then ? else usage_mode end,
+                    purpose = case when ? then ? else purpose end,
+                    declared_fields = case when ? then ? else declared_fields end,
+                    notify_on = case when ? then ? else notify_on end,
+                    status = case when ? then ? else status end,
+                    updated_at = ?
                 where subscription_id = ?
                 """,
-                usageMode.name(), purpose, writeList(fields), writeList(notifyOn), status.name(),
-                Timestamp.from(now), current.subscriptionId());
-        return findSubscription(current.subscriptionId()).orElseThrow();
+                request.usageMode() != null, request.usageMode() == null ? null : request.usageMode().name(),
+                request.purpose() != null, request.purpose(),
+                request.fields() != null, request.fields() == null ? null : writeList(request.fields()),
+                request.notifyOn() != null, request.notifyOn() == null ? null : writeList(request.notifyOn()),
+                request.status() != null, request.status() == null ? null : request.status().name(),
+                Timestamp.from(now), subscriptionId);
+        return findSubscription(subscriptionId).orElseThrow();
     }
 
     public JobRef upsertJob(
@@ -300,7 +299,7 @@ public class SubscriptionRepository {
         try {
             return objectMapper.writeValueAsString(value == null ? List.of() : value);
         } catch (Exception ex) {
-            return "[]";
+            throw new SubscriptionDataAccessException("Failed to serialize subscription JSON list", ex);
         }
     }
 
@@ -308,7 +307,7 @@ public class SubscriptionRepository {
         try {
             return objectMapper.writeValueAsString(value == null ? Map.of() : value);
         } catch (Exception ex) {
-            return "{}";
+            throw new SubscriptionDataAccessException("Failed to serialize subscription JSON map", ex);
         }
     }
 
@@ -319,7 +318,7 @@ public class SubscriptionRepository {
         try {
             return objectMapper.readValue(value, STRING_LIST_TYPE);
         } catch (Exception ex) {
-            return List.of();
+            throw new SubscriptionDataAccessException("Failed to deserialize subscription string list", ex);
         }
     }
 
@@ -330,7 +329,7 @@ public class SubscriptionRepository {
         try {
             return objectMapper.readValue(value, EVENT_LIST_TYPE);
         } catch (Exception ex) {
-            return List.of();
+            throw new SubscriptionDataAccessException("Failed to deserialize subscription event list", ex);
         }
     }
 

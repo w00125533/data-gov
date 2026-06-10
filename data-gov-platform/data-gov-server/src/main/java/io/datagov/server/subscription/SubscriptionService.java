@@ -29,6 +29,9 @@ public class SubscriptionService {
             String assetCode,
             GovernanceDtos.CreateSubscriptionRequest request
     ) {
+        if (!assetCode.equals(request.subscription().assetCode())) {
+            throw new AssetCodeMismatchException(assetCode, request.subscription().assetCode());
+        }
         return transactionTemplate.execute(status -> {
             Instant now = Instant.now();
             SubscriptionRepository.AssetRef asset = requireAsset(assetCode);
@@ -53,8 +56,10 @@ public class SubscriptionService {
             GovernanceDtos.UpdateSubscriptionRequest request
     ) {
         return transactionTemplate.execute(status -> {
-            GovernanceDtos.SubscriptionResponse current = getSubscription(subscriptionId);
-            return subscriptionRepository.updateSubscription(current, request, Instant.now());
+            if (subscriptionRepository.findSubscription(subscriptionId).isEmpty()) {
+                throw new SubscriptionNotFoundException(subscriptionId);
+            }
+            return subscriptionRepository.updateSubscription(subscriptionId, request, Instant.now());
         });
     }
 

@@ -100,6 +100,7 @@ class SdkRegistrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.consumer.consumerName").value("rno-dashboard"))
                 .andExpect(jsonPath("$.subscriptions", hasSize(1)))
+                .andExpect(jsonPath("$.subscriptions[0].lastRuntimeSeenAt").doesNotExist())
                 .andExpect(jsonPath("$.assetCodeToSubscriptionId.dwd_session_qos").exists());
     }
 
@@ -131,6 +132,7 @@ class SdkRegistrationControllerTest {
                 .andExpect(jsonPath("$.jobName").value("cell-hourly-agg"))
                 .andExpect(jsonPath("$.jobType").value("FLINK"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
-                .andExpect(jsonPath("$.subscriptions", hasSize(1)));
+                .andExpect(jsonPath("$.subscriptions", hasSize(1)))
+                .andExpect(jsonPath("$.subscriptions[0].lastRuntimeSeenAt").doesNotExist());
     }
 }
