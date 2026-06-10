@@ -5,7 +5,7 @@ import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.LifecycleStatus;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -15,18 +15,36 @@ import java.util.stream.IntStream;
 @Service
 public class AssetService {
     private final AssetRepository assetRepository;
+    private final TransactionTemplate transactionTemplate;
 
-    public AssetService(AssetRepository assetRepository) {
+    public AssetService(AssetRepository assetRepository, TransactionTemplate transactionTemplate) {
         this.assetRepository = assetRepository;
+        this.transactionTemplate = transactionTemplate;
     }
 
-    @Transactional
     public AssetDtos.AssetDetailResponse register(AssetDtos.RegisterAssetRequest request) {
+        try {
+            return transactionTemplate.execute(status -> registerInTransaction(request, false));
+        } catch (DuplicateKeyException ex) {
+            return transactionTemplate.execute(status -> registerInTransaction(request, true));
+        }
+    }
+
+    private AssetDtos.AssetDetailResponse registerInTransaction(
+            AssetDtos.RegisterAssetRequest request,
+            boolean forceExisting
+    ) {
         Instant now = Instant.now();
         AssetDtos.AssetResponse existing = assetRepository.findAssetByCode(request.assetCode()).orElse(null);
         boolean kafkaAsset = request.engine() == AssetEngine.KAFKA;
         boolean queryable = !kafkaAsset && Boolean.TRUE.equals(request.queryable());
         boolean federatedQueryable = !kafkaAsset && Boolean.TRUE.equals(request.federatedQueryable());
+
+        if (existing == null && forceExisting) {
+            existing = assetRepository.findAssetByCode(request.assetCode())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Asset registration retry could not find duplicate asset code: " + request.assetCode()));
+        }
 
         AssetDtos.AssetResponse asset = new AssetDtos.AssetResponse(
                 existing == null ? newId("asset_") : existing.assetId(),
@@ -45,28 +63,7 @@ public class AssetService {
                 now);
 
         if (existing == null) {
-            try {
-                assetRepository.insertAsset(asset);
-            } catch (DuplicateKeyException ex) {
-                AssetDtos.AssetResponse racedAsset = assetRepository.findAssetByCode(request.assetCode())
-                        .orElseThrow(() -> ex);
-                asset = new AssetDtos.AssetResponse(
-                        racedAsset.assetId(),
-                        request.assetCode(),
-                        request.assetName(),
-                        request.assetType(),
-                        request.engine(),
-                        request.domain(),
-                        request.owner(),
-                        request.description(),
-                        request.lifecycleStatus() == null ? LifecycleStatus.DRAFT : request.lifecycleStatus(),
-                        racedAsset.schemaVersion() + 1,
-                        queryable,
-                        federatedQueryable,
-                        racedAsset.createdAt(),
-                        now);
-                assetRepository.updateAsset(asset);
-            }
+            assetRepository.insertAsset(asset);
         } else {
             assetRepository.updateAsset(asset);
         }
