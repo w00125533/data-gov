@@ -770,3 +770,747 @@ docker compose -f app-compose.yml config
 ```
 
 本设计倾向复用 shared infra，本工程只保留治理服务、前端和必要应用级资源。
+
+## 14. 架构视图
+
+本节按用例视图、逻辑视图、数据模型、运行时序、技术视图和部署视图描述系统。
+
+### 14.1 用例视图
+
+```mermaid
+flowchart LR
+    Admin[治理管理员]
+    Dev[微服务开发者]
+    JobDev[Flink/Spark 作业开发者]
+    Analyst[分析用户/平台]
+    Service[业务微服务]
+    Job[Flink/Spark 作业]
+
+    AssetRegister((注册数据资产))
+    AssetDiscover((发现数据资产))
+    Subscribe((声明订阅与通知关注))
+    ProductQuery((产品 API 查询))
+    SqlQuery((SQL Gateway 查询))
+    JobReport((作业运行上报))
+    LineageQuery((血缘与影响分析))
+    EventNotify((接收资产变化通知))
+    DriftReview((查看声明/运行态差异))
+
+    Admin --> AssetRegister
+    Admin --> LineageQuery
+    Admin --> DriftReview
+    Dev --> Subscribe
+    Dev --> ProductQuery
+    Dev --> EventNotify
+    JobDev --> Subscribe
+    JobDev --> JobReport
+    Analyst --> AssetDiscover
+    Analyst --> SqlQuery
+    Analyst --> LineageQuery
+    Service --> ProductQuery
+    Service --> EventNotify
+    Job --> JobReport
+```
+
+关键用例说明：
+
+- 治理管理员负责资产注册、元数据维护、事件发布、影响分析和 drift 处理。
+- 微服务通过 Java SDK 启动注册订阅声明，并通过产品 API 查询资产。
+- Flink/Spark 作业通过 Java SDK 注册作业、声明输入输出并上报运行结果。
+- 分析用户和平台通过发现能力查找数据产品，通过 SQL Gateway 做受控查询。
+
+### 14.2 逻辑视图
+
+```mermaid
+classDiagram
+    class AssetService {
+      +registerAsset()
+      +searchAssets()
+      +getSchema()
+      +getBinding()
+      +consumeGuide()
+    }
+
+    class SubscriptionService {
+      +registerBySdk()
+      +createSubscription()
+      +updateSubscription()
+      +resolveSubscription()
+    }
+
+    class QueryService {
+      +queryAsset()
+      +executeSql()
+      +auditQuery()
+    }
+
+    class SqlGuard {
+      +validateSelectOnly()
+      +extractAssetRefs()
+      +rewriteToStarRocksNames()
+    }
+
+    class StarRocksExecutor {
+      +executeQuery()
+    }
+
+    class JobService {
+      +registerJob()
+      +startRun()
+      +finishRun()
+    }
+
+    class LineageService {
+      +upsertAssetLineage()
+      +queryLineage()
+      +impactAnalysis()
+    }
+
+    class EventService {
+      +createAssetEvent()
+      +matchSubscriptions()
+      +createNotifications()
+    }
+
+    class GovernanceService {
+      +detectStaleDeclaration()
+      +detectUndeclaredUsage()
+      +detectFieldDrift()
+    }
+
+    class GaussDBRepository
+    class StarRocksDataSource
+
+    AssetService --> GaussDBRepository
+    SubscriptionService --> GaussDBRepository
+    QueryService --> SqlGuard
+    QueryService --> StarRocksExecutor
+    QueryService --> GaussDBRepository
+    SqlGuard --> GaussDBRepository
+    StarRocksExecutor --> StarRocksDataSource
+    JobService --> GaussDBRepository
+    JobService --> LineageService
+    LineageService --> GaussDBRepository
+    EventService --> GaussDBRepository
+    GovernanceService --> GaussDBRepository
+```
+
+逻辑边界：
+
+- `AssetService` 管资产主数据，不处理运行态事实。
+- `SubscriptionService` 管声明态，不把订阅写成核心血缘。
+- `QueryService` 管同步查询和审计。
+- `JobService` 管作业定义和运行事实。
+- `LineageService` 管生产、派生、读写链路。
+- `EventService` 将资产事件转换为订阅通知。
+- `GovernanceService` 比对声明态和运行态，生成 drift。
+
+### 14.3 数据模型视图
+
+```mermaid
+erDiagram
+    DATA_ASSET ||--o{ ASSET_FIELD : has
+    DATA_ASSET ||--o{ ASSET_PHYSICAL_BINDING : binds
+    DATA_ASSET ||--o{ SUBSCRIPTION : watched_by
+    CONSUMER ||--o{ SUBSCRIPTION : declares
+    CONSUMER ||--o{ CONSUMER_JOB : owns
+    CONSUMER ||--o{ QUERY_RECORD : runs
+    SUBSCRIPTION ||--o{ QUERY_RECORD : used_by
+    SUBSCRIPTION ||--o{ JOB_RUN_RECORD : used_by
+    CONSUMER_JOB ||--o{ JOB_RUN_RECORD : runs
+    DATA_ASSET ||--o{ LINEAGE_EDGE : source
+    DATA_ASSET ||--o{ LINEAGE_EDGE : target
+    LINEAGE_EDGE ||--o{ LINEAGE_FIELD_EDGE : contains
+    ASSET_FIELD ||--o{ LINEAGE_FIELD_EDGE : source_field
+    ASSET_FIELD ||--o{ LINEAGE_FIELD_EDGE : target_field
+    DATA_ASSET ||--o{ ASSET_EVENT : emits
+    ASSET_EVENT ||--o{ SUBSCRIPTION_NOTIFICATION : creates
+    SUBSCRIPTION ||--o{ SUBSCRIPTION_NOTIFICATION : receives
+    DATA_ASSET ||--o{ USAGE_DRIFT : involved
+    CONSUMER ||--o{ USAGE_DRIFT : involved
+
+    DATA_ASSET {
+      varchar asset_id PK
+      varchar asset_code UK
+      varchar asset_type
+      varchar engine
+      boolean queryable
+      boolean federated_queryable
+    }
+
+    ASSET_FIELD {
+      varchar field_id PK
+      varchar asset_id FK
+      varchar field_name
+      varchar field_type
+    }
+
+    ASSET_PHYSICAL_BINDING {
+      varchar binding_id PK
+      varchar asset_id FK
+      varchar catalog_name
+      varchar database_name
+      varchar table_name
+      varchar topic_name
+      jsonb properties
+    }
+
+    CONSUMER {
+      varchar consumer_id PK
+      varchar consumer_type
+      varchar consumer_name
+      varchar environment
+      timestamp last_seen_at
+    }
+
+    SUBSCRIPTION {
+      varchar subscription_id PK
+      varchar asset_id FK
+      varchar consumer_id FK
+      varchar usage_mode
+      jsonb declared_fields
+      jsonb notify_on
+      varchar status
+    }
+
+    QUERY_RECORD {
+      varchar query_id PK
+      varchar subscription_id FK
+      varchar consumer_id FK
+      jsonb referenced_asset_codes
+      jsonb selected_fields
+      varchar status
+    }
+
+    CONSUMER_JOB {
+      varchar job_id PK
+      varchar consumer_id FK
+      varchar job_name
+      varchar job_type
+    }
+
+    JOB_RUN_RECORD {
+      varchar run_id PK
+      varchar job_id FK
+      jsonb input_asset_codes
+      jsonb output_asset_codes
+      varchar status
+    }
+
+    LINEAGE_EDGE {
+      varchar edge_id PK
+      varchar source_asset_id FK
+      varchar target_asset_id FK
+      varchar relation_type
+      varchar producer_job_id FK
+    }
+
+    ASSET_EVENT {
+      varchar event_id PK
+      varchar asset_id FK
+      varchar event_type
+      jsonb event_payload
+    }
+
+    SUBSCRIPTION_NOTIFICATION {
+      varchar notification_id PK
+      varchar event_id FK
+      varchar subscription_id FK
+      varchar status
+    }
+
+    USAGE_DRIFT {
+      varchar drift_id PK
+      varchar drift_type
+      varchar asset_id FK
+      varchar consumer_id FK
+      jsonb evidence
+    }
+```
+
+模型取舍：
+
+- `subscription_field` 合并到 `subscription.declared_fields`，降低第一期表数量。
+- `query_record_asset` 合并到 `query_record.referenced_asset_codes`，适配跨源 join 的多资产引用。
+- `job_io_record` 合并到 `job_run_record.input/output_*`，长期血缘仍由 `lineage_edge` 表达。
+- Kafka key/value schema 不拆分字段表结构，第一期通过 `asset_physical_binding.properties` 承载扩展信息。
+
+### 14.4 运行时序视图
+
+#### 14.4.1 SDK 启动注册订阅
+
+```mermaid
+sequenceDiagram
+    participant App as Java 微服务/作业
+    participant SDK as DataGov Java SDK
+    participant Server as Data-Gov Server
+    participant DB as GaussDB
+
+    App->>SDK: ApplicationReadyEvent / reporter.register()
+    SDK->>SDK: 读取配置或 Builder 声明
+    SDK->>SDK: 计算 declaration_hash
+    SDK->>Server: POST /api/sdk/subscriptions/register
+    Server->>DB: upsert consumer
+    Server->>DB: resolve data_asset by asset_code
+    Server->>DB: upsert subscription
+    DB-->>Server: consumer_id, subscription_id
+    Server-->>SDK: 注册结果和 asset_code 映射
+    SDK->>SDK: 缓存 subscription_id
+    SDK-->>App: 启动继续
+```
+
+#### 14.4.2 产品 API 查询
+
+```mermaid
+sequenceDiagram
+    participant App as 微服务
+    participant SDK as DataGov Java SDK
+    participant Server as Data-Gov Server
+    participant DB as GaussDB
+    participant SR as StarRocks
+
+    App->>SDK: dataGovClient.asset(code).query()
+    SDK->>Server: POST /api/assets/{assetId}/query with subscription headers
+    Server->>DB: 查询 asset, fields, binding, subscription
+    Server->>Server: 校验 queryable、字段、limit、订阅上下文
+    Server->>Server: 生成 StarRocks SQL
+    Server->>SR: JDBC executeQuery()
+    SR-->>Server: ResultSet
+    Server->>DB: insert query_record
+    Server->>DB: update subscription.last_runtime_seen_at
+    Server-->>SDK: QueryResult
+    SDK-->>App: QueryResult
+```
+
+#### 14.4.3 SQL Gateway 跨源查询
+
+```mermaid
+sequenceDiagram
+    participant Client as 分析平台/用户
+    participant Server as Data-Gov Server
+    participant DB as GaussDB
+    participant SR as StarRocks
+
+    Client->>Server: POST /api/sql
+    Server->>Server: SQL Guard 只读校验
+    Server->>Server: 提取表名和别名
+    Server->>DB: 按 asset_code 查询 binding
+    Server->>Server: 拒绝 Kafka/未注册资产
+    Server->>Server: 改写 catalog.database.table
+    Server->>SR: 执行跨 catalog SELECT
+    SR-->>Server: ResultSet
+    Server->>DB: insert query_record(referenced_asset_codes)
+    Server-->>Client: QueryResult
+```
+
+#### 14.4.4 Flink/Spark 作业运行上报与血缘生成
+
+```mermaid
+sequenceDiagram
+    participant Job as Flink/Spark 作业
+    participant SDK as DataGovJobReporter
+    participant Server as Data-Gov Server
+    participant DB as GaussDB
+
+    Job->>SDK: reporter.register()
+    SDK->>Server: POST /api/sdk/jobs/register
+    Server->>DB: upsert consumer, consumer_job, subscription
+    Server-->>SDK: job_id, subscription_id
+    Job->>SDK: reporter.startRun()
+    SDK->>Server: POST /api/sdk/jobs/{jobId}/runs/start
+    Server->>DB: insert job_run_record RUNNING
+    Server-->>SDK: run_id
+    Job->>Job: 执行业务处理
+    Job->>SDK: reporter.finishRun()
+    SDK->>Server: POST /api/sdk/jobs/{jobId}/runs/{runId}/finish
+    Server->>DB: update job_run_record
+    Server->>DB: upsert lineage_edge(input -> output)
+    Server->>DB: create LINEAGE_CHANGE event when needed
+    Server-->>SDK: finish accepted
+```
+
+#### 14.4.5 资产事件通知
+
+```mermaid
+sequenceDiagram
+    participant Admin as 治理管理员/质量任务
+    participant Server as Data-Gov Server
+    participant DB as GaussDB
+    participant SDK as Java SDK
+    participant App as 微服务/作业
+
+    Admin->>Server: POST /api/assets/{assetId}/events
+    Server->>DB: insert asset_event
+    Server->>DB: 查询 ACTIVE subscriptions where notify_on contains event_type
+    Server->>DB: insert subscription_notification
+    SDK->>Server: GET /api/notifications
+    Server->>DB: 查询 PENDING 通知
+    Server-->>SDK: notifications
+    SDK-->>App: 日志或回调
+    App->>SDK: ack
+    SDK->>Server: PATCH /api/notifications/{id}/ack
+    Server->>DB: update notification status ACKED
+```
+
+### 14.5 技术视图
+
+```mermaid
+flowchart TB
+    subgraph Java["Java / Spring Boot"]
+        Server["data-gov-server\nSpring Boot 3.x"]
+        SDK["data-gov-sdk\nJava SDK"]
+        Common["data-gov-common\nDTO/Enums"]
+    end
+
+    subgraph ServerModules["Server Modules"]
+        Asset["asset"]
+        Sub["subscription"]
+        Query["query"]
+        Lineage["lineage"]
+        Job["job"]
+        Event["event"]
+        Gov["governance"]
+        SdkApi["sdk controller"]
+    end
+
+    subgraph Persistence["Persistence"]
+        Gauss["GaussDB\nmetadata + lineage + governance"]
+        Flyway["Flyway migrations"]
+    end
+
+    subgraph QueryInfra["Query Infra"]
+        StarRocks["StarRocks"]
+        HiveCat["Hive external catalog"]
+        IcebergCat["Iceberg external catalog"]
+        GaussCat["GaussDB JDBC catalog"]
+    end
+
+    subgraph Producers["Producers / Consumers"]
+        Micro["Java Microservices"]
+        Flink["Flink Java Jobs"]
+        Spark["Spark Java/Scala Jobs"]
+        Frontend["Frontend / Analyst Platform"]
+    end
+
+    SDK --> Micro
+    SDK --> Flink
+    SDK --> Spark
+    Micro --> Server
+    Flink --> Server
+    Spark --> Server
+    Frontend --> Server
+
+    Server --> Asset
+    Server --> Sub
+    Server --> Query
+    Server --> Lineage
+    Server --> Job
+    Server --> Event
+    Server --> Gov
+    Server --> SdkApi
+    Server --> Common
+    SDK --> Common
+
+    Asset --> Gauss
+    Sub --> Gauss
+    Query --> Gauss
+    Lineage --> Gauss
+    Job --> Gauss
+    Event --> Gauss
+    Gov --> Gauss
+    Flyway --> Gauss
+
+    Query --> StarRocks
+    StarRocks --> HiveCat
+    StarRocks --> IcebergCat
+    StarRocks --> GaussCat
+```
+
+技术选择：
+
+- 服务端采用 Spring Boot 3.x 和 Java 17+。
+- 数据访问优先 MyBatis / MyBatis Plus。
+- 数据库迁移使用 Flyway。
+- 元数据、血缘、订阅、事件和审计存储在 GaussDB。
+- 查询执行通过 StarRocks JDBC，不直接暴露 Hive/GaussDB/Iceberg 给上层。
+- Java SDK 提供 Spring Boot 自动配置和 Flink/Spark 作业 Reporter。
+
+### 14.6 部署视图
+
+```mermaid
+flowchart LR
+    subgraph AppProject["data-gov 工程"]
+        Server["data-gov-server\nSpring Boot Container"]
+        Frontend["frontend\nReact/Vite"]
+    end
+
+    subgraph SharedInfra["../shared-data-infra"]
+        Gauss["GaussDB"]
+        StarRocks["StarRocks FE/BE"]
+        Hive["Hive Metastore"]
+        HDFS["HDFS/YARN"]
+        Kafka["Kafka"]
+        SparkTools["Spark Tools"]
+    end
+
+    subgraph ExternalApps["业务侧服务/作业"]
+        Micro["Java Microservice + data-gov-sdk"]
+        FlinkJob["Flink Java Job + data-gov-sdk"]
+        SparkJob["Spark Java/Scala Job + data-gov-sdk"]
+    end
+
+    Frontend --> Server
+    Micro --> Server
+    FlinkJob --> Server
+    SparkJob --> Server
+
+    Server --> Gauss
+    Server --> StarRocks
+    StarRocks --> Hive
+    StarRocks --> Gauss
+    StarRocks --> HDFS
+    FlinkJob --> Kafka
+    FlinkJob --> HDFS
+    SparkJob --> Hive
+    SparkJob --> HDFS
+    SparkTools --> HDFS
+```
+
+部署约束：
+
+- 本工程不重复部署 GaussDB、Hive、HDFS/YARN、Kafka、StarRocks、Spark 工具容器。
+- 这些基础设施优先复用 `../shared-data-infra`。
+- 本工程保留治理服务、前端和必要应用级资源。
+- StarRocks external catalog 指向 shared infra 中的 Hive、Iceberg、GaussDB 等数据源。
+
+## 15. 架构决策与权衡分析
+
+本节记录讨论过程中形成的重点架构决策，以及对应取舍。
+
+### 15.1 使用 Java Spring Boot 实现治理主服务
+
+决策：数据治理主服务采用 Java Spring Boot，而不是继续在现有 Python FastAPI 后端中扩展。
+
+理由：
+
+- 使用方主要是 Java 微服务、Flink Java 作业、Spark Java/Scala 作业，Java 服务和 Java SDK 更容易统一模型和类型。
+- SDK、服务端 DTO、枚举和错误码可以通过多模块工程共享。
+- Spring Boot 更适合承载企业内部平台服务、JDBC、多数据源、Flyway、Actuator 和治理后台 API。
+
+代价：
+
+- 当前仓库已有 Python FastAPI 能力，新增 Java 服务会引入双后端并存阶段。
+- 前端和旧 API 需要迁移或兼容。
+
+结论：
+
+- 治理主链路直接进入 Java Spring Boot。
+- Python 部分可暂时保留 Agent、Sandbox、Search 等既有能力，后续按价值迁移。
+
+### 15.2 元数据和血缘从 Neo4j 改为 GaussDB
+
+决策：元数据、血缘、订阅、运行态记录、事件和 drift 主库存储在 GaussDB。
+
+理由：
+
+- 需求已经从纯图查询扩展到资产、订阅、查询审计、作业运行、事件通知和 drift，关系模型更直接。
+- GaussDB 更容易和企业业务系统、报表、审计和平台服务集成。
+- 递归 CTE 可以覆盖第一期上下游血缘展开。
+
+代价：
+
+- 字段级复杂血缘图遍历不如图数据库天然。
+- 深层血缘和复杂路径分析需要索引、深度限制和后续缓存/物化视图优化。
+
+结论：
+
+- 第一期开资产级血缘，字段级血缘建表保留。
+- 默认血缘查询限制深度，必要时后续增加物化视图或图分析缓存。
+
+### 15.3 StarRocks 作为统一 SQL 和基础联邦查询入口
+
+决策：统一查询不引入 Trino，优先使用 StarRocks external catalog 和 JDBC catalog。
+
+理由：
+
+- 当前技术栈已有 StarRocks。
+- StarRocks 可查询本地 OLAP 表，也可通过 external catalog 访问 Hive、Iceberg 和 JDBC 外部源。
+- 产品 API 和 SQL Gateway 可以统一走 StarRocks，减少上层直连多个引擎。
+- 可支持基础跨数据源 join。
+
+代价：
+
+- StarRocks 不是完整通用联邦查询治理平台。
+- 跨源大表 join、复杂优化、长查询和大结果集导出不在第一期承诺范围。
+- GaussDB JDBC catalog 需要通过实际驱动和方言验证。
+
+结论：
+
+- StarRocks 是默认同步查询执行面。
+- Flink/Spark 继续负责生产、流处理、批处理和复杂任务。
+- SQL Gateway 第一阶段只做受控只读查询。
+
+### 15.4 产品 API 优先，SQL Gateway 补充
+
+决策：上层优先使用 `/api/assets/{assetId}/query`，SQL Gateway 作为补充能力。
+
+理由：
+
+- 产品 API 更适合微服务稳定调用，能控制字段、过滤、limit、订阅上下文和审计。
+- SQL Gateway 更适合分析平台、临时查询和少量跨源 join。
+
+代价：
+
+- 产品 API 查询表达能力弱于 SQL。
+- 复杂查询仍需 SQL Gateway 或 Spark/Flink 作业。
+
+结论：
+
+- 第一优先级实现产品 API 查询。
+- SQL Gateway 支持 `SELECT` / `WITH SELECT`，禁止 DDL/DML。
+
+### 15.5 Kafka 进入资产目录但不进入统一查询
+
+决策：Kafka topic 注册为 `STREAM` 资产，参与发现、订阅、通知和血缘，但 `queryable=false`。
+
+理由：
+
+- Kafka 的语义是事件流，不应硬抽象成普通表。
+- Kafka 主要由 Flink/Spark 和微服务消费，不适合作为统一同步查询对象。
+- 下游物化到 Hive/Iceberg/StarRocks/GaussDB 后，再以表型资产进入查询体系。
+
+代价：
+
+- 用户不能通过统一 SQL 直接查 Kafka。
+- Kafka 采样、schema registry、consumer group 观测需要后续独立增强。
+
+结论：
+
+- Kafka 资产第一期支持注册、发现、schema、订阅通知和血缘。
+- Kafka 查询请求返回明确错误。
+
+### 15.6 订阅收窄为使用意图和变化通知关注
+
+决策：订阅不作为真实消费事实，不等同核心血缘，也不做审批流。
+
+理由：
+
+- 如果订阅只是人工登记“谁用什么数据”，长期容易腐烂。
+- 真实消费应由运行态记录证明。
+- 血缘应表达生产、派生和读写链路。
+- 订阅的独特价值在于数据变化后的影响触达。
+
+代价：
+
+- 订阅本身不能回答“谁实际使用了数据”。
+- 需要 query_record、job_run_record 和 drift 共同补齐治理闭环。
+
+结论：
+
+- 订阅用于声明态和通知。
+- 运行态用于事实证明。
+- Drift 用于发现声明态和运行态不一致。
+
+### 15.7 SDK 启动注册而不是 CI Manifest
+
+决策：第一期订阅声明由 Java SDK 在服务/作业启动时注册，不做静态 manifest 和 CI 集成。
+
+理由：
+
+- 接入成本低，不需要改造 CI。
+- 适合先验证跨微服务订阅感知和运行态上报闭环。
+- Java SDK 可自动携带 subscription_id、declaration_hash、consumer 信息。
+
+代价：
+
+- 服务或作业没有启动时，平台无法提前看到声明。
+- 启动注册可能受网络和平台可用性影响。
+
+结论：
+
+- 第一期开 SDK 启动注册。
+- 通过 `last_registered_at`、`last_runtime_seen_at`、`declaration_hash` 和 `STALE_DECLARATION` drift 缓解腐烂。
+- CI manifest 可作为后续增强。
+
+### 15.8 第一期只做 Java SDK
+
+决策：第一期不做 Python SDK / PySpark SDK。
+
+理由：
+
+- 当前使用方聚焦 Java 微服务、Flink Java 作业、Spark Java/Scala 作业。
+- Java SDK 可同时服务微服务和作业生态。
+- 先缩小范围，避免 SDK 多语言模型过早发散。
+
+代价：
+
+- PySpark 或 Python 服务无法享受同等 SDK 自动注册体验。
+
+结论：
+
+- 第一期开 `data-gov-sdk` Java 模块。
+- Python 技术栈暂不规划实现。
+
+### 15.9 简化第一期关系模型
+
+决策：第一期取消或合并部分明细表：
+
+- `subscription_field` 合入 `subscription.declared_fields`。
+- `query_record_asset` 合入 `query_record.referenced_asset_codes`。
+- `job_io_record` 合入 `job_run_record.input/output_*`。
+- `consumer_instance` 合入 `consumer`。
+- 去掉 `security_level`、`schema_part`、`key_field`、`sdk_version`。
+
+理由：
+
+- 第一阶段目标是跑通治理闭环，不需要过早细粒度建模。
+- JSON 字段可承载小规模多值信息。
+- 减少实现复杂度和迁移成本。
+
+代价：
+
+- 字段级影响分析和资产访问统计需要 JSON 查询，性能和约束弱于明细表。
+- 多实例心跳和 SDK 版本排障能力较弱。
+
+结论：
+
+- 接受第一期简化。
+- 当字段级分析、访问统计或实例观测成为刚需时，再拆明细表。
+
+### 15.10 查询和作业运行态分离
+
+决策：微服务产品 API 和 SQL Gateway 查询进入 `query_record`；Flink/Spark 作业进入 `job_run_record`。
+
+理由：
+
+- 同步查询和作业运行生命周期不同。
+- Flink/Spark 通常是长期或批处理作业，可能产生输出资产和血缘。
+- 查询记录主要用于审计和实际访问证明。
+
+代价：
+
+- 影响分析需要同时合并 query、job、lineage、subscription 多个来源。
+
+结论：
+
+- 保持模型语义清晰。
+- `/api/assets/{assetId}/impact` 负责聚合多来源影响视图。
+
+### 15.11 事件通知先做 API 拉取
+
+决策：第一期通知只做 API 拉取和 ack，不做邮件、IM、Webhook。
+
+理由：
+
+- 简化外部依赖。
+- SDK 可定时拉取并写日志或触发业务回调。
+- 先验证订阅通知机制本身。
+
+代价：
+
+- 实时性和触达能力弱于 Webhook/IM。
+
+结论：
+
+- 第一期开 `GET /api/notifications` 和 `PATCH /api/notifications/{id}/ack`。
+- Webhook、邮件、IM 后续按需要扩展。
