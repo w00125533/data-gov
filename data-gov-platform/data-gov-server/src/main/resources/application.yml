@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: data-gov-server
+  datasource:
+    url: ${DATAGOV_GAUSSDB_JDBC_URL:jdbc:postgresql://localhost:5432/data_gov}
+    username: ${DATAGOV_GAUSSDB_USER:data_gov}
+    password: ${DATAGOV_GAUSSDB_PASSWORD:data_gov}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
