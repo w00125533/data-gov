@@ -2,13 +2,13 @@
 
 > 临时稿，仅用于多轮修正。确认后再合入 `2026-06-10-data-product-governance-design.md` 的第 7 章。
 
-通用接口前缀：`/oss/inner/modelengineservice/v1`
+通用接口前缀：`/rest/oss/inner/modelengineservice/v1`
 
-订阅接口路径：`/oss/inner/modelengineservice/v1/subscriptions/{assetId}`
+订阅接口路径：`/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`
 
 术语约定：
 
-- 数据集和数据资产在本章表达同一类治理对象，接口路径暂沿用 `assets`。
+- 数据集和数据资产在本章表达同一类治理对象，接口路径统一使用 `metadata`。
 - SDK 不单独暴露一套注册接口，而是封装并调用数据注册、数据订阅的正式接口，降低调用方构造请求的成本。
 - 数据变化通知由 SDK 在底层异步发送或监听 Kafka 完成，本章不提供服务端事件发布、通知拉取或通知确认类接口。
 
@@ -17,7 +17,7 @@
 | 维度 | 目标 | 核心能力 | 主要使用方 |
 | --- | --- | --- | --- |
 | 数据注册 | 将散落在不同微服务、作业和数据平台中的数据集统一注册到治理平台。 | 注册、修改、取消注册数据集元数据、字段、物理绑定和血缘关系；SDK 负责简化请求构造。 | 数据生产方、平台作业、SDK |
-| 数据发现 | 对应 asset 的一组查询能力，面向元数据和血缘关系发现。 | 元数据检索、详情查询、血缘查询；详情响应包含字段 schema 和物理绑定。 | 数据消费者、治理后台、研发工具 |
+| 数据发现 | 对应 metadata 的一组查询能力，面向元数据和血缘关系发现。 | 元数据检索、详情查询、血缘查询；详情响应包含字段 schema 和物理绑定。 | 数据消费者、治理后台、研发工具 |
 | 数据查询 | 查询业务数据内容。 | API 查询单个数据集内容；SQL Gateway 查询已注册数据集内容。 | 上层应用、微服务、分析服务 |
 | 数据订阅 | 保持声明态订阅逻辑，并围绕数据变化通知驱动消费策略调整。 | 按数据集订阅、查询订阅、取消订阅；SDK 基于通知定义消费策略变化。 | 数据消费者、SDK |
 
@@ -25,21 +25,21 @@
 
 | 维度 | 方法 | 接口 | 功能描述 |
 | --- | --- | --- | --- |
-| 数据注册 | POST | `/oss/inner/modelengineservice/v1/assets/register` | 注册数据集元数据、字段、物理绑定和血缘关系。 |
-| 数据注册 | PATCH | `/oss/inner/modelengineservice/v1/assets/{assetId}` | 修改已注册数据集的元数据、字段、物理绑定和血缘关系。 |
-| 数据注册 | DELETE | `/oss/inner/modelengineservice/v1/assets/{assetId}` | 取消注册数据集。 |
-| 数据发现 | GET | `/oss/inner/modelengineservice/v1/assets` | 检索数据集列表。 |
-| 数据发现 | GET | `/oss/inner/modelengineservice/v1/assets/{assetId}` | 查询数据集详情，包含字段 schema 和物理绑定。 |
-| 数据发现 | GET | `/oss/inner/modelengineservice/v1/assets/{assetId}/lineage` | 查询数据集血缘关系。 |
-| 数据查询 | POST | `/oss/inner/modelengineservice/v1/apiquery/{assetId}` | API 查询单个数据集内容。 |
-| 数据查询 | POST | `/oss/inner/modelengineservice/v1/sqlquery` | SQL Gateway 查询入口，支持已注册数据集的只读 SQL 查询。 |
-| 数据订阅 | POST | `/oss/inner/modelengineservice/v1/subscriptions/{assetId}` | 对指定数据集创建订阅声明。 |
-| 数据订阅 | GET | `/oss/inner/modelengineservice/v1/subscriptions/{assetId}` | 查询指定数据集的订阅声明，可按消费方过滤。 |
-| 数据订阅 | DELETE | `/oss/inner/modelengineservice/v1/subscriptions/{assetId}` | 取消指定数据集的订阅。 |
+| 数据注册 | POST | `/rest/oss/inner/modelengineservice/v1/metadata/register` | 注册数据集元数据、字段、物理绑定和血缘关系。 |
+| 数据注册 | PATCH | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}` | 修改已注册数据集的元数据、字段、物理绑定和血缘关系。 |
+| 数据注册 | DELETE | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}` | 取消注册数据集。 |
+| 数据发现 | GET | `/rest/oss/inner/modelengineservice/v1/metadata` | 检索数据集列表。 |
+| 数据发现 | GET | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}` | 查询数据集详情，包含字段 schema 和物理绑定。 |
+| 数据发现 | GET | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}/lineage` | 查询数据集血缘关系。 |
+| 数据查询 | POST | `/rest/oss/inner/modelengineservice/v1/apiquery/{metadataId}` | API 查询单个数据集内容。 |
+| 数据查询 | POST | `/rest/oss/inner/modelengineservice/v1/sqlquery` | SQL Gateway 查询入口，支持已注册数据集的只读 SQL 查询。 |
+| 数据订阅 | POST | `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}` | 对指定数据集创建订阅声明。 |
+| 数据订阅 | GET | `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}` | 查询指定数据集的订阅声明，可按消费方过滤。 |
+| 数据订阅 | DELETE | `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}` | 取消指定数据集的订阅。 |
 
 ## 7.3 数据注册接口定义
 
-### POST `/oss/inner/modelengineservice/v1/assets/register`
+### POST `/rest/oss/inner/modelengineservice/v1/metadata/register`
 
 注册数据集元数据、字段、物理绑定和血缘关系。请求体包含注册方信息和数据集定义。
 
@@ -100,7 +100,7 @@
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "status": {"enum": ["REGISTERED", "UPDATED"]},
     "lineageEdgeCount": 1,
@@ -109,7 +109,7 @@
 }
 ```
 
-### PATCH `/oss/inner/modelengineservice/v1/assets/{assetId}`
+### PATCH `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}`
 
 修改已注册数据集。可修改元数据、字段、物理绑定和血缘关系；未传字段保持不变。
 
@@ -117,7 +117,7 @@
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "body": {
       "assetName": "小区画像指标 V2",
@@ -148,7 +148,7 @@
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "status": "UPDATED",
     "updatedAt": "2026-06-11T00:00:00Z"
@@ -156,7 +156,7 @@
 }
 ```
 
-### DELETE `/oss/inner/modelengineservice/v1/assets/{assetId}`
+### DELETE `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}`
 
 取消注册数据集。请求体包含取消注册原因和操作人。
 
@@ -164,7 +164,7 @@
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "body": {
       "reason": "数据集下线",
@@ -172,7 +172,7 @@
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "status": "UNREGISTERED",
     "unregisteredAt": "2026-06-11T00:00:00Z"
@@ -186,7 +186,7 @@
 
 | 参数名称 | 参数类型 | POST 必选 | PATCH 必选 | DELETE 必选 | 说明 | 校验范围 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `path.assetId` | `string` | 否 | 是 | 是 | 数据集 ID，路径参数。 | 长度 1-64；必须已存在。 |
+| `path.metadataId` | `string` | 否 | 是 | 是 | 数据集元数据 ID，路径参数。 | 长度 1-64；必须已存在。 |
 | `producer` | `object` | 是 | 否 | 否 | 数据集注册来源，表示由哪个服务、作业或人工流程提交注册。 | 非空对象。 |
 | `producer.serviceName` | `string` | 是 | 否 | 否 | 注册方服务或作业名称。 | 长度 1-128；建议使用服务名、作业名或应用名。 |
 | `producer.serviceType` | `string` | 是 | 否 | 否 | 注册方类型。 | 枚举：`MICROSERVICE`、`FLINK`、`SPARK`、`MANUAL`。 |
@@ -229,9 +229,9 @@
 
 ## 7.4 数据发现接口定义
 
-数据发现提供 asset 资源下的查询能力。列表接口返回数据集摘要；详情接口返回元数据、字段 schema 和物理绑定；血缘接口返回表级和字段级血缘关系。
+数据发现提供 metadata 资源下的查询能力。列表接口返回数据集摘要；详情接口返回元数据、字段 schema 和物理绑定；血缘接口返回表级和字段级血缘关系。
 
-### GET `/oss/inner/modelengineservice/v1/assets`
+### GET `/rest/oss/inner/modelengineservice/v1/metadata`
 
 检索数据集列表。支持按关键字、业务域、数据集类型和负责人过滤。
 
@@ -250,7 +250,7 @@
   "response": {
     "items": [
       {
-        "assetId": "asset_001",
+        "metadataId": "metadata_001",
         "assetCode": "ads_cell_profile",
         "assetName": "小区画像指标",
         "assetType": "TABLE",
@@ -266,7 +266,7 @@
 }
 ```
 
-### GET `/oss/inner/modelengineservice/v1/assets/{assetId}`
+### GET `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}`
 
 查询数据集详情，包含基础元数据、字段 schema 和物理绑定。
 
@@ -274,11 +274,11 @@
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "assetName": "小区画像指标",
     "assetType": "TABLE",
@@ -309,7 +309,7 @@
 }
 ```
 
-### GET `/oss/inner/modelengineservice/v1/assets/{assetId}/lineage`
+### GET `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}/lineage`
 
 查询数据集血缘关系。`direction=up` 表示查询当前数据集的上游依赖；`direction=down` 表示查询当前数据集影响到的下游对象。响应中的每条边都显式返回 `direction`，字段级血缘通过 `fieldEdges` 表达。
 
@@ -317,7 +317,7 @@
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "query": {
       "direction": {"enum": ["up", "down"]},
@@ -325,18 +325,18 @@
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "direction": "up",
     "depth": 5,
     "nodes": [
-      {"assetId": "asset_000", "assetCode": "dwd_cell_profile", "assetName": "小区画像明细"},
-      {"assetId": "asset_001", "assetCode": "ads_cell_profile", "assetName": "小区画像指标"}
+      {"metadataId": "metadata_000", "assetCode": "dwd_cell_profile", "assetName": "小区画像明细"},
+      {"metadataId": "metadata_001", "assetCode": "ads_cell_profile", "assetName": "小区画像指标"}
     ],
     "edges": [
       {
-        "sourceAssetId": "asset_000",
+        "sourceMetadataId": "metadata_000",
         "sourceAssetCode": "dwd_cell_profile",
-        "targetAssetId": "asset_001",
+        "targetMetadataId": "metadata_001",
         "targetAssetCode": "ads_cell_profile",
         "lineageType": "TABLE",
         "direction": "up",
@@ -345,10 +345,10 @@
     ],
     "fieldEdges": [
       {
-        "sourceAssetId": "asset_000",
+        "sourceMetadataId": "metadata_000",
         "sourceAssetCode": "dwd_cell_profile",
         "sourceField": "cell_id",
-        "targetAssetId": "asset_001",
+        "targetMetadataId": "metadata_001",
         "targetAssetCode": "ads_cell_profile",
         "targetField": "cell_id",
         "lineageType": "FIELD",
@@ -356,10 +356,10 @@
         "expression": "direct"
       },
       {
-        "sourceAssetId": "asset_000",
+        "sourceMetadataId": "metadata_000",
         "sourceAssetCode": "dwd_cell_profile",
         "sourceField": "rsrp_avg",
-        "targetAssetId": "asset_001",
+        "targetMetadataId": "metadata_001",
         "targetAssetCode": "ads_cell_profile",
         "targetField": "coverage_score",
         "lineageType": "FIELD",
@@ -375,7 +375,7 @@
 
 | 参数名称 | 参数类型 | 列表必选 | 详情必选 | 血缘必选 | 说明 | 校验范围 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `path.assetId` | `string` | 否 | 是 | 是 | 数据集 ID，路径参数。 | 长度 1-64；必须已注册。 |
+| `path.metadataId` | `string` | 否 | 是 | 是 | 数据集元数据 ID，路径参数。 | 长度 1-64；必须已注册。 |
 | `keyword` | `string` | 否 | 否 | 否 | 按数据集编码、名称或描述搜索。 | 长度 0-128。 |
 | `domain` | `string` | 否 | 否 | 否 | 按业务域过滤。 | 长度 0-128。 |
 | `assetType` | `string` | 否 | 否 | 否 | 按数据集逻辑类型过滤。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
@@ -384,7 +384,7 @@
 | `size` | `integer` | 否 | 否 | 否 | 分页大小。 | 1-100；默认 20。 |
 | `direction` | `string` | 否 | 否 | 是 | 血缘查询方向。 | 枚举：`up`、`down`。 |
 | `depth` | `integer` | 否 | 否 | 否 | 血缘递归深度。 | 1-10；默认 3。 |
-| `response.items[].asset` | `object` | 是 | 否 | 否 | 列表中的数据集摘要。 | 列表响应必返。 |
+| `response.items[].metadata` | `object` | 是 | 否 | 否 | 列表中的数据集摘要。 | 列表响应必返。 |
 | `response.schema` | `array<object>` | 否 | 是 | 否 | 数据集字段 schema。 | 详情响应必返；字段名在数据集内唯一。 |
 | `response.binding` | `object` | 否 | 是 | 否 | 数据集物理绑定。 | 详情响应必返。 |
 | `response.nodes` | `array<object>` | 否 | 否 | 是 | 血缘图节点集合。 | 血缘响应必返；可为空数组。 |
@@ -393,7 +393,7 @@
 
 ## 7.5 数据查询接口定义
 
-### POST `/oss/inner/modelengineservice/v1/apiquery/{assetId}`
+### POST `/rest/oss/inner/modelengineservice/v1/apiquery/{metadataId}`
 
 API 查询单个数据集内容。请求体包含返回字段、过滤条件、排序条件和返回行数上限。
 
@@ -401,7 +401,7 @@ API 查询单个数据集内容。请求体包含返回字段、过滤条件、�
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "headers": {
       "X-DataGov-Subscription-Id": "sub_001"
@@ -435,7 +435,7 @@ API 查询单个数据集内容。请求体包含返回字段、过滤条件、�
 }
 ```
 
-### POST `/oss/inner/modelengineservice/v1/sqlquery`
+### POST `/rest/oss/inner/modelengineservice/v1/sqlquery`
 
 SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上限和消费方标识。
 
@@ -471,7 +471,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 
 | 参数名称 | 参数类型 | API 查询必选 | SQL 查询必选 | 说明 | 校验范围 |
 | --- | --- | --- | --- | --- | --- |
-| `path.assetId` | `string` | 是 | 否 | API 查询目标数据集 ID。 | 长度 1-64；必须已注册且可 API 查询。 |
+| `path.metadataId` | `string` | 是 | 否 | API 查询目标数据集元数据 ID。 | 长度 1-64；必须已注册且可 API 查询。 |
 | `headers.X-DataGov-Subscription-Id` | `string` | 否 | 否 | 订阅声明 ID，用于治理审计和声明态校验。 | 长度 0-64；建议已注册订阅。 |
 | `select` | `array<string>` | 是 | 否 | API 查询返回字段列表。 | 至少 1 个字段；字段必须存在于数据集 schema。 |
 | `filters` | `array<object>` | 否 | 否 | API 查询过滤条件。 | 字段必须存在于数据集 schema。 |
@@ -492,9 +492,9 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 
 ## 7.6 数据订阅接口定义
 
-订阅接口统一使用 `/oss/inner/modelengineservice/v1/subscriptions/{assetId}`。订阅面向单个数据集；SDK 一次声明多个数据集订阅时，按 `assetId` 拆分并逐个调用该接口。
+订阅接口统一使用 `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`。订阅面向单个数据集；SDK 一次声明多个数据集订阅时，按 `metadataId` 拆分并逐个调用该接口。
 
-### POST `/oss/inner/modelengineservice/v1/subscriptions/{assetId}`
+### POST `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`
 
 对指定数据集创建订阅声明。请求体包含消费方、使用模式、字段范围和关注的数据变化类型。
 
@@ -502,7 +502,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "body": {
       "consumer": {
@@ -524,7 +524,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
   },
   "response": {
     "subscriptionId": "sub_001",
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "consumerId": "consumer_001",
     "status": "ACTIVE",
@@ -537,7 +537,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 
 | 参数名称 | 参数类型 | 订阅必选 | 查询必选 | 取消必选 | 说明 | 校验范围 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `path.assetId` | `string` | 是 | 是 | 是 | 被订阅数据集 ID，路径参数。 | 长度 1-64；必须已注册。 |
+| `path.metadataId` | `string` | 是 | 是 | 是 | 被订阅数据集元数据 ID，路径参数。 | 长度 1-64；必须已注册。 |
 | `consumer` | `object` | 是 | 否 | 否 | 消费方声明。 | 非空对象。 |
 | `consumer.consumerName` | `string` | 是 | 否 | 否 | 消费方名称。 | 长度 1-128；建议使用服务名或作业名。 |
 | `consumer.consumerType` | `string` | 是 | 否 | 否 | 消费方类型。 | 枚举：`MICROSERVICE`、`FLINK`、`SPARK`。 |
@@ -558,7 +558,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 | `reason` | `string` | 否 | 否 | 是 | 取消订阅原因。 | 长度 1-512。 |
 | `operator` | `string` | 否 | 否 | 是 | 取消订阅操作人。 | 长度 1-128。 |
 
-### GET `/oss/inner/modelengineservice/v1/subscriptions/{assetId}`
+### GET `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`
 
 查询指定数据集的订阅声明。可通过 `consumerId` 查询某个消费方对该数据集的订阅，也可查询该数据集下全部订阅。
 
@@ -566,7 +566,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "query": {
       "consumerId": "consumer_001",
@@ -576,11 +576,11 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "items": [
       {
         "subscriptionId": "sub_001",
-        "assetId": "asset_001",
+        "metadataId": "metadata_001",
         "assetCode": "ads_cell_profile",
         "consumerId": "consumer_001",
         "usageMode": "API_QUERY",
@@ -597,7 +597,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 }
 ```
 
-### DELETE `/oss/inner/modelengineservice/v1/subscriptions/{assetId}`
+### DELETE `/rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`
 
 取消指定消费方对指定数据集的订阅。请求体包含消费方 ID、取消原因和操作人。
 
@@ -605,7 +605,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 {
   "request": {
     "path": {
-      "assetId": "asset_001"
+      "metadataId": "metadata_001"
     },
     "body": {
       "consumerId": "consumer_001",
@@ -614,7 +614,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
     }
   },
   "response": {
-    "assetId": "asset_001",
+    "metadataId": "metadata_001",
     "consumerId": "consumer_001",
     "cancelledSubscriptions": [
       {"subscriptionId": "sub_001", "status": "CANCELLED"}
@@ -628,8 +628,8 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 
 SDK 要支持数据注册和数据订阅的快速数据组装。SDK 不新增独立服务端接口，而是封装前文定义的正式 API：
 
-- 数据注册：组装后调用 `POST /oss/inner/modelengineservice/v1/assets/register`。
-- 数据订阅：组装后按数据集调用 `POST /oss/inner/modelengineservice/v1/subscriptions/{assetId}`。
+- 数据注册：组装后调用 `POST /rest/oss/inner/modelengineservice/v1/metadata/register`。
+- 数据订阅：组装后按数据集调用 `POST /rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`。
 - 数据变化通知：生产方 SDK 或治理 SDK 底层异步发送 Kafka；消费方 SDK 监听 Kafka 后回调业务处理器。
 
 数据注册快速组装示例：
@@ -695,7 +695,7 @@ dataGovRegistrar.asset("ads_cell_profile")
 }
 ```
 
-数据订阅快速组装示例。SDK 可以让业务方一次声明多个数据集订阅，但底层会拆分为多次 `POST /oss/inner/modelengineservice/v1/subscriptions/{assetId}` 调用：
+数据订阅快速组装示例。SDK 可以让业务方一次声明多个数据集订阅，但底层会拆分为多次 `POST /rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}` 调用：
 
 ```java
 dataGovSubscriptions.consumer("rno-dashboard")
