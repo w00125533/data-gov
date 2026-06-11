@@ -1,6 +1,6 @@
-﻿# API 设计临时稿
+﻿# 数据治理 API 设计
 
-> 临时稿，仅用于多轮修正。确认后再合入 `2026-06-10-data-product-governance-design.md` 的第 7 章。
+本文定义数据注册、数据发现、数据查询和数据订阅的正式接口。主接口前缀统一使用 `/rest/oss/inner/modelengineservice/v1`。
 
 通用接口前缀：`/rest/oss/inner/modelengineservice/v1`
 
@@ -25,7 +25,7 @@
 
 | 维度 | 方法 | 接口 | 功能描述 |
 | --- | --- | --- | --- |
-| 数据注册 | POST | `/rest/oss/inner/modelengineservice/v1/metadata/register` | 注册数据集元数据、字段、物理绑定和血缘关系。 |
+| 数据注册 | POST | `/rest/oss/inner/modelengineservice/v1/metadata/register` | 注册数据集元数据、字段、物理绑定和血缘关系；服务启动时作为微服务级完整元数据快照同步入口。 |
 | 数据注册 | PATCH | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}` | 修改已注册数据集的元数据、字段、物理绑定和血缘关系。 |
 | 数据注册 | DELETE | `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}` | 取消注册数据集。 |
 | 数据发现 | GET | `/rest/oss/inner/modelengineservice/v1/metadata` | 检索数据集列表。 |
@@ -41,7 +41,7 @@
 
 ### POST `/rest/oss/inner/modelengineservice/v1/metadata/register`
 
-注册数据集元数据、字段、物理绑定和血缘关系。请求体包含注册方信息和数据集定义。
+注册数据集元数据、字段、物理绑定和血缘关系。请求体包含注册方信息和数据集定义。服务启动时，SDK 复用该接口提交当前微服务完整元数据快照；服务端按 `producer.serviceName + producer.environment` 作用域重建该微服务的元数据声明态，本次快照存在的元数据执行新增或更新，本次快照缺失且归属该微服务的历史元数据执行软下线。
 
 ```json
 {
@@ -54,64 +54,77 @@
         "environment": "prod",
         "instanceId": "pod-rno-profile-7d8f"
       },
+      "syncMode": "FULL",
       "declarationHash": "sha256:metadata-lineage-declaration",
-      "asset": {
-        "assetCode": "ads_cell_profile",
-        "assetName": "小区画像指标",
-        "assetType": {"enum": ["TABLE", "VIEW", "TOPIC"]},
-        "domain": "wireless-rno",
-        "owner": "network-team",
-        "description": "面向无线网络优化的小区画像指标数据集",
-        "queryable": true,
-        "fields": [
-          {
-            "fieldName": "cell_id",
-            "fieldType": "string",
-            "nullable": false,
-            "description": "小区标识"
-          }
-        ],
-        "binding": {
-          "sourceType": {"enum": ["HIVE", "STARROCKS", "GAUSSDB", "ICEBERG", "KAFKA"]},
-          "catalog": "default_catalog",
-          "database": "data_gov",
-          "table": "ads_cell_profile",
-          "properties": {}
-        },
-        "lineage": {
-          "upstreams": [
+      "metadataList": [
+        {
+          "assetCode": "ads_cell_profile",
+          "assetName": "小区画像指标",
+          "assetType": {"enum": ["TABLE", "VIEW", "TOPIC"]},
+          "domain": "wireless-rno",
+          "owner": "network-team",
+          "description": "面向无线网络优化的小区画像指标数据集",
+          "queryable": true,
+          "fields": [
             {
-              "assetCode": "dwd_cell_profile",
-              "lineageType": {"enum": ["TABLE", "FIELD"]},
-              "transformType": {"enum": ["DIRECT", "SQL", "JOB", "MANUAL"]},
-              "expression": "job:rno-profile-etl",
-              "fieldMappings": [
-                {
-                  "sourceField": "cell_id",
-                  "targetField": "cell_id",
-                  "expression": "direct"
-                }
-              ]
+              "fieldName": "cell_id",
+              "fieldType": "string",
+              "nullable": false,
+              "description": "小区标识"
             }
           ],
-          "downstreams": []
+          "binding": {
+            "sourceType": {"enum": ["HIVE", "STARROCKS", "GAUSSDB", "ICEBERG", "KAFKA"]},
+            "catalog": "default_catalog",
+            "database": "data_gov",
+            "table": "ads_cell_profile",
+            "properties": {}
+          },
+          "lineage": {
+            "upstreams": [
+              {
+                "assetCode": "dwd_cell_profile",
+                "lineageType": {"enum": ["TABLE", "FIELD"]},
+                "transformType": {"enum": ["DIRECT", "SQL", "JOB", "MANUAL"]},
+                "expression": "job:rno-profile-etl",
+                "fieldMappings": [
+                  {
+                    "sourceField": "cell_id",
+                    "targetField": "cell_id",
+                    "expression": "direct"
+                  }
+                ]
+              }
+            ],
+            "downstreams": []
+          }
         }
-      }
+      ]
     }
   },
   "response": {
-    "metadataId": "metadata_001",
-    "assetCode": "ads_cell_profile",
-    "status": {"enum": ["REGISTERED", "UPDATED"]},
-    "lineageEdgeCount": 1,
-    "registeredAt": "2026-06-11T00:00:00Z"
+    "syncScope": {
+      "serviceName": "rno-profile-service",
+      "environment": "prod"
+    },
+    "createdCount": 0,
+    "updatedCount": 1,
+    "removedBySnapshotCount": 0,
+    "items": [
+      {
+        "metadataId": "metadata_001",
+        "assetCode": "ads_cell_profile",
+        "status": {"enum": ["REGISTERED", "UPDATED", "UNCHANGED"]}
+      }
+    ],
+    "syncedAt": "2026-06-11T00:00:00Z"
   }
 }
 ```
 
 ### PATCH `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}`
 
-修改已注册数据集。可修改元数据、字段、物理绑定和血缘关系；未传字段保持不变。
+运行时动态修改已注册数据集。可修改元数据、字段、物理绑定和血缘关系；未传字段保持不变。
 
 ```json
 {
@@ -158,7 +171,7 @@
 
 ### DELETE `/rest/oss/inner/modelengineservice/v1/metadata/{metadataId}`
 
-取消注册数据集。请求体包含取消注册原因和操作人。
+运行时动态取消注册数据集。请求体包含取消注册原因和操作人。
 
 ```json
 {
@@ -182,7 +195,7 @@
 
 数据注册共用参数：
 
-`POST` 使用完整注册模型；`PATCH` 复用同一模型的可选子集，未传字段表示不修改；`DELETE` 只使用路径参数和取消注册原因。
+`POST` 使用微服务完整元数据快照模型；`PATCH` 使用单个元数据的可选子集，未传字段表示不修改；`DELETE` 只使用路径参数和取消注册原因。
 
 | 参数名称 | 参数类型 | POST 必选 | PATCH 必选 | DELETE 必选 | 说明 | 校验范围 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -193,37 +206,38 @@
 | `producer.owner` | `string` | 是 | 否 | 否 | 注册方归属团队或负责人。 | 长度 1-128。 |
 | `producer.environment` | `string` | 是 | 否 | 否 | 注册发生的环境。 | 建议枚举：`dev`、`test`、`staging`、`prod`。 |
 | `producer.instanceId` | `string` | 否 | 否 | 否 | 注册方运行实例标识。 | 长度 1-256；可为空。 |
+| `syncMode` | `string` | 是 | 否 | 否 | 启动快照同步模式。 | 当前固定为 `FULL`。 |
 | `declarationHash` | `string` | 否 | 否 | 否 | SDK 或注册方计算的声明哈希，用于识别声明是否变化。 | 建议格式：`sha256:<hex>`；可为空。 |
-| `asset` | `object` | 是 | 否 | 否 | 数据集注册主体。 | POST 非空；PATCH 可传局部字段。 |
-| `asset.assetCode` | `string` | 是 | 否 | 否 | 数据集唯一编码，业务侧稳定引用该编码。 | 长度 1-128；建议小写字母、数字、下划线；全局唯一。 |
-| `asset.assetName` | `string` | 是 | 否 | 否 | 数据集展示名称。 | 长度 1-256。 |
-| `asset.assetType` | `string` | 是 | 否 | 否 | 数据集逻辑类型。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
-| `asset.domain` | `string` | 是 | 否 | 否 | 数据集所属业务域。 | 长度 1-128；例如 `wireless-rno`。 |
-| `asset.owner` | `string` | 是 | 否 | 否 | 数据集责任团队或负责人。 | 长度 1-128。 |
-| `asset.description` | `string` | 否 | 否 | 否 | 数据集说明。 | 长度 0-1024。 |
-| `asset.queryable` | `boolean` | 是 | 否 | 否 | 是否允许通过治理平台查询数据内容。 | `true` 或 `false`；Kafka/TOPIC 类通常为 `false`。 |
-| `asset.fields` | `array<object>` | 是 | 否 | 否 | 数据集字段列表。PATCH 传入时按服务端策略整体替换或按字段名 upsert。 | POST 至少 1 个字段；字段名在同一数据集内唯一。 |
-| `asset.fields[].fieldName` | `string` | 是 | 否 | 否 | 字段名称。 | 长度 1-128；建议与物理表字段一致。 |
-| `asset.fields[].fieldType` | `string` | 是 | 否 | 否 | 字段类型。 | 使用源系统类型或治理平台标准类型；不能为空。 |
-| `asset.fields[].nullable` | `boolean` | 是 | 否 | 否 | 字段是否允许为空。 | `true` 或 `false`。 |
-| `asset.fields[].description` | `string` | 否 | 否 | 否 | 字段说明。 | 长度 0-512。 |
-| `asset.binding` | `object` | 是 | 否 | 否 | 数据集物理绑定信息。 | POST 非空；PATCH 可传局部字段。 |
-| `asset.binding.sourceType` | `string` | 是 | 否 | 否 | 物理来源类型。 | 枚举：`HIVE`、`STARROCKS`、`GAUSSDB`、`ICEBERG`、`KAFKA`。 |
-| `asset.binding.catalog` | `string` | 否 | 否 | 否 | StarRocks catalog 或等价逻辑目录。 | 长度 0-128；Kafka 可为空。 |
-| `asset.binding.database` | `string` | 否 | 否 | 否 | 数据库或 schema 名称。 | 长度 0-128；Kafka 可为空。 |
-| `asset.binding.table` | `string` | 是 | 否 | 否 | 物理表、视图或 topic 名称。 | 长度 1-256。 |
-| `asset.binding.properties` | `object` | 否 | 否 | 否 | 扩展物理属性。 | JSON 对象；用于 Kafka topic 配置、Iceberg namespace 等扩展信息。 |
-| `asset.lineage` | `object` | 否 | 否 | 否 | 数据集血缘声明。 | 可为空；包含 `upstreams` 和 `downstreams`。 |
-| `asset.lineage.upstreams` | `array<object>` | 否 | 否 | 否 | 当前数据集的上游数据集列表。 | 可为空数组。 |
-| `asset.lineage.downstreams` | `array<object>` | 否 | 否 | 否 | 当前数据集的下游数据集列表。 | 可为空数组。 |
-| `asset.lineage.upstreams[].assetCode` | `string` | 条件必选 | 否 | 否 | 上游数据集编码。 | 当传入 `upstreams[]` 时必填；长度 1-128；应能解析到已注册或本次批次注册的数据集。 |
-| `asset.lineage.upstreams[].lineageType` | `string` | 条件必选 | 否 | 否 | 血缘粒度。 | 当传入 `upstreams[]` 时必填；枚举：`TABLE`、`FIELD`。 |
-| `asset.lineage.upstreams[].transformType` | `string` | 否 | 否 | 否 | 血缘转换来源或表达方式。 | 枚举：`DIRECT`、`SQL`、`JOB`、`MANUAL`。 |
-| `asset.lineage.upstreams[].expression` | `string` | 否 | 否 | 否 | 血缘转换表达式或作业标识。 | 长度 0-4096。 |
-| `asset.lineage.upstreams[].fieldMappings` | `array<object>` | 否 | 否 | 否 | 字段级映射关系。 | `lineageType=FIELD` 时建议必填。 |
-| `asset.lineage.upstreams[].fieldMappings[].sourceField` | `string` | 条件必选 | 否 | 否 | 上游字段名。 | 当传入 `fieldMappings[]` 时必填；长度 1-128。 |
-| `asset.lineage.upstreams[].fieldMappings[].targetField` | `string` | 条件必选 | 否 | 否 | 当前数据集字段名。 | 当传入 `fieldMappings[]` 时必填；长度 1-128；应存在于 `asset.fields`。 |
-| `asset.lineage.upstreams[].fieldMappings[].expression` | `string` | 否 | 否 | 否 | 字段转换表达式。 | 长度 0-1024。 |
+| `metadataList` | `array<object>` | 是 | 否 | 否 | 当前微服务完整元数据快照。 | POST 至少 1 个元数据对象。 |
+| `metadataList[].assetCode` | `string` | 是 | 否 | 否 | 数据集唯一编码，业务侧稳定引用该编码。 | 长度 1-128；建议小写字母、数字、下划线；在同步作用域内唯一。 |
+| `metadataList[].assetName` | `string` | 是 | 否 | 否 | 数据集展示名称。 | 长度 1-256。 |
+| `metadataList[].assetType` | `string` | 是 | 否 | 否 | 数据集逻辑类型。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
+| `metadataList[].domain` | `string` | 是 | 否 | 否 | 数据集所属业务域。 | 长度 1-128；例如 `wireless-rno`。 |
+| `metadataList[].owner` | `string` | 是 | 否 | 否 | 数据集责任团队或负责人。 | 长度 1-128。 |
+| `metadataList[].description` | `string` | 否 | 否 | 否 | 数据集说明。 | 长度 0-1024。 |
+| `metadataList[].queryable` | `boolean` | 是 | 否 | 否 | 是否允许通过治理平台查询数据内容。 | `true` 或 `false`；Kafka/TOPIC 类通常为 `false`。 |
+| `metadataList[].fields` | `array<object>` | 是 | 否 | 否 | 数据集字段列表。PATCH 传入时按服务端策略整体替换或按字段名 upsert。 | POST 至少 1 个字段；字段名在同一数据集内唯一。 |
+| `metadataList[].fields[].fieldName` | `string` | 是 | 否 | 否 | 字段名称。 | 长度 1-128；建议与物理表字段一致。 |
+| `metadataList[].fields[].fieldType` | `string` | 是 | 否 | 否 | 字段类型。 | 使用源系统类型或治理平台标准类型；不能为空。 |
+| `metadataList[].fields[].nullable` | `boolean` | 是 | 否 | 否 | 字段是否允许为空。 | `true` 或 `false`。 |
+| `metadataList[].fields[].description` | `string` | 否 | 否 | 否 | 字段说明。 | 长度 0-512。 |
+| `metadataList[].binding` | `object` | 是 | 否 | 否 | 数据集物理绑定信息。 | POST 非空；PATCH 可传局部字段。 |
+| `metadataList[].binding.sourceType` | `string` | 是 | 否 | 否 | 物理来源类型。 | 枚举：`HIVE`、`STARROCKS`、`GAUSSDB`、`ICEBERG`、`KAFKA`。 |
+| `metadataList[].binding.catalog` | `string` | 否 | 否 | 否 | StarRocks catalog 或等价逻辑目录。 | 长度 0-128；Kafka 可为空。 |
+| `metadataList[].binding.database` | `string` | 否 | 否 | 否 | 数据库或 schema 名称。 | 长度 0-128；Kafka 可为空。 |
+| `metadataList[].binding.table` | `string` | 是 | 否 | 否 | 物理表、视图或 topic 名称。 | 长度 1-256。 |
+| `metadataList[].binding.properties` | `object` | 否 | 否 | 否 | 扩展物理属性。 | JSON 对象；用于 Kafka topic 配置、Iceberg namespace 等扩展信息。 |
+| `metadataList[].lineage` | `object` | 否 | 否 | 否 | 数据集血缘声明。 | 可为空；包含 `upstreams` 和 `downstreams`。 |
+| `metadataList[].lineage.upstreams` | `array<object>` | 否 | 否 | 否 | 当前数据集的上游数据集列表。 | 可为空数组。 |
+| `metadataList[].lineage.downstreams` | `array<object>` | 否 | 否 | 否 | 当前数据集的下游数据集列表。 | 可为空数组。 |
+| `metadataList[].lineage.upstreams[].assetCode` | `string` | 条件必选 | 否 | 否 | 上游数据集编码。 | 当传入 `upstreams[]` 时必填；长度 1-128；应能解析到已注册或本次批次注册的数据集。 |
+| `metadataList[].lineage.upstreams[].lineageType` | `string` | 条件必选 | 否 | 否 | 血缘粒度。 | 当传入 `upstreams[]` 时必填；枚举：`TABLE`、`FIELD`。 |
+| `metadataList[].lineage.upstreams[].transformType` | `string` | 否 | 否 | 否 | 血缘转换来源或表达方式。 | 枚举：`DIRECT`、`SQL`、`JOB`、`MANUAL`。 |
+| `metadataList[].lineage.upstreams[].expression` | `string` | 否 | 否 | 否 | 血缘转换表达式或作业标识。 | 长度 0-4096。 |
+| `metadataList[].lineage.upstreams[].fieldMappings` | `array<object>` | 否 | 否 | 否 | 字段级映射关系。 | `lineageType=FIELD` 时建议必填。 |
+| `metadataList[].lineage.upstreams[].fieldMappings[].sourceField` | `string` | 条件必选 | 否 | 否 | 上游字段名。 | 当传入 `fieldMappings[]` 时必填；长度 1-128。 |
+| `metadataList[].lineage.upstreams[].fieldMappings[].targetField` | `string` | 条件必选 | 否 | 否 | 当前数据集字段名。 | 当传入 `fieldMappings[]` 时必填；长度 1-128；应存在于 `metadataList[].fields`。 |
+| `metadataList[].lineage.upstreams[].fieldMappings[].expression` | `string` | 否 | 否 | 否 | 字段转换表达式。 | 长度 0-1024。 |
 | `reason` | `string` | 否 | 否 | 是 | 取消注册原因。 | 长度 1-512。 |
 | `operator` | `string` | 否 | 否 | 是 | 取消注册操作人。 | 长度 1-128。 |
 
@@ -628,7 +642,7 @@ SQL Gateway 查询入口。请求体包含 SQL 语句、参数、返回行数上
 
 SDK 要支持数据注册和数据订阅的快速数据组装。SDK 不新增独立服务端接口，而是封装前文定义的正式 API：
 
-- 数据注册：组装后调用 `POST /rest/oss/inner/modelengineservice/v1/metadata/register`。
+- 数据注册：服务启动时组装当前微服务完整元数据快照后调用 `POST /rest/oss/inner/modelengineservice/v1/metadata/register`。
 - 数据订阅：组装后按数据集调用 `POST /rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`。
 - 数据变化通知：生产方 SDK 或治理 SDK 底层异步发送 Kafka；消费方 SDK 监听 Kafka 后回调业务处理器。
 
@@ -657,41 +671,43 @@ dataGovRegistrar.asset("ads_cell_profile")
     .register();
 ```
 
-上面 SDK 调用等价于组装数据注册 JSON 中的：
+上面 SDK 调用会进入当前微服务启动快照，等价于组装数据注册 JSON 中 `metadataList[]` 的一个元素：
 
 ```json
 {
-  "asset": {
-    "assetCode": "ads_cell_profile",
-    "assetType": "TABLE",
-    "fields": [
-      {"fieldName": "cell_id", "fieldType": "string", "nullable": false},
-      {"fieldName": "coverage_score", "fieldType": "double", "nullable": true}
-    ],
-    "binding": {
-      "sourceType": "STARROCKS",
-      "catalog": "default_catalog",
-      "database": "data_gov",
-      "table": "ads_cell_profile"
-    },
-    "lineage": {
-      "upstreams": [
-        {
-          "assetCode": "dwd_cell_profile",
-          "lineageType": "FIELD",
-          "transformType": "JOB",
-          "expression": "job:rno-profile-etl",
-          "fieldMappings": [
-            {
-              "sourceField": "rsrp_avg",
-              "targetField": "coverage_score",
-              "expression": "case when rsrp_avg >= -95 then 100 else 60 end"
-            }
-          ]
-        }
-      ]
+  "metadataList": [
+    {
+      "assetCode": "ads_cell_profile",
+      "assetType": "TABLE",
+      "fields": [
+        {"fieldName": "cell_id", "fieldType": "string", "nullable": false},
+        {"fieldName": "coverage_score", "fieldType": "double", "nullable": true}
+      ],
+      "binding": {
+        "sourceType": "STARROCKS",
+        "catalog": "default_catalog",
+        "database": "data_gov",
+        "table": "ads_cell_profile"
+      },
+      "lineage": {
+        "upstreams": [
+          {
+            "assetCode": "dwd_cell_profile",
+            "lineageType": "FIELD",
+            "transformType": "JOB",
+            "expression": "job:rno-profile-etl",
+            "fieldMappings": [
+              {
+                "sourceField": "rsrp_avg",
+                "targetField": "coverage_score",
+                "expression": "case when rsrp_avg >= -95 then 100 else 60 end"
+              }
+            ]
+          }
+        ]
+      }
     }
-  }
+  ]
 }
 ```
 
