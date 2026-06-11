@@ -83,7 +83,7 @@ erDiagram
     metadata {
       varchar metadata_id PK
       varchar asset_code UK
-      varchar asset_type
+      varchar metadata_type
       varchar service_name
       varchar environment
       varchar status

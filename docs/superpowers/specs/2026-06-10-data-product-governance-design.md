@@ -1,6 +1,6 @@
 ﻿# 数据产品治理、订阅、统一查询与血缘设计
 
-本文是数据治理 Spec 的主索引。详细设计已经拆分到 `docs/superpowers/specs/data-governance/` 目录，便于 API、数据模型、运行时机制、架构视图和技术决策独立维护。
+本文是数据治理 Spec 文档集的主入口。详细设计拆分到 `docs/superpowers/specs/data-governance/` 目录，便于 API、数据模型、运行时机制、架构视图和技术决策独立维护。
 
 ## 1. 背景与目标
 
@@ -15,11 +15,12 @@
 - 用查询记录表达真实运行态消费。
 - 通过 Kafka 将数据变化通知异步投递给 Java SDK listener。
 
-## 2. 文档结构
+## 2. 数据治理 Spec 文档集
+
+本文档集描述数据注册、发现、订阅、查询、元数据和血缘治理的一期设计。专题文档如下：
 
 | 文档 | 内容 |
 | --- | --- |
-| [数据治理 Spec 文档集](data-governance/README.md) | 子文档索引和当前核心口径。 |
 | [API 设计](data-governance/api-spec.md) | 数据注册、数据发现、数据查询、数据订阅接口定义。 |
 | [数据模型](data-governance/data-model.md) | GaussDB 表定义、字段说明、枚举和关系模型。 |
 | [运行时设计](data-governance/runtime-design.md) | 启动快照同步、运行时修改/取消注册、订阅、查询、通知和 drift。 |

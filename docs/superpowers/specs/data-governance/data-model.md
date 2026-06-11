@@ -15,7 +15,7 @@
 
 | 枚举 | 取值 | 说明 |
 | --- | --- | --- |
-| `asset_type` | `TABLE`、`VIEW`、`TOPIC` | 数据集逻辑类型。 |
+| `metadata_type` | `TABLE`、`VIEW`、`TOPIC` | 元数据逻辑类型。 |
 | `source_type` | `HIVE`、`STARROCKS`、`GAUSSDB`、`ICEBERG`、`KAFKA` | 物理来源类型。 |
 | `metadata_status` | `ACTIVE`、`REMOVED_BY_SNAPSHOT`、`UNREGISTERED` | 元数据状态。 |
 | `producer_type` | `MICROSERVICE`、`FLINK`、`SPARK`、`MANUAL` | 注册方类型。 |
@@ -38,7 +38,7 @@
 | `metadata_id` | `varchar(64)` | PK | 数据集元数据 ID，对应接口 `metadataId`。 |
 | `asset_code` | `varchar(128)` | UK | 数据集业务稳定编码。 |
 | `asset_name` | `varchar(256)` | NOT NULL | 数据集展示名称。 |
-| `asset_type` | `varchar(32)` | NOT NULL | `TABLE`、`VIEW`、`TOPIC`。 |
+| `metadata_type` | `varchar(32)` | NOT NULL | `TABLE`、`VIEW`、`TOPIC`。 |
 | `domain` | `varchar(128)` | NOT NULL | 业务域。 |
 | `owner` | `varchar(128)` | NOT NULL | 责任团队或负责人。 |
 | `description` | `text` |  | 数据集说明。 |

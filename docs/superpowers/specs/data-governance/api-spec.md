@@ -60,7 +60,7 @@
         {
           "assetCode": "ads_cell_profile",
           "assetName": "小区画像指标",
-          "assetType": {"enum": ["TABLE", "VIEW", "TOPIC"]},
+          "metadataType": {"enum": ["TABLE", "VIEW", "TOPIC"]},
           "domain": "wireless-rno",
           "owner": "network-team",
           "description": "面向无线网络优化的小区画像指标数据集",
@@ -211,7 +211,7 @@
 | `metadataList` | `array<object>` | 是 | 否 | 否 | 当前微服务完整元数据快照。 | POST 至少 1 个元数据对象。 |
 | `metadataList[].assetCode` | `string` | 是 | 否 | 否 | 数据集唯一编码，业务侧稳定引用该编码。 | 长度 1-128；建议小写字母、数字、下划线；在同步作用域内唯一。 |
 | `metadataList[].assetName` | `string` | 是 | 否 | 否 | 数据集展示名称。 | 长度 1-256。 |
-| `metadataList[].assetType` | `string` | 是 | 否 | 否 | 数据集逻辑类型。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
+| `metadataList[].metadataType` | `string` | 是 | 否 | 否 | 元数据逻辑类型。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
 | `metadataList[].domain` | `string` | 是 | 否 | 否 | 数据集所属业务域。 | 长度 1-128；例如 `wireless-rno`。 |
 | `metadataList[].owner` | `string` | 是 | 否 | 否 | 数据集责任团队或负责人。 | 长度 1-128。 |
 | `metadataList[].description` | `string` | 否 | 否 | 否 | 数据集说明。 | 长度 0-1024。 |
@@ -255,7 +255,7 @@
     "query": {
       "keyword": "cell",
       "domain": "wireless-rno",
-      "assetType": "TABLE",
+      "metadataType": "TABLE",
       "owner": "network-team",
       "page": 1,
       "size": 20
@@ -267,7 +267,7 @@
         "metadataId": "metadata_001",
         "assetCode": "ads_cell_profile",
         "assetName": "小区画像指标",
-        "assetType": "TABLE",
+        "metadataType": "TABLE",
         "domain": "wireless-rno",
         "owner": "network-team",
         "queryable": true
@@ -295,7 +295,7 @@
     "metadataId": "metadata_001",
     "assetCode": "ads_cell_profile",
     "assetName": "小区画像指标",
-    "assetType": "TABLE",
+    "metadataType": "TABLE",
     "domain": "wireless-rno",
     "owner": "network-team",
     "description": "面向无线网络优化的小区画像指标数据集",
@@ -392,7 +392,7 @@
 | `path.metadataId` | `string` | 否 | 是 | 是 | 数据集元数据 ID，路径参数。 | 长度 1-64；必须已注册。 |
 | `keyword` | `string` | 否 | 否 | 否 | 按数据集编码、名称或描述搜索。 | 长度 0-128。 |
 | `domain` | `string` | 否 | 否 | 否 | 按业务域过滤。 | 长度 0-128。 |
-| `assetType` | `string` | 否 | 否 | 否 | 按数据集逻辑类型过滤。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
+| `metadataType` | `string` | 否 | 否 | 否 | 按元数据逻辑类型过滤。 | 枚举：`TABLE`、`VIEW`、`TOPIC`。 |
 | `owner` | `string` | 否 | 否 | 否 | 按负责人或责任团队过滤。 | 长度 0-128。 |
 | `page` | `integer` | 否 | 否 | 否 | 分页页码。 | 大于等于 1；默认 1。 |
 | `size` | `integer` | 否 | 否 | 否 | 分页大小。 | 1-100；默认 20。 |
@@ -678,7 +678,7 @@ dataGovRegistrar.asset("ads_cell_profile")
   "metadataList": [
     {
       "assetCode": "ads_cell_profile",
-      "assetType": "TABLE",
+      "metadataType": "TABLE",
       "fields": [
         {"fieldName": "cell_id", "fieldType": "string", "nullable": false},
         {"fieldName": "coverage_score", "fieldType": "double", "nullable": true}

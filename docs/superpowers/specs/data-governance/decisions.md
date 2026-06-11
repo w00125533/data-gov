@@ -47,7 +47,7 @@
 
 ## 4. 接口资源命名从 `assets` 收敛为 `metadata`
 
-决策：接口路径使用 `metadata`，路径 ID 使用 `metadataId`。业务字段仍保留 `assetCode`、`assetName`、`assetType`。
+决策：接口路径使用 `metadata`，路径 ID 使用 `metadataId`。业务稳定编码仍保留 `assetCode`，类型字段使用 `metadataType`。
 
 原因：
 
