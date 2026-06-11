@@ -646,12 +646,14 @@ SDK 要支持数据注册和数据订阅的快速数据组装。SDK 不新增独
 - 数据订阅：组装后按数据集调用 `POST /rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}`。
 - 数据变化通知：生产方 SDK 或治理 SDK 底层异步发送 Kafka；消费方 SDK 监听 Kafka 后回调业务处理器。
 
+SDK 在提交元数据快照前，可以按数据集物理绑定执行远程物理表检查。对 `STARROCKS` 和 `ICEBERG` 类型绑定，SDK 支持在目标表不存在时自动建表；目标表已存在时执行 schema 兼容性校验。自动建表属于 SDK 对远程数据源的建表辅助能力，不新增治理服务端接口。
+
 数据注册快速组装示例：
 
 ```java
 dataGovRegistrar.asset("ads_cell_profile")
     .name("小区画像指标")
-    .type(AssetType.TABLE)
+    .type(MetadataType.TABLE)
     .domain("wireless-rno")
     .owner("network-team")
     .queryable(true)
@@ -709,6 +711,96 @@ dataGovRegistrar.asset("ads_cell_profile")
     }
   ]
 }
+```
+
+远程 StarRocks 表检查与自动建表示例：
+
+```java
+dataGovRegistrar.asset("ads_cell_profile")
+    .name("小区画像指标")
+    .type(MetadataType.TABLE)
+    .domain("wireless-rno")
+    .owner("network-team")
+    .queryable(true)
+    .field("cell_id", "varchar(64)", false, "小区标识")
+    .field("coverage_score", "double", true, "覆盖评分")
+    .binding(binding -> binding
+        .sourceType(SourceType.STARROCKS)
+        .catalog("default_catalog")
+        .database("data_gov")
+        .table("ads_cell_profile"))
+    .physicalTable(table -> table
+        .checkExists(true)
+        .createIfMissing(true)
+        .schemaCompatibility(SchemaCompatibility.ADDITIVE)
+        .starrocks(starrocks -> starrocks
+            .engine("OLAP")
+            .duplicateKey("cell_id")
+            .distributedByHash("cell_id", 16)
+            .properties(Map.of(
+                "replication_num", "3"
+            ))))
+    .register();
+```
+
+远程 Iceberg 表检查与自动建表示例：
+
+```java
+dataGovRegistrar.asset("dwd_cell_profile")
+    .name("小区画像明细")
+    .type(MetadataType.TABLE)
+    .domain("wireless-rno")
+    .owner("network-team")
+    .queryable(true)
+    .field("cell_id", "string", false, "小区标识")
+    .field("rsrp_avg", "double", true, "RSRP 均值")
+    .binding(binding -> binding
+        .sourceType(SourceType.ICEBERG)
+        .catalog("iceberg_catalog")
+        .database("dwd")
+        .table("dwd_cell_profile"))
+    .physicalTable(table -> table
+        .checkExists(true)
+        .createIfMissing(true)
+        .schemaCompatibility(SchemaCompatibility.ADDITIVE)
+        .iceberg(iceberg -> iceberg
+            .formatVersion(2)
+            .partitionBy("days(event_time)")
+            .properties(Map.of(
+                "write.format.default", "parquet"
+            ))))
+    .register();
+```
+
+SDK 启动时执行顺序：
+
+1. 读取当前微服务声明的元数据快照。
+2. 对配置了 `checkExists=true` 的 `STARROCKS` / `ICEBERG` 绑定检查远程表是否存在。
+3. 如果远程表不存在且 `createIfMissing=true`，SDK 基于字段 schema 和物理表配置执行建表。
+4. 如果远程表已存在，SDK 校验字段类型、必填字段和分区/主键等关键属性是否兼容。
+5. 表检查和建表完成后，SDK 调用 `POST /rest/oss/inner/modelengineservice/v1/metadata/register` 提交完整元数据快照。
+
+建议默认策略：
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `checkExists` | `true` | 启动时检查远程物理表是否存在。 |
+| `createIfMissing` | `false` | 默认不自动建表，业务服务显式开启后才创建。 |
+| `schemaCompatibility` | `ADDITIVE` | 允许远程表比声明多字段；不允许缺少声明中的必填字段。 |
+| `failOnIncompatibleSchema` | `true` | schema 不兼容时启动注册失败或抛出异常。 |
+| `createSupportedSourceTypes` | `STARROCKS`、`ICEBERG` | 第一阶段仅支持 StarRocks 和 Iceberg 自动建表。 |
+
+SDK 配置示例：
+
+```yaml
+data-gov:
+  physical-table:
+    check-exists: true
+    create-if-missing: true
+    fail-on-incompatible-schema: true
+    create-supported-source-types:
+      - STARROCKS
+      - ICEBERG
 ```
 
 数据订阅快速组装示例。SDK 可以让业务方一次声明多个数据集订阅，但底层会拆分为多次 `POST /rest/oss/inner/modelengineservice/v1/subscriptions/{metadataId}` 调用：
