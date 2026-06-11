@@ -9,6 +9,14 @@ spring:
     username: ${DATAGOV_GAUSSDB_USER:data_gov}
     password: ${DATAGOV_GAUSSDB_PASSWORD:data_gov}
     driver-class-name: org.postgresql.Driver
+  kafka:
+    bootstrap-servers: ${DATA_GOV_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+        spring.json.trusted.packages: io.datagov.common.dto
   flyway:
     enabled: true
     locations: classpath:db/migration

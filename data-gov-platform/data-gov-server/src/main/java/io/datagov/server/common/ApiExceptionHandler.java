@@ -1,6 +1,7 @@
 package io.datagov.server.common;
 
 import io.datagov.server.asset.AssetNotFoundException;
+import io.datagov.server.event.EventDataAccessException;
 import io.datagov.server.lineage.LineageDataAccessException;
 import io.datagov.server.lineage.LineageValidationException;
 import io.datagov.server.query.QueryExecutionException;
@@ -51,6 +52,14 @@ public class ApiExceptionHandler {
                 .body(Map.of(
                         "error", "SUBSCRIPTION_DATA_ACCESS_ERROR",
                         "detail", ex.getMessage()));
+    }
+
+    @ExceptionHandler(EventDataAccessException.class)
+    public ResponseEntity<Map<String, Object>> handleEventDataAccess(EventDataAccessException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                        "error", "EVENT_DATA_ACCESS_ERROR",
+                        "message", ex.getMessage()));
     }
 
     @ExceptionHandler(QueryValidationException.class)

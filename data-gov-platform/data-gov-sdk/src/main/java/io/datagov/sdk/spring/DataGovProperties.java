@@ -13,6 +13,7 @@ public class DataGovProperties {
     private String endpoint = "http://localhost:8080";
     private Consumer consumer = new Consumer();
     private List<Subscription> subscriptions = List.of();
+    private Notifications notifications = new Notifications();
     private boolean failFast = false;
     private long registerTimeoutMs = 3000;
 
@@ -62,6 +63,18 @@ public class DataGovProperties {
 
     public void setSubscriptions(List<Subscription> subscriptions) {
         this.subscriptions = subscriptions;
+    }
+
+    public Notifications notifications() {
+        return notifications;
+    }
+
+    public Notifications getNotifications() {
+        return notifications;
+    }
+
+    public void setNotifications(Notifications notifications) {
+        this.notifications = notifications == null ? new Notifications() : notifications;
     }
 
     public boolean failFast() {
@@ -234,6 +247,48 @@ public class DataGovProperties {
 
         public void setNotifyOn(List<AssetEventType> notifyOn) {
             this.notifyOn = notifyOn;
+        }
+    }
+
+    public static class Notifications {
+        private boolean enabled = false;
+        private String topic = "data-gov.subscription-notifications";
+        private String groupId = "data-gov-sdk";
+
+        public boolean enabled() {
+            return enabled;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String topic() {
+            return topic;
+        }
+
+        public String getTopic() {
+            return topic;
+        }
+
+        public void setTopic(String topic) {
+            this.topic = topic;
+        }
+
+        public String groupId() {
+            return groupId;
+        }
+
+        public String getGroupId() {
+            return groupId;
+        }
+
+        public void setGroupId(String groupId) {
+            this.groupId = groupId;
         }
     }
 }
