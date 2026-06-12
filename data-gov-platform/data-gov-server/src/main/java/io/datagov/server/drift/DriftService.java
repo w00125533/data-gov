@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -95,20 +96,15 @@ public class DriftService {
             Map<String, Object> evidence,
             Instant detectedAt
     ) {
-        if (driftRepository.findByUniqueKey(uniqueKey).isPresent()) {
-            return new ProcessedRecord(driftRepository.refreshOrReopenByUniqueKey(uniqueKey, evidence, detectedAt), false);
-        }
-        try {
-            return new ProcessedRecord(driftRepository.insertOpen(
-                    newId("drift_"),
-                    driftType,
-                    candidate,
-                    uniqueKey,
-                    evidence,
-                    detectedAt), true);
-        } catch (DriftRepository.DuplicateDriftUniqueKeyException ex) {
-            return new ProcessedRecord(driftRepository.refreshOrReopenByUniqueKey(uniqueKey, evidence, detectedAt), false);
-        }
+        Optional<DriftDtos.DriftRecordResponse> existing = driftRepository.findByUniqueKey(uniqueKey);
+        DriftRepository.UpsertedDriftRecord upsertedRecord = driftRepository.upsertOpen(
+                newId("drift_"),
+                driftType,
+                candidate,
+                uniqueKey,
+                evidence,
+                detectedAt);
+        return new ProcessedRecord(upsertedRecord.record(), existing.isEmpty() && upsertedRecord.created());
     }
 
     private int days(Integer value) {

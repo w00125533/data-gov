@@ -6,12 +6,16 @@ import io.datagov.common.dto.DriftDtos;
 import io.datagov.common.enums.DriftStatus;
 import io.datagov.common.enums.DriftType;
 import org.springframework.dao.DataAccessException;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -173,10 +177,110 @@ public class DriftRepository {
                     DriftStatus.OPEN.name(),
                     Timestamp.from(detectedAt));
             return findOpenByUniqueKey(uniqueKey).orElseThrow();
-        } catch (DuplicateKeyException ex) {
-            throw new DuplicateDriftUniqueKeyException(uniqueKey, ex);
         } catch (DataAccessException ex) {
             throw new DriftDataAccessException("Failed to insert open drift record", ex);
+        }
+    }
+
+    public UpsertedDriftRecord upsertOpen(
+            String driftId,
+            DriftType driftType,
+            DriftCandidate candidate,
+            String uniqueKey,
+            Map<String, Object> evidence,
+            Instant detectedAt
+    ) {
+        try {
+            String evidenceJson = writeEvidence(evidence);
+            boolean created = Boolean.TRUE.equals(jdbcTemplate.execute((ConnectionCallback<Boolean>) connection -> {
+                Savepoint savepoint = connection.setSavepoint();
+                try {
+                    insertOpen(connection, driftId, driftType, candidate, uniqueKey, evidenceJson, detectedAt);
+                    releaseSavepoint(connection, savepoint);
+                    return true;
+                } catch (SQLException ex) {
+                    connection.rollback(savepoint);
+                    releaseSavepoint(connection, savepoint);
+                    if (!isUniqueViolation(ex)) {
+                        throw ex;
+                    }
+                    refreshOrReopenByUniqueKey(connection, uniqueKey, evidenceJson, detectedAt);
+                    return false;
+                }
+            }));
+            DriftDtos.DriftRecordResponse record = findByUniqueKey(uniqueKey)
+                    .orElseThrow(() -> new DriftDataAccessException(
+                            "Failed to upsert drift record for unique key " + uniqueKey + ": row not found after upsert",
+                            null));
+            return new UpsertedDriftRecord(record, created && driftId.equals(record.driftId()));
+        } catch (DriftDataAccessException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            throw new DriftDataAccessException("Failed to upsert open drift record", ex);
+        }
+    }
+
+    private void insertOpen(
+            Connection connection,
+            String driftId,
+            DriftType driftType,
+            DriftCandidate candidate,
+            String uniqueKey,
+            String evidence,
+            Instant detectedAt
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into drift_record (
+                    drift_id, drift_type, asset_id, consumer_id, subscription_id, unique_key,
+                    evidence, status, detected_at, resolved_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, null)
+                """)) {
+            statement.setString(1, driftId);
+            statement.setString(2, driftType.name());
+            statement.setString(3, candidate.assetId());
+            statement.setString(4, candidate.consumerId());
+            statement.setString(5, candidate.subscriptionId());
+            statement.setString(6, uniqueKey);
+            statement.setString(7, evidence);
+            statement.setString(8, DriftStatus.OPEN.name());
+            statement.setTimestamp(9, Timestamp.from(detectedAt));
+            statement.executeUpdate();
+        }
+    }
+
+    private void refreshOrReopenByUniqueKey(
+            Connection connection,
+            String uniqueKey,
+            String evidence,
+            Instant detectedAt
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                update drift_record
+                set evidence = ?, detected_at = ?, status = ?, resolved_at = null
+                where unique_key = ?
+                """)) {
+            statement.setString(1, evidence);
+            statement.setTimestamp(2, Timestamp.from(detectedAt));
+            statement.setString(3, DriftStatus.OPEN.name());
+            statement.setString(4, uniqueKey);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new DriftDataAccessException(
+                        "Failed to refresh or reopen drift record for unique key " + uniqueKey + ": no row updated",
+                        null);
+            }
+        }
+    }
+
+    private boolean isUniqueViolation(SQLException ex) {
+        return "23505".equals(ex.getSQLState());
+    }
+
+    private void releaseSavepoint(Connection connection, Savepoint savepoint) {
+        try {
+            connection.releaseSavepoint(savepoint);
+        } catch (SQLException ignored) {
+            // Some drivers release savepoints automatically after rollback.
         }
     }
 
@@ -316,9 +420,6 @@ public class DriftRepository {
     ) {
     }
 
-    public static class DuplicateDriftUniqueKeyException extends DriftDataAccessException {
-        public DuplicateDriftUniqueKeyException(String uniqueKey, Throwable cause) {
-            super("Drift record already exists for unique key " + uniqueKey, cause);
-        }
+    public record UpsertedDriftRecord(DriftDtos.DriftRecordResponse record, boolean created) {
     }
 }

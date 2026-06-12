@@ -20,8 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DriftServiceTest {
@@ -37,30 +35,28 @@ class DriftServiceTest {
         when(driftRepository.findUndeclaredUsageCandidates(any())).thenReturn(List.of());
         when(driftRepository.findStaleDeclarationCandidates(any())).thenReturn(List.of());
         when(driftRepository.findByUniqueKey("DECLARED_UNUSED:sub_existing")).thenReturn(Optional.of(ignored));
-        when(driftRepository.refreshOrReopenByUniqueKey(eq("DECLARED_UNUSED:sub_existing"), any(), any()))
-                .thenReturn(reopened);
+        when(driftRepository.upsertOpen(any(), eq(DriftType.DECLARED_UNUSED), eq(candidate),
+                eq("DECLARED_UNUSED:sub_existing"), any(), any()))
+                .thenReturn(new DriftRepository.UpsertedDriftRecord(reopened, false));
 
         DriftDtos.DriftAnalysisResponse response = driftService.analyze(new DriftDtos.AnalyzeDriftRequest(30, 90, 7));
 
         assertThat(response.createdCount()).isZero();
         assertThat(response.refreshedCount()).isEqualTo(1);
         assertThat(response.records()).containsExactly(reopened);
-        verify(driftRepository, never()).insertOpen(any(), any(), any(), any(), any(), any());
     }
 
     @Test
-    void analyzeRefreshesWinnerWhenConcurrentInsertCreatesDuplicateUniqueKey() {
+    void analyzeCountsConcurrentUpsertUpdateAsRefreshed() {
         DriftRepository.DriftCandidate candidate = declaredUnusedCandidate("sub_race");
         DriftDtos.DriftRecordResponse reopened = record("drift_winner", DriftStatus.OPEN, null);
         when(driftRepository.findDeclaredUnusedCandidates(any())).thenReturn(List.of(candidate));
         when(driftRepository.findUndeclaredUsageCandidates(any())).thenReturn(List.of());
         when(driftRepository.findStaleDeclarationCandidates(any())).thenReturn(List.of());
         when(driftRepository.findByUniqueKey("DECLARED_UNUSED:sub_race")).thenReturn(Optional.empty());
-        when(driftRepository.insertOpen(any(), eq(DriftType.DECLARED_UNUSED), eq(candidate),
+        when(driftRepository.upsertOpen(any(), eq(DriftType.DECLARED_UNUSED), eq(candidate),
                 eq("DECLARED_UNUSED:sub_race"), any(), any()))
-                .thenThrow(new DriftRepository.DuplicateDriftUniqueKeyException("DECLARED_UNUSED:sub_race", null));
-        when(driftRepository.refreshOrReopenByUniqueKey(eq("DECLARED_UNUSED:sub_race"), any(), any()))
-                .thenReturn(reopened);
+                .thenReturn(new DriftRepository.UpsertedDriftRecord(reopened, false));
 
         DriftDtos.DriftAnalysisResponse response = driftService.analyze(new DriftDtos.AnalyzeDriftRequest(30, 90, 7));
 
@@ -78,11 +74,13 @@ class DriftServiceTest {
         when(driftRepository.findUndeclaredUsageCandidates(any())).thenReturn(List.of());
         when(driftRepository.findStaleDeclarationCandidates(any())).thenReturn(List.of());
         when(driftRepository.findByUniqueKey(any())).thenReturn(Optional.empty());
-        when(driftRepository.insertOpen(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
+        when(driftRepository.upsertOpen(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
             Instant detectedAt = invocation.getArgument(5);
             detectedAtValues.add(detectedAt);
             Thread.sleep(2);
-            return record(invocation.getArgument(0), DriftStatus.OPEN, detectedAt);
+            return new DriftRepository.UpsertedDriftRecord(
+                    record(invocation.getArgument(0), DriftStatus.OPEN, detectedAt),
+                    true);
         });
 
         driftService.analyze(new DriftDtos.AnalyzeDriftRequest(30, 90, 7));
