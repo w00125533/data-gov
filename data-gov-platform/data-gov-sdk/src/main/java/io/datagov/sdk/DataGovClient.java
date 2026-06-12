@@ -1,9 +1,13 @@
 package io.datagov.sdk;
 
 import io.datagov.common.dto.GovernanceDtos;
+import io.datagov.common.dto.MetadataDtos;
 import io.datagov.common.dto.QueryDtos;
 
 public interface DataGovClient {
+    MetadataDtos.MetadataSyncResponse registerMetadataSnapshot(
+            MetadataDtos.MetadataSnapshotRegisterRequest request);
+
     GovernanceDtos.SdkSubscriptionRegistrationResponse registerSubscriptions(
             GovernanceDtos.SdkSubscriptionRegistrationRequest request);
 

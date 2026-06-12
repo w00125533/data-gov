@@ -25,7 +25,19 @@ class DataGovAutoConfigurationTest {
                         "data-gov.subscriptions[0].usage-mode=API_QUERY",
                         "data-gov.subscriptions[0].purpose=dashboard",
                         "data-gov.subscriptions[0].fields[0]=cell_id",
-                        "data-gov.subscriptions[0].notify-on[0]=SCHEMA_CHANGE"
+                        "data-gov.subscriptions[0].notify-on[0]=SCHEMA_CHANGE",
+                        "data-gov.metadata[0].asset-code=ads_cell_profile",
+                        "data-gov.metadata[0].asset-name=ADS Cell Profile",
+                        "data-gov.metadata[0].metadata-type=TABLE",
+                        "data-gov.metadata[0].source-type=STARROCKS",
+                        "data-gov.metadata[0].domain=wireless",
+                        "data-gov.metadata[0].owner=network-team",
+                        "data-gov.metadata[0].schema[0].field-name=cell_id",
+                        "data-gov.metadata[0].schema[0].field-type=varchar",
+                        "data-gov.metadata[0].binding.source-type=STARROCKS",
+                        "data-gov.metadata[0].binding.catalog=default_catalog",
+                        "data-gov.metadata[0].binding.database=ads",
+                        "data-gov.metadata[0].binding.table=ads_cell_profile"
                 )
                 .run(context -> {
                     assertThat(context).hasSingleBean(DataGovClient.class);
@@ -34,6 +46,8 @@ class DataGovAutoConfigurationTest {
                     DataGovProperties properties = context.getBean(DataGovProperties.class);
                     assertThat(properties.consumer().name()).isEqualTo("rno-dashboard");
                     assertThat(properties.subscriptions()).hasSize(1);
+                    assertThat(properties.metadata()).hasSize(1);
+                    assertThat(properties.metadata().get(0).assetCode()).isEqualTo("ads_cell_profile");
                 });
     }
 

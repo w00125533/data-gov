@@ -1,6 +1,7 @@
 package io.datagov.sdk;
 
 import io.datagov.common.dto.GovernanceDtos;
+import io.datagov.common.dto.MetadataDtos;
 import io.datagov.common.dto.QueryDtos;
 import org.springframework.web.client.RestClient;
 
@@ -9,6 +10,20 @@ public class DefaultDataGovClient implements DataGovClient {
 
     public DefaultDataGovClient(RestClient restClient) {
         this.restClient = restClient;
+    }
+
+    @Override
+    public MetadataDtos.MetadataSyncResponse registerMetadataSnapshot(
+            MetadataDtos.MetadataSnapshotRegisterRequest request) {
+        try {
+            return restClient.post()
+                    .uri("/rest/oss/inner/modelengineservice/v1/metadata/register")
+                    .body(request)
+                    .retrieve()
+                    .body(MetadataDtos.MetadataSyncResponse.class);
+        } catch (RuntimeException exception) {
+            throw new DataGovClientException("Failed to register metadata snapshot", exception);
+        }
     }
 
     @Override

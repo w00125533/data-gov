@@ -1,6 +1,9 @@
 package io.datagov.sdk.spring;
 
 import io.datagov.common.dto.GovernanceDtos;
+import io.datagov.common.dto.MetadataDtos;
+import io.datagov.common.enums.MetadataProducerType;
+import io.datagov.common.enums.MetadataSyncMode;
 import io.datagov.sdk.DataGovClient;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationListener;
@@ -22,17 +25,32 @@ public class DataGovStartupRegistrar implements ApplicationListener<ApplicationR
 
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
-        if (properties.subscriptions().isEmpty()) {
-            return;
+        if (!properties.metadata().isEmpty()) {
+            register(() -> dataGovClient.registerMetadataSnapshot(toMetadataRequest()));
         }
 
-        try {
-            dataGovClient.registerSubscriptions(toRequest());
-        } catch (RuntimeException exception) {
-            if (properties.failFast()) {
-                throw exception;
-            }
+        if (!properties.subscriptions().isEmpty()) {
+            register(() -> dataGovClient.registerSubscriptions(toRequest()));
         }
+    }
+
+    MetadataDtos.MetadataSnapshotRegisterRequest toMetadataRequest() {
+        DataGovProperties.Consumer consumer = properties.consumer();
+        MetadataDtos.ProducerRequest producer = new MetadataDtos.ProducerRequest(
+                consumer.name(),
+                MetadataProducerType.MICROSERVICE,
+                consumer.owner(),
+                consumer.environment(),
+                consumer.instanceId()
+        );
+        List<MetadataDtos.MetadataItemRequest> metadataList = properties.metadata().stream()
+                .map(this::toMetadataItemRequest)
+                .toList();
+        return new MetadataDtos.MetadataSnapshotRegisterRequest(
+                producer,
+                MetadataSyncMode.FULL,
+                metadataList
+        );
     }
 
     GovernanceDtos.SdkSubscriptionRegistrationRequest toRequest() {
@@ -44,6 +62,69 @@ public class DataGovStartupRegistrar implements ApplicationListener<ApplicationR
                 consumer,
                 declarationHash(consumer, declarations),
                 declarations
+        );
+    }
+
+    private void register(Registration registration) {
+        try {
+            registration.run();
+        } catch (RuntimeException exception) {
+            if (properties.failFast()) {
+                throw exception;
+            }
+        }
+    }
+
+    private MetadataDtos.MetadataItemRequest toMetadataItemRequest(DataGovProperties.Metadata metadata) {
+        return new MetadataDtos.MetadataItemRequest(
+                metadata.assetCode(),
+                metadata.assetName(),
+                metadata.metadataType(),
+                metadata.sourceType(),
+                metadata.domain(),
+                metadata.owner(),
+                metadata.description(),
+                metadata.queryable(),
+                metadata.federatedQueryable(),
+                metadata.schema().stream()
+                        .map(this::toMetadataFieldRequest)
+                        .toList(),
+                toMetadataBindingRequest(metadata.binding()),
+                null
+        );
+    }
+
+    private MetadataDtos.MetadataFieldRequest toMetadataFieldRequest(DataGovProperties.Field field) {
+        return new MetadataDtos.MetadataFieldRequest(
+                field.fieldName(),
+                field.fieldType(),
+                field.ordinal(),
+                field.nullable(),
+                field.partitionKey(),
+                field.primaryKey(),
+                field.eventTime(),
+                field.description(),
+                field.expression()
+        );
+    }
+
+    private MetadataDtos.MetadataBindingRequest toMetadataBindingRequest(DataGovProperties.Binding binding) {
+        if (binding == null) {
+            return null;
+        }
+
+        return new MetadataDtos.MetadataBindingRequest(
+                binding.sourceType(),
+                binding.catalog(),
+                binding.database(),
+                binding.schema(),
+                binding.table(),
+                binding.topic(),
+                binding.format(),
+                binding.locationUri(),
+                binding.connectionRef(),
+                binding.queryAdapter(),
+                binding.properties()
         );
     }
 
@@ -79,5 +160,9 @@ public class DataGovStartupRegistrar implements ApplicationListener<ApplicationR
         } catch (NoSuchAlgorithmException exception) {
             return "sha256:unavailable";
         }
+    }
+
+    private interface Registration {
+        void run();
     }
 }
