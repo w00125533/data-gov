@@ -6,6 +6,7 @@ import io.datagov.common.dto.DriftDtos;
 import io.datagov.common.enums.DriftStatus;
 import io.datagov.common.enums.DriftType;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -129,6 +130,24 @@ public class DriftRepository {
         }
     }
 
+    public Optional<DriftDtos.DriftRecordResponse> findByUniqueKey(String uniqueKey) {
+        try {
+            return Optional.ofNullable(jdbcTemplate.queryForObject("""
+                    select d.drift_id, d.drift_type, d.status, d.asset_id, a.asset_code,
+                           d.consumer_id, c.consumer_name, d.subscription_id, d.evidence,
+                           d.detected_at, d.resolved_at
+                    from drift_record d
+                    left join data_asset a on a.asset_id = d.asset_id
+                    left join consumer c on c.consumer_id = d.consumer_id
+                    where d.unique_key = ?
+                    """, recordMapper(), uniqueKey));
+        } catch (EmptyResultDataAccessException ex) {
+            return Optional.empty();
+        } catch (DataAccessException ex) {
+            throw new DriftDataAccessException("Failed to find drift record by unique key", ex);
+        }
+    }
+
     public DriftDtos.DriftRecordResponse insertOpen(
             String driftId,
             DriftType driftType,
@@ -154,6 +173,8 @@ public class DriftRepository {
                     DriftStatus.OPEN.name(),
                     Timestamp.from(detectedAt));
             return findOpenByUniqueKey(uniqueKey).orElseThrow();
+        } catch (DuplicateKeyException ex) {
+            throw new DuplicateDriftUniqueKeyException(uniqueKey, ex);
         } catch (DataAccessException ex) {
             throw new DriftDataAccessException("Failed to insert open drift record", ex);
         }
@@ -165,14 +186,51 @@ public class DriftRepository {
             Instant detectedAt
     ) {
         try {
-            jdbcTemplate.update("""
+            int updated = jdbcTemplate.update("""
                     update drift_record
                     set evidence = ?, detected_at = ?
                     where unique_key = ? and status = 'OPEN'
                     """, writeEvidence(evidence), Timestamp.from(detectedAt), uniqueKey);
-            return findOpenByUniqueKey(uniqueKey).orElseThrow();
+            if (updated == 0) {
+                throw new DriftDataAccessException(
+                        "Failed to refresh open drift record for unique key " + uniqueKey + ": no row updated",
+                        null);
+            }
+            return findOpenByUniqueKey(uniqueKey)
+                    .orElseThrow(() -> new DriftDataAccessException(
+                            "Failed to refresh open drift record for unique key " + uniqueKey + ": row not found after update",
+                            null));
+        } catch (DriftDataAccessException ex) {
+            throw ex;
         } catch (DataAccessException ex) {
             throw new DriftDataAccessException("Failed to refresh open drift record", ex);
+        }
+    }
+
+    public DriftDtos.DriftRecordResponse refreshOrReopenByUniqueKey(
+            String uniqueKey,
+            Map<String, Object> evidence,
+            Instant detectedAt
+    ) {
+        try {
+            int updated = jdbcTemplate.update("""
+                    update drift_record
+                    set evidence = ?, detected_at = ?, status = ?, resolved_at = null
+                    where unique_key = ?
+                    """, writeEvidence(evidence), Timestamp.from(detectedAt), DriftStatus.OPEN.name(), uniqueKey);
+            if (updated == 0) {
+                throw new DriftDataAccessException(
+                        "Failed to refresh or reopen drift record for unique key " + uniqueKey + ": no row updated",
+                        null);
+            }
+            return findByUniqueKey(uniqueKey)
+                    .orElseThrow(() -> new DriftDataAccessException(
+                            "Failed to refresh or reopen drift record for unique key " + uniqueKey + ": row not found after update",
+                            null));
+        } catch (DriftDataAccessException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            throw new DriftDataAccessException("Failed to refresh or reopen drift record", ex);
         }
     }
 
@@ -256,5 +314,11 @@ public class DriftRepository {
             Instant firstSeenAt,
             Instant lastSeenAt
     ) {
+    }
+
+    public static class DuplicateDriftUniqueKeyException extends DriftDataAccessException {
+        public DuplicateDriftUniqueKeyException(String uniqueKey, Throwable cause) {
+            super("Drift record already exists for unique key " + uniqueKey, cause);
+        }
     }
 }

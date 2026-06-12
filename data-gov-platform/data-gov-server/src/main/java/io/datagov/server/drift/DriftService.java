@@ -42,7 +42,8 @@ public class DriftService {
                         DriftType.DECLARED_UNUSED,
                         candidate,
                         "DECLARED_UNUSED:" + candidate.subscriptionId(),
-                        evidence));
+                        evidence,
+                        now));
             }
 
             for (DriftRepository.DriftCandidate candidate : driftRepository.findUndeclaredUsageCandidates(usageSince)) {
@@ -57,7 +58,8 @@ public class DriftService {
                         DriftType.UNDECLARED_USAGE,
                         candidate,
                         "UNDECLARED_USAGE:" + candidate.assetId() + ":" + candidate.consumerId(),
-                        evidence));
+                        evidence,
+                        now));
             }
 
             for (DriftRepository.DriftCandidate candidate : driftRepository.findStaleDeclarationCandidates(staleCutoff)) {
@@ -71,7 +73,8 @@ public class DriftService {
                         DriftType.STALE_DECLARATION,
                         candidate,
                         "STALE_DECLARATION:" + candidate.subscriptionId(),
-                        evidence));
+                        evidence,
+                        now));
             }
 
             return new DriftDtos.DriftAnalysisResponse(
@@ -89,19 +92,23 @@ public class DriftService {
             DriftType driftType,
             DriftRepository.DriftCandidate candidate,
             String uniqueKey,
-            Map<String, Object> evidence
+            Map<String, Object> evidence,
+            Instant detectedAt
     ) {
-        Instant detectedAt = Instant.now();
-        if (driftRepository.findOpenByUniqueKey(uniqueKey).isPresent()) {
-            return new ProcessedRecord(driftRepository.refreshOpen(uniqueKey, evidence, detectedAt), false);
+        if (driftRepository.findByUniqueKey(uniqueKey).isPresent()) {
+            return new ProcessedRecord(driftRepository.refreshOrReopenByUniqueKey(uniqueKey, evidence, detectedAt), false);
         }
-        return new ProcessedRecord(driftRepository.insertOpen(
-                newId("drift_"),
-                driftType,
-                candidate,
-                uniqueKey,
-                evidence,
-                detectedAt), true);
+        try {
+            return new ProcessedRecord(driftRepository.insertOpen(
+                    newId("drift_"),
+                    driftType,
+                    candidate,
+                    uniqueKey,
+                    evidence,
+                    detectedAt), true);
+        } catch (DriftRepository.DuplicateDriftUniqueKeyException ex) {
+            return new ProcessedRecord(driftRepository.refreshOrReopenByUniqueKey(uniqueKey, evidence, detectedAt), false);
+        }
     }
 
     private int days(Integer value) {
