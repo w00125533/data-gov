@@ -132,6 +132,25 @@ class MetadataControllerTest {
     }
 
     @Test
+    void fullSnapshotDoesNotMarkMissingOfflineScopedMetadataRemovedBySnapshot() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithAssets("ads_cell_profile", "ads_cell_quality")))
+                .andExpect(status().isOk());
+        jdbcTemplate.update(
+                "update data_asset set lifecycle_status = 'OFFLINE' where asset_code = ?",
+                "ads_cell_quality");
+
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithAssets("ads_cell_profile")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removedBySnapshotCount").value(0));
+
+        assertThat(lifecycleStatus("ads_cell_quality")).isEqualTo("OFFLINE");
+    }
+
+    @Test
     void patchAndDeleteMetadataByIdReuseRuntimeMutationBehavior() throws Exception {
         mockMvc.perform(post(BASE_PATH + "/metadata/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -279,6 +298,13 @@ class MetadataControllerTest {
         return jdbcTemplate.queryForObject(
                 "select schema_version from data_asset where asset_code = ?",
                 Integer.class,
+                assetCode);
+    }
+
+    private String lifecycleStatus(String assetCode) {
+        return jdbcTemplate.queryForObject(
+                "select lifecycle_status from data_asset where asset_code = ?",
+                String.class,
                 assetCode);
     }
 }

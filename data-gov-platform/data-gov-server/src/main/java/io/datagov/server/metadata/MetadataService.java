@@ -132,8 +132,7 @@ public class MetadataService {
                 request.producer().serviceName(),
                 request.producer().environment())) {
             if (currentAssetCodes.contains(scopedAsset.assetCode())
-                    || scopedAsset.lifecycleStatus() == LifecycleStatus.REMOVED_BY_SNAPSHOT
-                    || scopedAsset.lifecycleStatus() == LifecycleStatus.UNREGISTERED) {
+                    || scopedAsset.lifecycleStatus() != LifecycleStatus.ACTIVE) {
                 continue;
             }
             assetRepository.markRemovedBySnapshot(scopedAsset.assetId(), syncedAt);
