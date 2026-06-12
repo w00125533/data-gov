@@ -5,6 +5,7 @@ import io.datagov.server.drift.DriftDataAccessException;
 import io.datagov.server.event.EventDataAccessException;
 import io.datagov.server.lineage.LineageDataAccessException;
 import io.datagov.server.lineage.LineageValidationException;
+import io.datagov.server.metadata.MetadataDataAccessException;
 import io.datagov.server.query.QueryExecutionException;
 import io.datagov.server.query.QueryValidationException;
 import io.datagov.server.subscription.AssetCodeMismatchException;
@@ -103,6 +104,14 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of(
                         "error", "LINEAGE_DATA_ACCESS_ERROR",
+                        "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(MetadataDataAccessException.class)
+    public ResponseEntity<Map<String, Object>> handleMetadataDataAccess(MetadataDataAccessException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                        "error", "METADATA_DATA_ACCESS_ERROR",
                         "message", ex.getMessage()));
     }
 
