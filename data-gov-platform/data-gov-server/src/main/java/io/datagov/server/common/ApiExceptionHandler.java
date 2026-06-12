@@ -1,6 +1,7 @@
 package io.datagov.server.common;
 
 import io.datagov.server.asset.AssetNotFoundException;
+import io.datagov.server.drift.DriftDataAccessException;
 import io.datagov.server.event.EventDataAccessException;
 import io.datagov.server.lineage.LineageDataAccessException;
 import io.datagov.server.lineage.LineageValidationException;
@@ -59,6 +60,14 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of(
                         "error", "EVENT_DATA_ACCESS_ERROR",
+                        "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(DriftDataAccessException.class)
+    public ResponseEntity<Map<String, Object>> handleDriftDataAccess(DriftDataAccessException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                        "error", "DRIFT_DATA_ACCESS_ERROR",
                         "message", ex.getMessage()));
     }
 
