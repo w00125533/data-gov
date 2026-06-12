@@ -10,6 +10,15 @@
 
 ---
 
+## Completion Status
+
+Completed and verified on 2026-06-12:
+
+- `cd data-gov-platform; mvn test` -> `BUILD SUCCESS`; server 40 tests passed, SDK 15 tests passed.
+- `git diff --check` -> no whitespace errors.
+- `git status --short -- app-compose.yml docker-compose.yml compose.yaml data-gov-platform\app-compose.yml` -> no infrastructure file changes.
+- `git status --short` -> clean worktree before this documentation status update.
+
 ## Scope
 
 Build this phase:
@@ -331,7 +340,7 @@ SDK behavior:
 - Create: `data-gov-platform/data-gov-server/src/main/resources/db/migration/V5__asset_events_and_notifications.sql`
 - Create: `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/event/EventSchemaMigrationTest.java`
 
-- [ ] **Step 1: Write the failing migration/DTO contract test**
+- [x] **Step 1: Write the failing migration/DTO contract test**
 
 Create `EventSchemaMigrationTest.java`:
 
@@ -409,7 +418,7 @@ class EventSchemaMigrationTest {
 }
 ```
 
-- [ ] **Step 2: Run the test and verify red**
+- [x] **Step 2: Run the test and verify red**
 
 Run:
 
@@ -420,11 +429,11 @@ mvn -pl data-gov-server -am -Dtest=EventSchemaMigrationTest test
 
 Expected: fails because `EventDtos`, `NotificationStatus`, and V5 tables do not exist.
 
-- [ ] **Step 3: Add enum, DTO, and V5 migration**
+- [x] **Step 3: Add enum, DTO, and V5 migration**
 
 Create the exact `NotificationStatus.java`, `EventDtos.java`, and `V5__asset_events_and_notifications.sql` from the sections above.
 
-- [ ] **Step 4: Run the test and verify green**
+- [x] **Step 4: Run the test and verify green**
 
 Run:
 
@@ -450,7 +459,7 @@ Expected: `BUILD SUCCESS`.
 - Modify: `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/common/ApiExceptionHandler.java`
 - Create: `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/event/EventControllerTest.java`
 
-- [ ] **Step 1: Add Spring Kafka dependency**
+- [x] **Step 1: Add Spring Kafka dependency**
 
 Add to `data-gov-platform/data-gov-server/pom.xml`:
 
@@ -461,7 +470,7 @@ Add to `data-gov-platform/data-gov-server/pom.xml`:
 </dependency>
 ```
 
-- [ ] **Step 2: Write failing EventController tests**
+- [x] **Step 2: Write failing EventController tests**
 
 Create `EventControllerTest.java`:
 
@@ -640,7 +649,7 @@ class EventControllerTest {
 }
 ```
 
-- [ ] **Step 3: Run tests and verify red**
+- [x] **Step 3: Run tests and verify red**
 
 Run:
 
@@ -651,7 +660,7 @@ mvn -pl data-gov-server -am -Dtest=EventControllerTest test
 
 Expected: fails because event server package and endpoint do not exist.
 
-- [ ] **Step 4: Implement event repository/service/controller and publisher**
+- [x] **Step 4: Implement event repository/service/controller and publisher**
 
 Implement these signatures:
 
@@ -707,7 +716,7 @@ public class KafkaNotificationPublisher implements NotificationPublisher {
 
 Add `EventDataAccessException` and an `ApiExceptionHandler` method mapping it to HTTP 500 with error `EVENT_DATA_ACCESS_ERROR`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run:
 
@@ -730,7 +739,7 @@ Expected: `BUILD SUCCESS`.
 - Create: `data-gov-platform/data-gov-sdk/src/test/java/io/datagov/sdk/notification/DataGovNotificationListenerTest.java`
 - Create: `data-gov-platform/data-gov-sdk/src/test/java/io/datagov/sdk/spring/DataGovNotificationAutoConfigurationTest.java`
 
-- [ ] **Step 1: Add Spring Kafka dependency**
+- [x] **Step 1: Add Spring Kafka dependency**
 
 Add to `data-gov-platform/data-gov-sdk/pom.xml`:
 
@@ -741,7 +750,7 @@ Add to `data-gov-platform/data-gov-sdk/pom.xml`:
 </dependency>
 ```
 
-- [ ] **Step 2: Write failing listener tests**
+- [x] **Step 2: Write failing listener tests**
 
 Create `DataGovNotificationListenerTest.java`:
 
@@ -850,7 +859,7 @@ class DataGovNotificationAutoConfigurationTest {
 }
 ```
 
-- [ ] **Step 3: Run tests and verify red**
+- [x] **Step 3: Run tests and verify red**
 
 Run:
 
@@ -861,7 +870,7 @@ mvn -pl data-gov-sdk -am -Dtest=DataGovNotificationListenerTest,DataGovNotificat
 
 Expected: fails because listener classes/properties do not exist.
 
-- [ ] **Step 4: Implement SDK listener and properties**
+- [x] **Step 4: Implement SDK listener and properties**
 
 Create `DataGovNotificationHandler.java`:
 
@@ -965,7 +974,7 @@ public DataGovNotificationListener dataGovNotificationListener(List<DataGovNotif
 
 Import `DataGovNotificationHandler`, `DataGovNotificationListener`, `ConditionalOnBean`, and `ConditionalOnMissingBean` as needed.
 
-- [ ] **Step 5: Run focused SDK tests**
+- [x] **Step 5: Run focused SDK tests**
 
 Run:
 
@@ -982,7 +991,7 @@ Expected: `BUILD SUCCESS`.
 
 - Verify all files touched by Tasks 1-3.
 
-- [ ] **Step 1: Run full Maven tests**
+- [x] **Step 1: Run full Maven tests**
 
 Run:
 
@@ -993,7 +1002,7 @@ mvn test
 
 Expected: `BUILD SUCCESS`.
 
-- [ ] **Step 2: Run whitespace check**
+- [x] **Step 2: Run whitespace check**
 
 Run:
 
@@ -1003,7 +1012,7 @@ git diff --check
 
 Expected: no whitespace errors.
 
-- [ ] **Step 3: Confirm no infrastructure files changed**
+- [x] **Step 3: Confirm no infrastructure files changed**
 
 Run:
 

@@ -1,6 +1,7 @@
 package io.datagov.common.dto;
 
 import io.datagov.common.enums.AssetEngine;
+import io.datagov.common.enums.AssetEventType;
 import io.datagov.common.enums.AssetType;
 import io.datagov.common.enums.LifecycleStatus;
 import jakarta.validation.Valid;
@@ -28,6 +29,29 @@ public final class AssetDtos {
             Boolean federatedQueryable,
             @Valid List<FieldRequest> fields,
             @Valid PhysicalBindingRequest physicalBinding
+    ) {
+    }
+
+    public record UpdateAssetRequest(
+            String assetName,
+            AssetType assetType,
+            AssetEngine engine,
+            String domain,
+            String owner,
+            String description,
+            LifecycleStatus lifecycleStatus,
+            Boolean queryable,
+            Boolean federatedQueryable,
+            @Valid List<FieldRequest> fields,
+            @Valid PhysicalBindingRequest physicalBinding,
+            AssetEventType eventType,
+            String severity
+    ) {
+    }
+
+    public record UnregisterAssetRequest(
+            @NotBlank String reason,
+            String operator
     ) {
     }
 
@@ -115,6 +139,12 @@ public final class AssetDtos {
             AssetResponse asset,
             List<FieldResponse> fields,
             PhysicalBindingResponse binding
+    ) {
+    }
+
+    public record AssetMutationResponse(
+            AssetDetailResponse asset,
+            EventDtos.CreateAssetEventResponse event
     ) {
     }
 }

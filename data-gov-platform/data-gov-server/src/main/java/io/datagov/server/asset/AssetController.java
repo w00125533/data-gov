@@ -2,7 +2,9 @@ package io.datagov.server.asset;
 
 import io.datagov.common.dto.AssetDtos;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,6 +25,22 @@ public class AssetController {
     @PostMapping("/register")
     public AssetDtos.AssetDetailResponse register(@Valid @RequestBody AssetDtos.RegisterAssetRequest request) {
         return assetService.register(request);
+    }
+
+    @PatchMapping("/{assetCode}")
+    public AssetDtos.AssetMutationResponse updateAsset(
+            @PathVariable("assetCode") String assetCode,
+            @Valid @RequestBody AssetDtos.UpdateAssetRequest request
+    ) {
+        return assetService.updateRuntime(assetCode, request);
+    }
+
+    @DeleteMapping("/{assetCode}")
+    public AssetDtos.AssetMutationResponse unregisterAsset(
+            @PathVariable("assetCode") String assetCode,
+            @Valid @RequestBody AssetDtos.UnregisterAssetRequest request
+    ) {
+        return assetService.unregisterRuntime(assetCode, request);
     }
 
     @GetMapping
