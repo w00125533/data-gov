@@ -4,5 +4,7 @@ public enum LifecycleStatus {
     DRAFT,
     ACTIVE,
     DEPRECATED,
-    OFFLINE
+    OFFLINE,
+    REMOVED_BY_SNAPSHOT,
+    UNREGISTERED
 }
