@@ -87,6 +87,63 @@ class MetadataControllerTest {
     }
 
     @Test
+    void metadataDetailJoinsNonBlankBindingPartsWhenCatalogIsOmitted() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem(partialBindingItem())))
+                .andExpect(status().isOk());
+
+        String metadataId = metadataId("ads_partial_binding");
+        mockMvc.perform(get(BASE_PATH + "/metadata/{metadataId}", metadataId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.binding.qualifiedName").value("ads.ads_partial_binding"));
+    }
+
+    @Test
+    void repeatedSnapshotIgnoresBindingPropertiesObjectKeyOrder() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem(itemWithBindingProperties("""
+                                {
+                                  "partitions": 16,
+                                  "replication": 3
+                                }
+                                """))))
+                .andExpect(status().isOk());
+        int schemaVersion = schemaVersion("ads_properties_order");
+
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem(itemWithBindingProperties("""
+                                {
+                                  "replication": 3,
+                                  "partitions": 16
+                                }
+                                """))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdCount").value(0))
+                .andExpect(jsonPath("$.updatedCount").value(0))
+                .andExpect(jsonPath("$.unchangedCount").value(1))
+                .andExpect(jsonPath("$.items[0].status").value("UNCHANGED"));
+
+        assertThat(schemaVersion("ads_properties_order")).isEqualTo(schemaVersion);
+    }
+
+    @Test
+    void metadataListWithVeryLargePageReturnsEmptyItems() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithAssets("ads_cell_profile")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(BASE_PATH + "/metadata")
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(0)));
+    }
+
+    @Test
     void changedSnapshotUpdatesExistingMetadata() throws Exception {
         mockMvc.perform(post(BASE_PATH + "/metadata/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -248,6 +305,68 @@ class MetadataControllerTest {
                   }
                 }
                 """.formatted(assetCode, assetName, assetCode);
+    }
+
+    private String partialBindingItem() {
+        return """
+                {
+                  "assetCode": "ads_partial_binding",
+                  "assetName": "ADS Partial Binding",
+                  "metadataType": "TABLE",
+                  "sourceType": "STARROCKS",
+                  "domain": "wireless-rno",
+                  "owner": "network-team",
+                  "description": "Formal metadata snapshot item",
+                  "queryable": true,
+                  "federatedQueryable": true,
+                  "schema": [
+                    {
+                      "fieldName": "cell_id",
+                      "fieldType": "varchar",
+                      "ordinal": 1,
+                      "nullable": false
+                    }
+                  ],
+                  "binding": {
+                    "sourceType": "STARROCKS",
+                    "database": "ads",
+                    "table": "ads_partial_binding",
+                    "queryAdapter": "starrocks"
+                  }
+                }
+                """;
+    }
+
+    private String itemWithBindingProperties(String properties) {
+        return """
+                {
+                  "assetCode": "ads_properties_order",
+                  "assetName": "ADS Properties Order",
+                  "metadataType": "TABLE",
+                  "sourceType": "STARROCKS",
+                  "domain": "wireless-rno",
+                  "owner": "network-team",
+                  "description": "Formal metadata snapshot item",
+                  "queryable": true,
+                  "federatedQueryable": true,
+                  "schema": [
+                    {
+                      "fieldName": "cell_id",
+                      "fieldType": "varchar",
+                      "ordinal": 1,
+                      "nullable": false
+                    }
+                  ],
+                  "binding": {
+                    "sourceType": "STARROCKS",
+                    "catalog": "default_catalog",
+                    "database": "ads",
+                    "table": "ads_properties_order",
+                    "queryAdapter": "starrocks",
+                    "properties": %s
+                  }
+                }
+                """.formatted(properties);
     }
 
     private String changedCellProfileItem() {

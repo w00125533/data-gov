@@ -1,11 +1,11 @@
 package io.datagov.server.metadata;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.datagov.common.dto.AssetDtos;
 import io.datagov.common.dto.MetadataDtos;
-import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.LifecycleStatus;
 import io.datagov.common.enums.MetadataSyncItemStatus;
 import io.datagov.common.enums.MetadataSyncMode;
@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,7 +33,7 @@ public class MetadataService {
     private final AssetRepository assetRepository;
     private final AssetService assetService;
     private final TransactionTemplate transactionTemplate;
-    private final ObjectMapper objectMapper;
+    private final ObjectWriter declarationHashWriter;
 
     public MetadataService(
             AssetRepository assetRepository,
@@ -43,7 +44,8 @@ public class MetadataService {
         this.assetRepository = assetRepository;
         this.assetService = assetService;
         this.transactionTemplate = transactionTemplate;
-        this.objectMapper = objectMapper;
+        this.declarationHashWriter = objectMapper.writer()
+                .with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     }
 
     public MetadataDtos.MetadataSyncResponse registerSnapshot(
@@ -165,8 +167,9 @@ public class MetadataService {
                     .map(this::toSummaryResponse)
                     .toList();
 
-            int fromIndex = Math.min(filtered.size(), (cappedPage - 1) * cappedSize);
-            int toIndex = Math.min(filtered.size(), fromIndex + cappedSize);
+            long offset = ((long) cappedPage - 1L) * cappedSize;
+            int fromIndex = offset >= filtered.size() ? filtered.size() : (int) offset;
+            int toIndex = (int) Math.min((long) filtered.size(), offset + cappedSize);
             return new MetadataDtos.MetadataListResponse(
                     filtered.subList(fromIndex, toIndex),
                     cappedPage,
@@ -355,10 +358,18 @@ public class MetadataService {
     }
 
     private String qualifiedName(AssetDtos.PhysicalBindingResponse binding) {
-        if (binding.engine() == AssetEngine.KAFKA && !isBlank(binding.topicName())) {
+        if (!isBlank(binding.topicName())) {
             return binding.topicName();
         }
-        return List.of(binding.catalogName(), binding.databaseName(), binding.tableName()).stream()
+        return joinNonBlank(
+                binding.catalogName(),
+                binding.databaseName(),
+                binding.schemaName(),
+                binding.tableName());
+    }
+
+    private String joinNonBlank(String... parts) {
+        return Arrays.stream(parts)
                 .filter(value -> !isBlank(value))
                 .reduce((left, right) -> left + "." + right)
                 .orElse(null);
@@ -366,8 +377,7 @@ public class MetadataService {
 
     private String declarationHash(MetadataDtos.MetadataItemRequest item) {
         try {
-            JsonNode normalizedItem = objectMapper.valueToTree(item);
-            byte[] itemJson = objectMapper.writeValueAsBytes(normalizedItem);
+            byte[] itemJson = declarationHashWriter.writeValueAsBytes(item);
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return "sha256:" + HexFormat.of().formatHex(digest.digest(itemJson));
         } catch (JsonProcessingException ex) {
