@@ -63,8 +63,10 @@ class DriftControllerTest {
                 .andExpect(jsonPath("$.records[0].consumerName").value("rno-dashboard"))
                 .andExpect(jsonPath("$.records[0].subscriptionId").value(subscriptionId))
                 .andExpect(jsonPath("$.records[0].evidence.subscriptionId").value(subscriptionId))
+                .andExpect(jsonPath("$.records[0].evidence.assetCode").value("ads_cell_profile"))
+                .andExpect(jsonPath("$.records[0].evidence.consumerName").value("rno-dashboard"))
                 .andExpect(jsonPath("$.records[0].evidence.lastRuntimeSeenAt", nullValue()))
-                .andExpect(jsonPath("$.records[0].evidence.unusedAfterDays").value(30));
+                .andExpect(jsonPath("$.records[0].evidence.unusedCutoff", notNullValue()));
     }
 
     @Test
@@ -91,8 +93,12 @@ class DriftControllerTest {
                 .andExpect(jsonPath("$.records[0].assetCode").value("ads_cell_profile"))
                 .andExpect(jsonPath("$.records[0].consumerName").value("adhoc-analyst"))
                 .andExpect(jsonPath("$.records[0].subscriptionId", nullValue()))
-                .andExpect(jsonPath("$.records[0].evidence.queryId").value("query_undeclared"))
-                .andExpect(jsonPath("$.records[0].evidence.usageLookbackDays").value(7));
+                .andExpect(jsonPath("$.records[0].evidence.assetCode").value("ads_cell_profile"))
+                .andExpect(jsonPath("$.records[0].evidence.consumerName").value("adhoc-analyst"))
+                .andExpect(jsonPath("$.records[0].evidence.queryCount").value(1))
+                .andExpect(jsonPath("$.records[0].evidence.firstSeenAt", notNullValue()))
+                .andExpect(jsonPath("$.records[0].evidence.lastSeenAt", notNullValue()))
+                .andExpect(jsonPath("$.records[0].evidence.usageSince", notNullValue()));
     }
 
     @Test
@@ -126,8 +132,10 @@ class DriftControllerTest {
                 .andExpect(jsonPath("$.records[0].consumerName").value("rno-dashboard"))
                 .andExpect(jsonPath("$.records[0].subscriptionId").value(subscriptionId))
                 .andExpect(jsonPath("$.records[0].evidence.subscriptionId").value(subscriptionId))
-                .andExpect(jsonPath("$.records[0].evidence.lastRuntimeSeenAt", notNullValue()))
-                .andExpect(jsonPath("$.records[0].evidence.staleAfterDays").value(90));
+                .andExpect(jsonPath("$.records[0].evidence.assetCode").value("ads_cell_profile"))
+                .andExpect(jsonPath("$.records[0].evidence.consumerName").value("rno-dashboard"))
+                .andExpect(jsonPath("$.records[0].evidence.lastRegisteredAt", notNullValue()))
+                .andExpect(jsonPath("$.records[0].evidence.staleCutoff", notNullValue()));
     }
 
     @Test
