@@ -6,6 +6,7 @@ import io.datagov.common.dto.AssetDtos;
 import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.AssetType;
 import io.datagov.common.enums.LifecycleStatus;
+import io.datagov.common.enums.MetadataProducerType;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -43,6 +44,30 @@ public class AssetRepository {
         }
     }
 
+    public Optional<AssetDtos.AssetResponse> findAssetById(String assetId) {
+        try {
+            return Optional.ofNullable(jdbcTemplate.queryForObject("""
+                    select asset_id, asset_code, asset_name, asset_type, engine, domain, owner, description,
+                           lifecycle_status, schema_version, queryable, federated_queryable, created_at, updated_at
+                    from data_asset
+                    where asset_id = ?
+                    """, assetMapper(), assetId));
+        } catch (EmptyResultDataAccessException ex) {
+            return Optional.empty();
+        }
+    }
+
+    public String findDeclarationHash(String assetId) {
+        try {
+            return jdbcTemplate.queryForObject(
+                    "select declaration_hash from data_asset where asset_id = ?",
+                    String.class,
+                    assetId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
     public List<AssetDtos.AssetResponse> listAssets() {
         return jdbcTemplate.query("""
                 select asset_id, asset_code, asset_name, asset_type, engine, domain, owner, description,
@@ -75,6 +100,63 @@ public class AssetRepository {
                 asset.assetName(), asset.assetType().name(), asset.engine().name(), asset.domain(), asset.owner(),
                 asset.description(), asset.lifecycleStatus().name(), asset.schemaVersion(), asset.queryable(),
                 asset.federatedQueryable(), Timestamp.from(asset.updatedAt()), asset.assetId());
+    }
+
+    public void updateSnapshotScope(
+            String assetId,
+            String serviceName,
+            MetadataProducerType serviceType,
+            String environment,
+            String owner,
+            String declarationHash,
+            String instanceId,
+            Instant syncedAt
+    ) {
+        jdbcTemplate.update("""
+                update data_asset
+                set producer_service_name = ?,
+                    producer_service_type = ?,
+                    producer_environment = ?,
+                    producer_owner = ?,
+                    declaration_hash = ?,
+                    last_declared_instance_id = ?,
+                    last_synced_at = ?
+                where asset_id = ?
+                """,
+                serviceName,
+                serviceType.name(),
+                environment,
+                owner,
+                declarationHash,
+                instanceId,
+                Timestamp.from(syncedAt),
+                assetId);
+    }
+
+    public List<AssetDtos.AssetResponse> findAssetsInProducerScope(String serviceName, String environment) {
+        return jdbcTemplate.query("""
+                select asset_id, asset_code, asset_name, asset_type, engine, domain, owner, description,
+                       lifecycle_status, schema_version, queryable, federated_queryable, created_at, updated_at
+                from data_asset
+                where producer_service_name = ? and producer_environment = ?
+                order by asset_code
+                """, assetMapper(), serviceName, environment);
+    }
+
+    public void markRemovedBySnapshot(String assetId, Instant removedAt) {
+        jdbcTemplate.update("""
+                update data_asset
+                set lifecycle_status = ?,
+                    queryable = false,
+                    federated_queryable = false,
+                    updated_at = ?,
+                    last_synced_at = ?
+                where asset_id = ?
+                """,
+                LifecycleStatus.REMOVED_BY_SNAPSHOT.name(),
+                Timestamp.from(removedAt),
+                Timestamp.from(removedAt),
+                assetId);
     }
 
     public void replaceFields(String assetId, List<AssetDtos.FieldResponse> fields) {
