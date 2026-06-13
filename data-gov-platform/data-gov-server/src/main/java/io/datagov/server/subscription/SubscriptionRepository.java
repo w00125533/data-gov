@@ -177,6 +177,9 @@ public class SubscriptionRepository {
             String consumerId,
             Instant now
     ) {
+        if (consumerId == null || consumerId.isBlank()) {
+            throw new IllegalArgumentException("consumerId is required");
+        }
         List<GovernanceDtos.SubscriptionResponse> current = listSubscriptionsForAsset(assetId, consumerId, null).stream()
                 .filter(subscription -> subscription.status() != SubscriptionStatus.CANCELLED)
                 .filter(subscription -> subscription.status() != SubscriptionStatus.REMOVED_BY_SNAPSHOT)
@@ -186,10 +189,17 @@ public class SubscriptionRepository {
                     update subscription
                     set status = ?, updated_at = ?
                     where subscription_id = ?
+                      and asset_id = ?
+                      and consumer_id = ?
+                      and status not in (?, ?)
                     """,
                     SubscriptionStatus.CANCELLED.name(),
                     Timestamp.from(now),
-                    subscription.subscriptionId());
+                    subscription.subscriptionId(),
+                    assetId,
+                    consumerId,
+                    SubscriptionStatus.CANCELLED.name(),
+                    SubscriptionStatus.REMOVED_BY_SNAPSHOT.name());
         }
         return current.stream()
                 .map(subscription -> findSubscription(subscription.subscriptionId()).orElseThrow())
