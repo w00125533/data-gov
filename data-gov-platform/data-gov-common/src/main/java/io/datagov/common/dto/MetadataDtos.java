@@ -2,6 +2,8 @@ package io.datagov.common.dto;
 
 import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.AssetType;
+import io.datagov.common.enums.LineageTransformType;
+import io.datagov.common.enums.LineageType;
 import io.datagov.common.enums.MetadataProducerType;
 import io.datagov.common.enums.MetadataSyncItemStatus;
 import io.datagov.common.enums.MetadataSyncMode;
@@ -86,9 +88,19 @@ public final class MetadataDtos {
 
     public record MetadataLineageEdgeRequest(
             @NotBlank String assetCode,
+            LineageType lineageType,
+            LineageTransformType transformType,
             String expression,
             String processName,
-            String jobName
+            String jobName,
+            @Valid List<MetadataFieldMappingRequest> fieldMappings
+    ) {
+    }
+
+    public record MetadataFieldMappingRequest(
+            @NotBlank String sourceField,
+            @NotBlank String targetField,
+            String expression
     ) {
     }
 
