@@ -1,7 +1,9 @@
 package io.datagov.server.metadata;
 
 import io.datagov.common.dto.AssetDtos;
+import io.datagov.common.dto.FormalLineageDtos;
 import io.datagov.common.dto.MetadataDtos;
+import io.datagov.server.lineage.LineageService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +19,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/rest/oss/inner/modelengineservice/v1")
 public class MetadataController {
     private final MetadataService metadataService;
+    private final LineageService lineageService;
 
-    public MetadataController(MetadataService metadataService) {
+    public MetadataController(MetadataService metadataService, LineageService lineageService) {
         this.metadataService = metadataService;
+        this.lineageService = lineageService;
     }
 
     @PostMapping("/metadata/register")
@@ -46,6 +50,15 @@ public class MetadataController {
             @PathVariable("metadataId") String metadataId
     ) {
         return metadataService.getMetadata(metadataId);
+    }
+
+    @GetMapping("/metadata/{metadataId}/lineage")
+    public FormalLineageDtos.FormalLineageResponse getMetadataLineage(
+            @PathVariable("metadataId") String metadataId,
+            @RequestParam(name = "direction", defaultValue = "down") String direction,
+            @RequestParam(name = "depth", defaultValue = "3") int depth
+    ) {
+        return lineageService.getFormalMetadataLineage(metadataId, direction, depth);
     }
 
     @PatchMapping("/metadata/{metadataId}")

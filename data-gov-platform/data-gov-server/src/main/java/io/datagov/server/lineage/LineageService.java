@@ -1,6 +1,7 @@
 package io.datagov.server.lineage;
 
 import io.datagov.common.dto.AssetDtos;
+import io.datagov.common.dto.FormalLineageDtos;
 import io.datagov.common.dto.LineageDtos;
 import io.datagov.common.dto.MetadataDtos;
 import io.datagov.common.enums.LineageDirection;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -101,6 +103,38 @@ public class LineageService {
 
     public LineageDtos.LineageGraphResponse getLineage(String assetCode, String direction, int depth) {
         return getLineage(assetCode, parseDirection(direction), depth);
+    }
+
+    public FormalLineageDtos.FormalLineageResponse getFormalMetadataLineage(
+            String metadataId,
+            String direction,
+            int depth
+    ) {
+        AssetDtos.AssetResponse asset = assetRepository.findAssetById(metadataId)
+                .orElseThrow(() -> new AssetNotFoundException(metadataId));
+        LineageDtos.LineageGraphResponse graph = getLineage(asset.assetCode(), direction, depth);
+        List<String> lineageEdgeIds = graph.edges().stream()
+                .map(LineageDtos.LineageEdgeResponse::edgeId)
+                .toList();
+        Map<String, List<LineageRepository.FieldLineageView>> fieldEdgesByLineageId =
+                groupFieldEdgesByLineageId(lineageRepository.findActiveFieldEdgesForLineageIds(lineageEdgeIds));
+
+        return new FormalLineageDtos.FormalLineageResponse(
+                metadataId,
+                graph.direction(),
+                graph.depth(),
+                graph.nodes().stream()
+                        .map(this::toFormalNode)
+                        .toList(),
+                graph.edges().stream()
+                        .map(edge -> toFormalEdge(edge, graph.direction()))
+                        .toList(),
+                graph.edges().stream()
+                        .flatMap(edge -> fieldEdgesByLineageId
+                                .getOrDefault(edge.edgeId(), List.of())
+                                .stream()
+                                .map(fieldEdge -> toFormalFieldEdge(edge, fieldEdge, graph.direction())))
+                        .toList());
     }
 
     public LineageDtos.LineageGraphResponse getLineage(String assetCode, LineageDirection direction, int depth) {
@@ -260,6 +294,64 @@ public class LineageService {
                 asset.assetName(),
                 asset.assetType(),
                 asset.engine());
+    }
+
+    private FormalLineageDtos.FormalLineageNode toFormalNode(LineageDtos.LineageAssetNode node) {
+        return new FormalLineageDtos.FormalLineageNode(
+                node.assetId(),
+                node.assetCode(),
+                node.assetName());
+    }
+
+    private FormalLineageDtos.FormalLineageEdge toFormalEdge(
+            LineageDtos.LineageEdgeResponse edge,
+            LineageDirection direction
+    ) {
+        return new FormalLineageDtos.FormalLineageEdge(
+                edge.source().assetId(),
+                edge.source().assetCode(),
+                edge.target().assetId(),
+                edge.target().assetCode(),
+                lineageType(edge),
+                direction,
+                edge.description());
+    }
+
+    private FormalLineageDtos.FormalFieldLineageEdge toFormalFieldEdge(
+            LineageDtos.LineageEdgeResponse edge,
+            LineageRepository.FieldLineageView fieldEdge,
+            LineageDirection direction
+    ) {
+        return new FormalLineageDtos.FormalFieldLineageEdge(
+                edge.source().assetId(),
+                edge.source().assetCode(),
+                fieldEdge.sourceField(),
+                edge.target().assetId(),
+                edge.target().assetCode(),
+                fieldEdge.targetField(),
+                LineageType.FIELD,
+                direction,
+                fieldEdge.expression());
+    }
+
+    private Map<String, List<LineageRepository.FieldLineageView>> groupFieldEdgesByLineageId(
+            List<LineageRepository.FieldLineageView> fieldEdges
+    ) {
+        Map<String, List<LineageRepository.FieldLineageView>> fieldEdgesByLineageId = new LinkedHashMap<>();
+        for (LineageRepository.FieldLineageView fieldEdge : fieldEdges) {
+            fieldEdgesByLineageId
+                    .computeIfAbsent(fieldEdge.lineageEdgeId(), ignored -> new ArrayList<>())
+                    .add(fieldEdge);
+        }
+        return fieldEdgesByLineageId;
+    }
+
+    private LineageType lineageType(LineageDtos.LineageEdgeResponse edge) {
+        Object value = edge.properties().get("lineageType");
+        if (value instanceof String lineageType && !lineageType.isBlank()) {
+            return LineageType.valueOf(lineageType.trim());
+        }
+        return LineageType.TABLE;
     }
 
     private LineageDirection parseDirection(String direction) {

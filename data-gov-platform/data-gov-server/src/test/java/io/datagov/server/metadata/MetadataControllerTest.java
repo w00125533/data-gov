@@ -214,6 +214,45 @@ class MetadataControllerTest {
     }
 
     @Test
+    void formalMetadataLineageReturnsNodesEdgesAndFieldEdgesByMetadataId() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem("""
+                                %s,
+                                %s
+                                """.formatted(upstreamCellProfileItem(), targetCellProfileItemWithLineage(true)))))
+                .andExpect(status().isOk());
+
+        String metadataId = metadataId("ads_cell_profile");
+        String upstreamMetadataId = metadataId("dwd_cell_profile");
+
+        mockMvc.perform(get(BASE_PATH + "/metadata/{metadataId}/lineage", metadataId)
+                        .param("direction", "up")
+                        .param("depth", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.metadataId").value(metadataId))
+                .andExpect(jsonPath("$.direction").value("UP"))
+                .andExpect(jsonPath("$.depth").value(5))
+                .andExpect(jsonPath("$.nodes", hasSize(2)))
+                .andExpect(jsonPath("$.nodes[?(@.metadataId == '%s')]".formatted(upstreamMetadataId), hasSize(1)))
+                .andExpect(jsonPath("$.edges", hasSize(1)))
+                .andExpect(jsonPath("$.edges[0].sourceMetadataId").value(upstreamMetadataId))
+                .andExpect(jsonPath("$.edges[0].targetMetadataId").value(metadataId))
+                .andExpect(jsonPath("$.edges[0].lineageType").value("FIELD"))
+                .andExpect(jsonPath("$.edges[0].expression").value("coverage_score = normalize(rsrp_avg)"))
+                .andExpect(jsonPath("$.fieldEdges", hasSize(1)))
+                .andExpect(jsonPath("$.fieldEdges[0].sourceField").value("rsrp_avg"))
+                .andExpect(jsonPath("$.fieldEdges[0].targetField").value("coverage_score"));
+    }
+
+    @Test
+    void formalMetadataLineageMissingMetadataReturns404() throws Exception {
+        mockMvc.perform(get(BASE_PATH + "/metadata/missing_metadata/lineage"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("ASSET_NOT_FOUND"));
+    }
+
+    @Test
     void fullSnapshotDeactivatesLineageForOmittedScopedAssets() throws Exception {
         registerExternalLineageTarget();
 
