@@ -68,7 +68,7 @@ services:
       DATAGOV_GAUSSDB_JDBC_URL: "jdbc:h2:file:/app/data/data-gov;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH"
       DATAGOV_GAUSSDB_USER: sa
       DATAGOV_GAUSSDB_PASSWORD: ""
-      DATA_GOV_KAFKA_BOOTSTRAP_SERVERS: ${DATA_GOV_KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+      DATA_GOV_KAFKA_BOOTSTRAP_SERVERS: ${DATA_GOV_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
     volumes:
       - governance-server-data:/app/data
     ports:
