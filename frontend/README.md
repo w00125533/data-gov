@@ -71,3 +71,23 @@ export default defineConfig([
   },
 ])
 ```
+
+## UI Acceptance Tests
+
+Run the formal lineage UI acceptance case in headless mode:
+
+```bash
+npm run test:e2e
+```
+
+Run the same acceptance case with a visible Chromium window and slowed interactions:
+
+```bash
+npm run test:e2e:headed
+```
+
+The headed runner defaults to `PW_SLOW_MO=700` milliseconds. Increase it when manual observation needs more time, for example:
+
+```powershell
+$env:PW_SLOW_MO="1200"; npm run test:e2e:headed
+```

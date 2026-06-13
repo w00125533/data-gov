@@ -213,8 +213,21 @@ body {
   margin-top: 12px;
 }
 
-.lineage-edge-list .ant-list-item,
-.graph-fallback .ant-list-item {
+.lineage-compact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lineage-compact-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
   cursor: pointer;
 }
 

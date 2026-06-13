@@ -6,7 +6,6 @@ import {
   Descriptions,
   Divider,
   Input,
-  List,
   Segmented,
   Slider,
   Space,
@@ -115,7 +114,7 @@ export default function Lineage() {
     <div className="three-panel-grid">
       <section className="panel panel-pad">
         <Typography.Title level={4} style={{ marginTop: 0 }}>血缘图</Typography.Title>
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Segmented
             block
             value={source}
@@ -144,6 +143,7 @@ export default function Lineage() {
                   {formalMetadataQuery.data?.items.map((item) => (
                     <button
                       type="button"
+                      data-testid={`formal-asset-${item.metadataId}`}
                       className={`table-row ${selectedMetadata?.metadataId === item.metadataId ? 'selected' : ''}`}
                       key={item.metadataId}
                       onClick={() => selectMetadata(item)}
@@ -242,7 +242,7 @@ export default function Lineage() {
         <Typography.Title level={4} style={{ marginTop: 0 }}>边详情</Typography.Title>
         {source === 'formal' ? (
           <>
-            <Descriptions bordered size="small" column={1}>
+            <Descriptions bordered size="small" column={1} data-testid="formal-current-metadata">
               <Descriptions.Item label="当前资产">{selectedMetadata?.assetCode ?? '未选择'}</Descriptions.Item>
               <Descriptions.Item label="资产名称">{selectedMetadata?.assetName || '未命名资产'}</Descriptions.Item>
               <Descriptions.Item label="metadataId">{selectedMetadata?.metadataId ?? '-'}</Descriptions.Item>
@@ -250,11 +250,13 @@ export default function Lineage() {
             <div className="lineage-stats">
               <Statistic title="节点" value={formalLineageQuery.data?.nodes.length ?? 0} />
               <Statistic title="资产边" value={formalLineageQuery.data?.edges.length ?? 0} />
-              <Statistic title="字段边" value={formalLineageQuery.data?.fieldEdges.length ?? 0} />
+              <div data-testid="formal-field-edge-count">
+                <Statistic title="字段边" value={formalLineageQuery.data?.fieldEdges.length ?? 0} />
+              </div>
             </div>
             <Divider />
             {formalEdge ? (
-              <Descriptions bordered size="small" column={1}>
+              <Descriptions bordered size="small" column={1} data-testid="formal-selected-edge">
                 <Descriptions.Item label="粒度">{formalEdge.edgeKind === 'field' ? '字段级' : '资产级'}</Descriptions.Item>
                 <Descriptions.Item label="上游">{formalEdgeEndpoint(formalEdge.edge, formalEdge.edgeKind, 'source')}</Descriptions.Item>
                 <Descriptions.Item label="下游">{formalEdgeEndpoint(formalEdge.edge, formalEdge.edgeKind, 'target')}</Descriptions.Item>
@@ -266,18 +268,21 @@ export default function Lineage() {
               <Typography.Text className="muted">点击一条正式血缘边查看字段映射和转换表达式</Typography.Text>
             )}
             {formalLineageQuery.data?.fieldEdges.length ? (
-              <List
-                className="lineage-edge-list"
-                size="small"
-                dataSource={formalLineageQuery.data.fieldEdges.slice(0, 6)}
-                renderItem={(edge) => (
-                  <List.Item onClick={() => setFormalEdge({ edge, edgeKind: 'field' })}>
+              <div className="lineage-edge-list lineage-compact-list">
+                {formalLineageQuery.data.fieldEdges.slice(0, 6).map((edge) => (
+                  <button
+                    type="button"
+                    className="lineage-compact-row"
+                    key={`${edge.sourceAssetCode}.${edge.sourceField}->${edge.targetAssetCode}.${edge.targetField}`}
+                    data-testid={`formal-field-edge-${edge.sourceField}-${edge.targetField}`}
+                    onClick={() => setFormalEdge({ edge, edgeKind: 'field' })}
+                  >
                     <Tag color="blue">{edge.sourceAssetCode}.{edge.sourceField}</Tag>
                     <span className="muted">→</span>
                     <Tag>{edge.targetAssetCode}.{edge.targetField}</Tag>
-                  </List.Item>
-                )}
-              />
+                  </button>
+                ))}
+              </div>
             ) : null}
           </>
         ) : legacyEdge ? (

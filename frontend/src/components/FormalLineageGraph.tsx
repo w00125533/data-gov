@@ -1,5 +1,5 @@
 import { Graph } from '@antv/g6'
-import { Empty, List, Tag } from 'antd'
+import { Empty, Tag } from 'antd'
 import { useEffect, useMemo, useRef } from 'react'
 import type {
   FormalFieldLineageEdge,
@@ -71,17 +71,20 @@ export default function FormalLineageGraph({ lineage, onSelectEdge }: Props) {
     <div className="graph-shell">
       <div className="graph-container" ref={ref} />
       <div className="graph-fallback">
-        <List
-          size="small"
-          dataSource={graphData.edges.slice(0, 8)}
-          renderItem={(edge) => (
-            <List.Item onClick={() => onSelectEdge?.(edge.data.rawEdge, edge.data.edgeKind)}>
+        <div className="lineage-compact-list">
+          {graphData.edges.slice(0, 8).map((edge) => (
+            <button
+              type="button"
+              className="lineage-compact-row"
+              key={edge.id}
+              onClick={() => onSelectEdge?.(edge.data.rawEdge, edge.data.edgeKind)}
+            >
               <Tag color={edge.data.edgeKind === 'field' ? 'blue' : 'green'}>{edge.source}</Tag>
               <span className="muted">→</span>
               <Tag>{edge.target}</Tag>
-            </List.Item>
-          )}
-        />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
