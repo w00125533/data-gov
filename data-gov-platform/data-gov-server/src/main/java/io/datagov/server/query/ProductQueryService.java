@@ -6,6 +6,7 @@ import io.datagov.common.dto.QueryDtos;
 import io.datagov.common.enums.AssetEngine;
 import io.datagov.common.enums.QueryRequestType;
 import io.datagov.common.enums.QueryStatus;
+import io.datagov.common.enums.SubscriptionStatus;
 import io.datagov.server.asset.AssetNotFoundException;
 import io.datagov.server.asset.AssetRepository;
 import io.datagov.server.subscription.SubscriptionRepository;
@@ -169,6 +170,10 @@ public class ProductQueryService {
                 .orElseThrow(() -> new QueryValidationException("INVALID_SUBSCRIPTION", "Subscription not found"));
         if (!assetIds.contains(subscription.assetId())) {
             throw new QueryValidationException("INVALID_SUBSCRIPTION", "Subscription does not belong to queried asset");
+        }
+        if (subscription.status() == SubscriptionStatus.CANCELLED
+                || subscription.status() == SubscriptionStatus.REMOVED_BY_SNAPSHOT) {
+            throw new QueryValidationException("INVALID_SUBSCRIPTION", "Subscription is not active");
         }
         return subscription;
     }

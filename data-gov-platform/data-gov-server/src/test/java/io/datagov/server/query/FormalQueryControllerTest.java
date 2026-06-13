@@ -149,7 +149,7 @@ class FormalQueryControllerTest {
     }
 
     @Test
-    void formalApiQueryKeepsBodySubscriptionWhenHeaderDiffers() throws Exception {
+    void formalApiQueryRejectsMismatchedHeaderAndBodySubscription() throws Exception {
         String otherSubscriptionId = createFormalSubscription("rno-dashboard-other", List.of("cell_id"));
         assertThat(otherSubscriptionId).isNotEqualTo(subscriptionId);
 
@@ -163,12 +163,11 @@ class FormalQueryControllerTest {
                                   "subscriptionId": "%s"
                                 }
                                 """.formatted(subscriptionId)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.queryId", notNullValue()));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_SUBSCRIPTION"))
+                .andExpect(jsonPath("$.message").value("Subscription header does not match request body"));
 
-        Map<String, Object> record = queryRecord();
-        assertThat(record.get("SUBSCRIPTION_ID")).isEqualTo(subscriptionId);
-        assertThat(record.get("REQUEST_TYPE")).isEqualTo("PRODUCT_API");
+        assertThat(executor.calls).isEmpty();
     }
 
     @Test
@@ -181,6 +180,26 @@ class FormalQueryControllerTest {
         Map<String, Object> record = queryRecord();
         assertThat(record.get("SUBSCRIPTION_ID")).isEqualTo(subscriptionId);
         assertThat(record.get("REQUEST_TYPE")).isEqualTo("PRODUCT_API");
+    }
+
+    @Test
+    void formalApiQueryRejectsCancelledSubscription() throws Exception {
+        jdbcTemplate.update("update subscription set status = 'CANCELLED' where subscription_id = ?", subscriptionId);
+
+        mockMvc.perform(post(BASE_PATH + "/apiquery/{metadataId}", metadataId)
+                        .header(SUBSCRIPTION_HEADER, subscriptionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "select": ["cell_id"],
+                                  "limit": 5
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_SUBSCRIPTION"))
+                .andExpect(jsonPath("$.message").value("Subscription is not active"));
+
+        assertThat(executor.calls).isEmpty();
     }
 
     @Test
@@ -204,6 +223,26 @@ class FormalQueryControllerTest {
         Map<String, Object> record = queryRecord();
         assertThat(record.get("REQUEST_TYPE")).isEqualTo("SQL_GATEWAY");
         assertThat(record.get("SUBSCRIPTION_ID")).isEqualTo(subscriptionId);
+    }
+
+    @Test
+    void formalSqlQueryRejectsCancelledSubscription() throws Exception {
+        jdbcTemplate.update("update subscription set status = 'CANCELLED' where subscription_id = ?", subscriptionId);
+
+        mockMvc.perform(post(BASE_PATH + "/sqlquery")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sql": "select cell_id from ads_cell_profile",
+                                  "limit": 5,
+                                  "subscriptionId": "%s"
+                                }
+                                """.formatted(subscriptionId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_SUBSCRIPTION"))
+                .andExpect(jsonPath("$.message").value("Subscription is not active"));
+
+        assertThat(executor.calls).isEmpty();
     }
 
     @Test

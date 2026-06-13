@@ -54,17 +54,23 @@ public class FormalQueryController {
         if (subscriptionId == null || subscriptionId.isBlank()) {
             return request;
         }
+        String headerSubscriptionId = subscriptionId.trim();
         if (request == null) {
-            return new QueryDtos.AssetQueryRequest(null, null, null, subscriptionId, null, null);
+            return new QueryDtos.AssetQueryRequest(null, null, null, headerSubscriptionId, null, null);
         }
         if (request.subscriptionId() != null && !request.subscriptionId().isBlank()) {
+            if (!request.subscriptionId().trim().equals(headerSubscriptionId)) {
+                throw new QueryValidationException(
+                        "INVALID_SUBSCRIPTION",
+                        "Subscription header does not match request body");
+            }
             return request;
         }
         return new QueryDtos.AssetQueryRequest(
                 request.select(),
                 request.filters(),
                 request.limit(),
-                subscriptionId,
+                headerSubscriptionId,
                 request.consumerName(),
                 request.environment());
     }

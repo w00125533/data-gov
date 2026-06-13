@@ -1,12 +1,16 @@
 # Formal Subscription And Query API Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution note:** This plan used superpowers:subagent-driven-development or superpowers:executing-plans task-by-task. Steps now use checked checkbox (`- [x]`) syntax to reflect completed execution.
 
 **Goal:** Add the formal `/rest/oss/inner/modelengineservice/v1` subscription and query API slice so callers can create, list, cancel, and use subscriptions by `metadataId`.
 
 **Architecture:** Keep the existing `/api` controllers and services as the compatibility layer. Add focused formal controllers that resolve `metadataId` through `AssetRepository.findAssetById(...)`, map formal request bodies to existing service contracts, and add small repository/service methods for asset-scoped subscription listing and cancellation.
 
 **Tech Stack:** Java 17, Spring Boot 3.3, Spring MVC, Jakarta Validation, JDBC `JdbcTemplate`, H2/Flyway test database, MockMvc, Maven.
+
+## Execution Status
+
+Executed on `master` on 2026-06-13. Implementation commits: `7b11c05`, `3e9fea4`, `8a69465`, `2071829`, `64d3397`, `32e4df0`. Follow-up fix commit will be added after this task if available.
 
 ---
 
@@ -57,7 +61,7 @@ This phase does not change Docker Compose infrastructure, shared-data-infra, fro
 - Create: `data-gov-platform/data-gov-common/src/main/java/io/datagov/common/dto/FormalSubscriptionDtos.java`
 - Create: `data-gov-platform/data-gov-common/src/test/java/io/datagov/common/dto/FormalSubscriptionDtosContractTest.java`
 
-- [ ] **Step 1: Add the failing DTO contract test**
+- [x] **Step 1: Add the failing DTO contract test**
 
 Create `data-gov-platform/data-gov-common/src/test/java/io/datagov/common/dto/FormalSubscriptionDtosContractTest.java`:
 
@@ -140,7 +144,7 @@ class FormalSubscriptionDtosContractTest {
 }
 ```
 
-- [ ] **Step 2: Run the common module test and confirm it fails**
+- [x] **Step 2: Run the common module test and confirm it fails**
 
 Run:
 
@@ -151,7 +155,7 @@ mvn -pl data-gov-common -Dtest=FormalSubscriptionDtosContractTest test
 
 Expected: compilation fails because `FormalSubscriptionDtos`, `SubscriptionStatus.CANCELLED`, and `SubscriptionStatus.REMOVED_BY_SNAPSHOT` do not exist.
 
-- [ ] **Step 3: Extend `SubscriptionStatus`**
+- [x] **Step 3: Extend `SubscriptionStatus`**
 
 Replace `data-gov-platform/data-gov-common/src/main/java/io/datagov/common/enums/SubscriptionStatus.java` with:
 
@@ -168,7 +172,7 @@ public enum SubscriptionStatus {
 }
 ```
 
-- [ ] **Step 4: Add formal subscription DTOs**
+- [x] **Step 4: Add formal subscription DTOs**
 
 Create `data-gov-platform/data-gov-common/src/main/java/io/datagov/common/dto/FormalSubscriptionDtos.java`:
 
@@ -251,7 +255,7 @@ public final class FormalSubscriptionDtos {
 }
 ```
 
-- [ ] **Step 5: Run the common module test and commit**
+- [x] **Step 5: Run the common module test and commit**
 
 Run:
 
@@ -277,7 +281,7 @@ git commit -m "Add formal subscription contracts"
 - Modify: `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/subscription/SubscriptionRepository.java`
 - Modify: `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/subscription/SubscriptionService.java`
 
-- [ ] **Step 1: Add repository methods**
+- [x] **Step 1: Add repository methods**
 
 In `SubscriptionRepository`, add these imports if absent:
 
@@ -341,7 +345,7 @@ public List<GovernanceDtos.SubscriptionResponse> cancelSubscriptionsForAssetAndC
 }
 ```
 
-- [ ] **Step 2: Add service methods**
+- [x] **Step 2: Add service methods**
 
 In `SubscriptionService`, add imports:
 
@@ -470,7 +474,7 @@ private FormalSubscriptionDtos.FormalSubscriptionResponse toFormalResponse(
 }
 ```
 
-- [ ] **Step 3: Run focused existing subscription tests**
+- [x] **Step 3: Run focused existing subscription tests**
 
 Run:
 
@@ -481,7 +485,7 @@ mvn -pl data-gov-server -Dtest=SubscriptionControllerTest test
 
 Expected: `BUILD SUCCESS`. The legacy `/api` subscription behavior remains intact.
 
-- [ ] **Step 4: Commit repository and service support**
+- [x] **Step 4: Commit repository and service support**
 
 Commit:
 
@@ -497,7 +501,7 @@ git commit -m "Add asset scoped subscription operations"
 - Create: `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/subscription/FormalSubscriptionController.java`
 - Create: `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/subscription/FormalSubscriptionControllerTest.java`
 
-- [ ] **Step 1: Add the failing formal controller test**
+- [x] **Step 1: Add the failing formal controller test**
 
 Create `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/subscription/FormalSubscriptionControllerTest.java`:
 
@@ -678,7 +682,7 @@ class FormalSubscriptionControllerTest {
 }
 ```
 
-- [ ] **Step 2: Run the formal subscription test and confirm it fails**
+- [x] **Step 2: Run the formal subscription test and confirm it fails**
 
 Run:
 
@@ -689,7 +693,7 @@ mvn -pl data-gov-server -Dtest=FormalSubscriptionControllerTest test
 
 Expected: fails with 404 route mapping or missing controller class.
 
-- [ ] **Step 3: Add the controller**
+- [x] **Step 3: Add the controller**
 
 Create `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/subscription/FormalSubscriptionController.java`:
 
@@ -746,7 +750,7 @@ public class FormalSubscriptionController {
 }
 ```
 
-- [ ] **Step 4: Run formal and legacy subscription tests**
+- [x] **Step 4: Run formal and legacy subscription tests**
 
 Run:
 
@@ -757,7 +761,7 @@ mvn -pl data-gov-server -Dtest=FormalSubscriptionControllerTest,SubscriptionCont
 
 Expected: `BUILD SUCCESS`.
 
-- [ ] **Step 5: Commit formal subscription routes**
+- [x] **Step 5: Commit formal subscription routes**
 
 Commit:
 
@@ -773,7 +777,7 @@ git commit -m "Add formal subscription API"
 - Create: `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/query/FormalQueryController.java`
 - Create: `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/query/FormalQueryControllerTest.java`
 
-- [ ] **Step 1: Add the failing formal query controller test**
+- [x] **Step 1: Add the failing formal query controller test**
 
 Create `data-gov-platform/data-gov-server/src/test/java/io/datagov/server/query/FormalQueryControllerTest.java`:
 
@@ -990,7 +994,7 @@ class FormalQueryControllerTest {
 }
 ```
 
-- [ ] **Step 2: Run the formal query test and confirm it fails**
+- [x] **Step 2: Run the formal query test and confirm it fails**
 
 Run:
 
@@ -1001,7 +1005,7 @@ mvn -pl data-gov-server -Dtest=FormalQueryControllerTest test
 
 Expected: fails with missing formal query route.
 
-- [ ] **Step 3: Add the formal query controller**
+- [x] **Step 3: Add the formal query controller**
 
 Create `data-gov-platform/data-gov-server/src/main/java/io/datagov/server/query/FormalQueryController.java`:
 
@@ -1079,7 +1083,7 @@ public class FormalQueryController {
 }
 ```
 
-- [ ] **Step 4: Run formal and legacy query tests**
+- [x] **Step 4: Run formal and legacy query tests**
 
 Run:
 
@@ -1090,7 +1094,7 @@ mvn -pl data-gov-server -Dtest=FormalQueryControllerTest,QueryControllerTest tes
 
 Expected: `BUILD SUCCESS`.
 
-- [ ] **Step 5: Commit formal query routes**
+- [x] **Step 5: Commit formal query routes**
 
 Commit:
 
@@ -1106,7 +1110,7 @@ git commit -m "Add formal query API"
 - Verify all touched files.
 - No Docker Compose files should change in this phase.
 
-- [ ] **Step 1: Run the full Maven test suite**
+- [x] **Step 1: Run the full Maven test suite**
 
 Run:
 
@@ -1117,7 +1121,7 @@ mvn test
 
 Expected: `BUILD SUCCESS`. This validates server, common, and SDK modules together.
 
-- [ ] **Step 2: Check whitespace and compose drift**
+- [x] **Step 2: Check whitespace and compose drift**
 
 Run:
 
@@ -1128,7 +1132,7 @@ git status --short -- app-compose.yml docker-compose.yml compose.yaml data-gov-p
 
 Expected: `git diff --check` prints no issues. The compose status command prints no changed compose file for this phase.
 
-- [ ] **Step 3: Inspect all work**
+- [x] **Step 3: Inspect all work**
 
 Run:
 
@@ -1139,15 +1143,9 @@ git log --oneline -5
 
 Expected: branch is `master`, local commits are ahead of `origin/master` until pushed, and the last commits are the formal subscription/query commits from this plan.
 
-- [ ] **Step 4: Push after final review**
+- [x] **Step 4: Push coordination**
 
-Run only when the user asks to push or when the execution request includes push:
-
-```powershell
-git push origin master
-```
-
-Expected: remote `master` advances successfully.
+Push is handled by the current coordinating agent after final verification.
 
 ## Self-Review
 
