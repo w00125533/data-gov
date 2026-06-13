@@ -17,6 +17,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -141,6 +142,58 @@ public class SubscriptionRepository {
                 join consumer c on c.consumer_id = s.consumer_id
                 order by s.created_at, s.subscription_id
                 """, subscriptionMapper());
+    }
+
+    public List<GovernanceDtos.SubscriptionResponse> listSubscriptionsForAsset(
+            String assetId,
+            String consumerId,
+            SubscriptionStatus status
+    ) {
+        List<Object> args = new ArrayList<>();
+        args.add(assetId);
+        StringBuilder sql = new StringBuilder("""
+                select s.subscription_id, s.asset_id, a.asset_code, s.consumer_id, c.consumer_name, s.usage_mode,
+                       s.purpose, s.declared_fields, s.notify_on, s.source_type, s.status, s.declaration_hash,
+                       s.last_registered_at, s.last_runtime_seen_at, s.created_at, s.updated_at
+                from subscription s
+                join data_asset a on a.asset_id = s.asset_id
+                join consumer c on c.consumer_id = s.consumer_id
+                where s.asset_id = ?
+                """);
+        if (consumerId != null && !consumerId.isBlank()) {
+            sql.append(" and s.consumer_id = ?");
+            args.add(consumerId);
+        }
+        if (status != null) {
+            sql.append(" and s.status = ?");
+            args.add(status.name());
+        }
+        sql.append(" order by s.created_at, s.subscription_id");
+        return jdbcTemplate.query(sql.toString(), subscriptionMapper(), args.toArray());
+    }
+
+    public List<GovernanceDtos.SubscriptionResponse> cancelSubscriptionsForAssetAndConsumer(
+            String assetId,
+            String consumerId,
+            Instant now
+    ) {
+        List<GovernanceDtos.SubscriptionResponse> current = listSubscriptionsForAsset(assetId, consumerId, null).stream()
+                .filter(subscription -> subscription.status() != SubscriptionStatus.CANCELLED)
+                .filter(subscription -> subscription.status() != SubscriptionStatus.REMOVED_BY_SNAPSHOT)
+                .toList();
+        for (GovernanceDtos.SubscriptionResponse subscription : current) {
+            jdbcTemplate.update("""
+                    update subscription
+                    set status = ?, updated_at = ?
+                    where subscription_id = ?
+                    """,
+                    SubscriptionStatus.CANCELLED.name(),
+                    Timestamp.from(now),
+                    subscription.subscriptionId());
+        }
+        return current.stream()
+                .map(subscription -> findSubscription(subscription.subscriptionId()).orElseThrow())
+                .toList();
     }
 
     public Optional<GovernanceDtos.SubscriptionResponse> findSubscription(String subscriptionId) {
