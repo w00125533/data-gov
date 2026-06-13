@@ -184,6 +184,40 @@ body {
   pointer-events: none;
 }
 
+.lineage-asset-list {
+  max-height: 330px;
+  overflow: auto;
+}
+
+.lineage-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lineage-stats .ant-statistic {
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.lineage-stats .ant-statistic-title {
+  margin-bottom: 2px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.lineage-edge-list {
+  margin-top: 12px;
+}
+
+.lineage-edge-list .ant-list-item,
+.graph-fallback .ant-list-item {
+  cursor: pointer;
+}
+
 .chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;

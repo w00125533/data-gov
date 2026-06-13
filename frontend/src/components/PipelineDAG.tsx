@@ -10,13 +10,23 @@ type Props = {
   onSelectTable?: (table: string) => void
 }
 
+type GraphEvent = {
+  target?: {
+    id?: string
+  }
+}
+
+function graphTargetId(event: unknown) {
+  return (event as GraphEvent).target?.id
+}
+
 export default function PipelineDAG({ payload, onSelectTable }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const data = pipelineToGraph(payload)
 
   useEffect(() => {
     if (!ref.current || data.nodes.length === 0) return
-    const graph: any = new Graph({
+    const graph = new Graph({
       container: ref.current,
       autoFit: 'view',
       data,
@@ -43,8 +53,8 @@ export default function PipelineDAG({ payload, onSelectTable }: Props) {
       behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
     })
     graph.render()
-    graph.on?.('node:click', (event: any) => {
-      const id = event.target?.id as string | undefined
+    graph.on?.('node:click', (event: unknown) => {
+      const id = graphTargetId(event)
       if (id) onSelectTable?.(id)
     })
     return () => graph.destroy()

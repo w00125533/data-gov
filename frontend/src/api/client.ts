@@ -72,6 +72,54 @@ export type LineageResponse = {
   edges: LineageEdge[]
 }
 
+export type FormalMetadataSummary = {
+  metadataId: string
+  assetCode: string
+  assetName?: string | null
+  metadataType: string
+  sourceType: string
+  domain?: string | null
+  owner?: string | null
+  queryable: boolean
+}
+
+export type FormalMetadataListResponse = {
+  items: FormalMetadataSummary[]
+  page: number
+  size: number
+  total: number
+}
+
+export type FormalLineageNode = {
+  metadataId: string
+  assetCode: string
+  assetName?: string | null
+}
+
+export type FormalLineageEdge = {
+  sourceMetadataId: string
+  sourceAssetCode: string
+  targetMetadataId: string
+  targetAssetCode: string
+  lineageType: string
+  direction: 'UP' | 'DOWN'
+  expression?: string | null
+}
+
+export type FormalFieldLineageEdge = FormalLineageEdge & {
+  sourceField: string
+  targetField: string
+}
+
+export type FormalLineageResponse = {
+  metadataId: string
+  direction: 'UP' | 'DOWN'
+  depth: number
+  nodes: FormalLineageNode[]
+  edges: FormalLineageEdge[]
+  fieldEdges: FormalFieldLineageEdge[]
+}
+
 export type PipelineResponse = {
   mode: 'forward' | 'reverse'
   table?: string | null
@@ -100,9 +148,10 @@ export type HealthPayload = {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
+const GOVERNANCE_API_BASE = import.meta.env.VITE_GOVERNANCE_API_BASE ?? ''
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function fetchJsonFrom<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -114,6 +163,10 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(text || `${res.status} ${res.statusText}`)
   }
   return res.json() as Promise<T>
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchJsonFrom(API_BASE, path, init)
 }
 
 function qs(params: Record<string, string | number | undefined | null>) {
@@ -164,6 +217,19 @@ export const api = {
     }),
   lineage: (params: { table: string; direction?: 'up' | 'down'; depth?: number }) =>
     fetchJson<LineageResponse>(`/api/lineage${qs(params)}`),
+  formalMetadata: (params: { keyword?: string; page?: number; size?: number } = {}) =>
+    fetchJsonFrom<FormalMetadataListResponse>(
+      GOVERNANCE_API_BASE,
+      `/rest/oss/inner/modelengineservice/v1/metadata${qs(params)}`,
+    ),
+  formalLineage: (params: { metadataId: string; direction?: 'up' | 'down'; depth?: number }) =>
+    fetchJsonFrom<FormalLineageResponse>(
+      GOVERNANCE_API_BASE,
+      `/rest/oss/inner/modelengineservice/v1/metadata/${encodeURIComponent(params.metadataId)}/lineage${qs({
+        direction: params.direction,
+        depth: params.depth,
+      })}`,
+    ),
   pipeline: (params: { mode?: 'forward' | 'reverse'; table?: string | null } = {}) =>
     fetchJson<PipelineResponse>(`/api/pipeline${qs(params)}`),
   yamlPreview: (table: string) => fetchJson<YamlFile>(`/api/yaml/preview/${table}`),
