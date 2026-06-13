@@ -4,5 +4,7 @@ public enum SubscriptionStatus {
     ACTIVE,
     STALE,
     PAUSED,
-    REVOKED
+    REVOKED,
+    CANCELLED,
+    REMOVED_BY_SNAPSHOT
 }
