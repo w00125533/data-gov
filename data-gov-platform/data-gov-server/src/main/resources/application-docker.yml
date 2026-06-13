@@ -3,4 +3,4 @@ spring:
     url: ${DATAGOV_GAUSSDB_JDBC_URL:jdbc:h2:file:/app/data/data-gov;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
     username: ${DATAGOV_GAUSSDB_USER:sa}
     password: ${DATAGOV_GAUSSDB_PASSWORD:}
-    driver-class-name: org.h2.Driver
+    driver-class-name: ${DATAGOV_GAUSSDB_DRIVER_CLASS_NAME:org.h2.Driver}
