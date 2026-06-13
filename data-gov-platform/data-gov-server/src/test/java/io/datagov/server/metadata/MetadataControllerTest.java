@@ -253,6 +253,39 @@ class MetadataControllerTest {
     }
 
     @Test
+    void formalMetadataLineageDefaultsMalformedRuntimeLineageTypeToTable() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem("""
+                                %s,
+                                %s
+                                """.formatted(upstreamCellProfileItem(), targetCellProfileItemWithLineage(false)))))
+                .andExpect(status().isOk());
+
+        String metadataId = metadataId("ads_cell_profile");
+
+        mockMvc.perform(post("/api/lineage/edges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceAssetCode": "dwd_cell_profile",
+                                  "targetAssetCode": "ads_cell_profile",
+                                  "relationType": "DERIVES",
+                                  "properties": {
+                                    "lineageType": "BROKEN"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get(BASE_PATH + "/metadata/{metadataId}/lineage", metadataId)
+                        .param("direction", "up"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.edges", hasSize(1)))
+                .andExpect(jsonPath("$.edges[0].lineageType").value("TABLE"));
+    }
+
+    @Test
     void fullSnapshotDeactivatesLineageForOmittedScopedAssets() throws Exception {
         registerExternalLineageTarget();
 
