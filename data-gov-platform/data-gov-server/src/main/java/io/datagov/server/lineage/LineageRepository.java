@@ -48,6 +48,76 @@ public class LineageRepository {
         }
     }
 
+    public void deactivateProducerEdgesForAssets(List<String> assetIds, String producer, Instant now) {
+        if (assetIds == null || assetIds.isEmpty()) {
+            return;
+        }
+
+        try {
+            String placeholders = placeholders(assetIds.size());
+            Object[] args = new Object[(assetIds.size() * 2) + 2];
+            int index = 0;
+            args[index++] = Timestamp.from(now);
+            args[index++] = producer;
+            for (String assetId : assetIds) {
+                args[index++] = assetId;
+            }
+            for (String assetId : assetIds) {
+                args[index++] = assetId;
+            }
+
+            jdbcTemplate.update("""
+                    update lineage_edge
+                    set active = false, updated_at = ?
+                    where active = true
+                      and producer = ?
+                      and (source_asset_id in (%s) or target_asset_id in (%s))
+                    """.formatted(placeholders, placeholders), args);
+        } catch (DataAccessException ex) {
+            throw new LineageDataAccessException("Failed to deactivate producer lineage edges", ex);
+        }
+    }
+
+    public void insertFieldEdge(FieldLineageRecord fieldEdge) {
+        try {
+            jdbcTemplate.update("""
+                    insert into lineage_field_edge (
+                        field_edge_id, lineage_edge_id, source_field_id, target_field_id, transform_expression,
+                        description, properties, active, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    fieldEdge.fieldEdgeId(), fieldEdge.lineageEdgeId(), fieldEdge.sourceFieldId(),
+                    fieldEdge.targetFieldId(), fieldEdge.transformExpression(), fieldEdge.description(),
+                    writeProperties(fieldEdge.properties()), true, Timestamp.from(fieldEdge.createdAt()),
+                    Timestamp.from(fieldEdge.updatedAt()));
+        } catch (DataAccessException ex) {
+            throw new LineageDataAccessException("Failed to insert lineage field edge", ex);
+        }
+    }
+
+    public List<FieldLineageView> findActiveFieldEdgesForLineageIds(List<String> lineageEdgeIds) {
+        if (lineageEdgeIds == null || lineageEdgeIds.isEmpty()) {
+            return List.of();
+        }
+
+        try {
+            String placeholders = placeholders(lineageEdgeIds.size());
+            return jdbcTemplate.query("""
+                    select lfe.field_edge_id, lfe.lineage_edge_id,
+                           source_field.field_name as source_field,
+                           target_field.field_name as target_field,
+                           lfe.transform_expression
+                    from lineage_field_edge lfe
+                    left join asset_field source_field on source_field.field_id = lfe.source_field_id
+                    left join asset_field target_field on target_field.field_id = lfe.target_field_id
+                    where lfe.active = true and lfe.lineage_edge_id in (%s)
+                    order by lfe.created_at, lfe.field_edge_id
+                    """.formatted(placeholders), fieldLineageViewMapper(), lineageEdgeIds.toArray());
+        } catch (DataAccessException ex) {
+            throw new LineageDataAccessException("Failed to read lineage field edges", ex);
+        }
+    }
+
     public List<LineageDtos.LineageEdgeResponse> findActiveOutgoing(String assetId) {
         return findActiveEdges("""
                 where le.active = true and le.source_asset_id = ?
@@ -189,6 +259,37 @@ public class LineageRepository {
                 rs.getString("status"),
                 readStringList(rs.getString("referenced_asset_codes")),
                 rs.getTimestamp("created_at").toInstant());
+    }
+
+    private RowMapper<FieldLineageView> fieldLineageViewMapper() {
+        return (rs, rowNum) -> new FieldLineageView(
+                rs.getString("field_edge_id"),
+                rs.getString("lineage_edge_id"),
+                rs.getString("source_field"),
+                rs.getString("target_field"),
+                rs.getString("transform_expression"));
+    }
+
+    public record FieldLineageRecord(
+            String fieldEdgeId,
+            String lineageEdgeId,
+            String sourceFieldId,
+            String targetFieldId,
+            String transformExpression,
+            String description,
+            Map<String, Object> properties,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+    }
+
+    public record FieldLineageView(
+            String fieldEdgeId,
+            String lineageEdgeId,
+            String sourceField,
+            String targetField,
+            String expression
+    ) {
     }
 
     private String writeProperties(Map<String, Object> properties) {
