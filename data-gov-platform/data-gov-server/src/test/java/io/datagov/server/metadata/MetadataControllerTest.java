@@ -214,6 +214,29 @@ class MetadataControllerTest {
     }
 
     @Test
+    void fullSnapshotDeactivatesLineageForOmittedScopedAssets() throws Exception {
+        registerExternalLineageTarget();
+
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem(oldScopedAssetWithExternalDownstream())))
+                .andExpect(status().isOk());
+
+        assertThat(activeLineageEdgeCount("old_scoped_asset", "external_lineage_target")).isEqualTo(1);
+
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithAssets("current_scoped_asset")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removedBySnapshotCount").value(1))
+                .andExpect(jsonPath("$.items[?(@.assetCode == 'old_scoped_asset')].status",
+                        contains("REMOVED_BY_SNAPSHOT")));
+
+        assertThat(lifecycleStatus("old_scoped_asset")).isEqualTo("REMOVED_BY_SNAPSHOT");
+        assertThat(activeLineageEdgeCount("old_scoped_asset", "external_lineage_target")).isEqualTo(0);
+    }
+
+    @Test
     void fullSnapshotDoesNotMarkMissingOfflineScopedMetadataRemovedBySnapshot() throws Exception {
         mockMvc.perform(post(BASE_PATH + "/metadata/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -429,6 +452,49 @@ class MetadataControllerTest {
                 """.formatted(upstreams);
     }
 
+    private String oldScopedAssetWithExternalDownstream() {
+        return """
+                {
+                  "assetCode": "old_scoped_asset",
+                  "assetName": "Old Scoped Asset",
+                  "metadataType": "TABLE",
+                  "sourceType": "STARROCKS",
+                  "domain": "wireless-rno",
+                  "owner": "network-team",
+                  "description": "Formal metadata snapshot item",
+                  "queryable": true,
+                  "federatedQueryable": true,
+                  "schema": [
+                    {
+                      "fieldName": "cell_id",
+                      "fieldType": "varchar",
+                      "ordinal": 1,
+                      "nullable": false
+                    }
+                  ],
+                  "binding": {
+                    "sourceType": "STARROCKS",
+                    "catalog": "default_catalog",
+                    "database": "ads",
+                    "table": "old_scoped_asset",
+                    "queryAdapter": "starrocks"
+                  },
+                  "lineage": {
+                    "upstreams": [],
+                    "downstreams": [
+                      {
+                        "assetCode": "external_lineage_target",
+                        "lineageType": "TABLE",
+                        "transformType": "DIRECT",
+                        "processName": "old-scoped-publish",
+                        "jobName": "old-scoped-publish-job"
+                      }
+                    ]
+                  }
+                }
+                """;
+    }
+
     private String partialBindingItem() {
         return """
                 {
@@ -489,6 +555,21 @@ class MetadataControllerTest {
                   }
                 }
                 """.formatted(properties);
+    }
+
+    private void registerExternalLineageTarget() throws Exception {
+        mockMvc.perform(post("/api/assets/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "assetCode": "external_lineage_target",
+                                  "assetName": "External Lineage Target",
+                                  "assetType": "TABLE",
+                                  "engine": "STARROCKS",
+                                  "lifecycleStatus": "ACTIVE"
+                                }
+                                """))
+                .andExpect(status().isOk());
     }
 
     private String changedCellProfileItem() {

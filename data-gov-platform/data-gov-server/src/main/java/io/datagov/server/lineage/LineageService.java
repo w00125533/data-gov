@@ -62,8 +62,17 @@ public class LineageService {
             List<MetadataDtos.MetadataItemRequest> metadataItems,
             Map<String, AssetDtos.AssetResponse> assetsByCode
     ) {
+        replaceSnapshotLineage(producer, metadataItems, assetsByCode, assetsByCode);
+    }
+
+    public void replaceSnapshotLineage(
+            MetadataDtos.ProducerRequest producer,
+            List<MetadataDtos.MetadataItemRequest> metadataItems,
+            Map<String, AssetDtos.AssetResponse> assetsByCode,
+            Map<String, AssetDtos.AssetResponse> lineageScopeAssetsByCode
+    ) {
         Instant now = Instant.now();
-        List<String> snapshotAssetIds = assetsByCode.values().stream()
+        List<String> snapshotAssetIds = lineageScopeAssetsByCode.values().stream()
                 .map(AssetDtos.AssetResponse::assetId)
                 .toList();
         lineageRepository.deactivateProducerEdgesForAssets(snapshotAssetIds, producer.serviceName(), now);

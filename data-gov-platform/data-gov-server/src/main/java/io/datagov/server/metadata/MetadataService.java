@@ -117,7 +117,14 @@ public class MetadataService {
                     itemStatus));
         }
 
-        lineageService.replaceSnapshotLineage(request.producer(), request.metadataList(), assetsByCode);
+        Map<String, AssetDtos.AssetResponse> lineageScopeAssetsByCode = lineageScopeAssetsByCode(
+                request.producer(),
+                assetsByCode);
+        lineageService.replaceSnapshotLineage(
+                request.producer(),
+                request.metadataList(),
+                assetsByCode,
+                lineageScopeAssetsByCode);
         int removed = markMissingScopedAssetsRemoved(request, currentAssetCodes, syncedAt, items);
 
         return new MetadataDtos.MetadataSyncResponse(
@@ -130,6 +137,20 @@ public class MetadataService {
                 removed,
                 List.copyOf(items),
                 syncedAt);
+    }
+
+    private Map<String, AssetDtos.AssetResponse> lineageScopeAssetsByCode(
+            MetadataDtos.ProducerRequest producer,
+            Map<String, AssetDtos.AssetResponse> currentAssetsByCode
+    ) {
+        Map<String, AssetDtos.AssetResponse> scopeAssetsByCode = new LinkedHashMap<>();
+        for (AssetDtos.AssetResponse scopedAsset : assetRepository.findAssetsInProducerScope(
+                producer.serviceName(),
+                producer.environment())) {
+            scopeAssetsByCode.put(scopedAsset.assetCode(), scopedAsset);
+        }
+        scopeAssetsByCode.putAll(currentAssetsByCode);
+        return scopeAssetsByCode;
     }
 
     private int markMissingScopedAssetsRemoved(
