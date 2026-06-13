@@ -189,6 +189,31 @@ class MetadataControllerTest {
     }
 
     @Test
+    void snapshotRegisterReplacesDeclaredLineageForProducerScope() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem("""
+                                %s,
+                                %s
+                                """.formatted(upstreamCellProfileItem(), targetCellProfileItemWithLineage(true)))))
+                .andExpect(status().isOk());
+
+        assertThat(activeLineageEdgeCount("dwd_cell_profile", "ads_cell_profile")).isEqualTo(1);
+        assertThat(activeFieldLineageCount()).isEqualTo(1);
+
+        mockMvc.perform(post(BASE_PATH + "/metadata/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(snapshotWithItem("""
+                                %s,
+                                %s
+                                """.formatted(upstreamCellProfileItem(), targetCellProfileItemWithLineage(false)))))
+                .andExpect(status().isOk());
+
+        assertThat(activeLineageEdgeCount("dwd_cell_profile", "ads_cell_profile")).isEqualTo(0);
+        assertThat(activeFieldLineageCount()).isEqualTo(0);
+    }
+
+    @Test
     void fullSnapshotDoesNotMarkMissingOfflineScopedMetadataRemovedBySnapshot() throws Exception {
         mockMvc.perform(post(BASE_PATH + "/metadata/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -307,6 +332,103 @@ class MetadataControllerTest {
                 """.formatted(assetCode, assetName, assetCode);
     }
 
+    private String upstreamCellProfileItem() {
+        return """
+                {
+                  "assetCode": "dwd_cell_profile",
+                  "assetName": "DWD Cell Profile",
+                  "metadataType": "TABLE",
+                  "sourceType": "HIVE",
+                  "domain": "wireless-rno",
+                  "owner": "network-team",
+                  "description": "Formal metadata snapshot item",
+                  "queryable": true,
+                  "federatedQueryable": true,
+                  "schema": [
+                    {
+                      "fieldName": "cell_id",
+                      "fieldType": "varchar",
+                      "ordinal": 1,
+                      "nullable": false
+                    },
+                    {
+                      "fieldName": "rsrp_avg",
+                      "fieldType": "double",
+                      "ordinal": 2,
+                      "nullable": true
+                    }
+                  ],
+                  "binding": {
+                    "sourceType": "HIVE",
+                    "catalog": "hive",
+                    "database": "dwd",
+                    "table": "dwd_cell_profile",
+                    "queryAdapter": "hive"
+                  }
+                }
+                """;
+    }
+
+    private String targetCellProfileItemWithLineage(boolean includeUpstream) {
+        String upstreams = includeUpstream ? """
+                    {
+                      "assetCode": "dwd_cell_profile",
+                      "lineageType": "FIELD",
+                      "transformType": "SQL",
+                      "expression": "coverage_score = normalize(rsrp_avg)",
+                      "processName": "cell-profile-aggregation",
+                      "jobName": "ads-cell-profile-snapshot",
+                      "fieldMappings": [
+                        {
+                          "sourceField": "rsrp_avg",
+                          "targetField": "coverage_score",
+                          "expression": "normalize(rsrp_avg)"
+                        }
+                      ]
+                    }
+                """ : "";
+        return """
+                {
+                  "assetCode": "ads_cell_profile",
+                  "assetName": "ADS Cell Profile",
+                  "metadataType": "TABLE",
+                  "sourceType": "STARROCKS",
+                  "domain": "wireless-rno",
+                  "owner": "network-team",
+                  "description": "Formal metadata snapshot item",
+                  "queryable": true,
+                  "federatedQueryable": true,
+                  "schema": [
+                    {
+                      "fieldName": "cell_id",
+                      "fieldType": "varchar",
+                      "ordinal": 1,
+                      "nullable": false
+                    },
+                    {
+                      "fieldName": "coverage_score",
+                      "fieldType": "double",
+                      "ordinal": 2,
+                      "nullable": true
+                    }
+                  ],
+                  "binding": {
+                    "sourceType": "STARROCKS",
+                    "catalog": "default_catalog",
+                    "database": "ads",
+                    "table": "ads_cell_profile",
+                    "queryAdapter": "starrocks"
+                  },
+                  "lineage": {
+                    "upstreams": [
+                      %s
+                    ],
+                    "downstreams": []
+                  }
+                }
+                """.formatted(upstreams);
+    }
+
     private String partialBindingItem() {
         return """
                 {
@@ -418,6 +540,28 @@ class MetadataControllerTest {
                 "select schema_version from data_asset where asset_code = ?",
                 Integer.class,
                 assetCode);
+    }
+
+    private int activeLineageEdgeCount(String sourceAssetCode, String targetAssetCode) {
+        return jdbcTemplate.queryForObject("""
+                select count(*)
+                from lineage_edge le
+                join data_asset source_asset on source_asset.asset_id = le.source_asset_id
+                join data_asset target_asset on target_asset.asset_id = le.target_asset_id
+                where le.active = true
+                  and source_asset.asset_code = ?
+                  and target_asset.asset_code = ?
+                """, Integer.class, sourceAssetCode, targetAssetCode);
+    }
+
+    private int activeFieldLineageCount() {
+        return jdbcTemplate.queryForObject("""
+                select count(*)
+                from lineage_field_edge lfe
+                join lineage_edge le on le.edge_id = lfe.lineage_edge_id
+                where lfe.active = true
+                  and le.active = true
+                """, Integer.class);
     }
 
     private String lifecycleStatus(String assetCode) {

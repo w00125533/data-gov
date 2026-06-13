@@ -2,7 +2,11 @@ package io.datagov.server.lineage;
 
 import io.datagov.common.dto.AssetDtos;
 import io.datagov.common.dto.LineageDtos;
+import io.datagov.common.dto.MetadataDtos;
 import io.datagov.common.enums.LineageDirection;
+import io.datagov.common.enums.LineageRelationType;
+import io.datagov.common.enums.LineageTransformType;
+import io.datagov.common.enums.LineageType;
 import io.datagov.server.asset.AssetNotFoundException;
 import io.datagov.server.asset.AssetRepository;
 import org.springframework.stereotype.Service;
@@ -51,6 +55,39 @@ public class LineageService {
                 now);
         lineageRepository.insertEdge(edge);
         return edge;
+    }
+
+    public void replaceSnapshotLineage(
+            MetadataDtos.ProducerRequest producer,
+            List<MetadataDtos.MetadataItemRequest> metadataItems,
+            Map<String, AssetDtos.AssetResponse> assetsByCode
+    ) {
+        Instant now = Instant.now();
+        List<String> snapshotAssetIds = assetsByCode.values().stream()
+                .map(AssetDtos.AssetResponse::assetId)
+                .toList();
+        lineageRepository.deactivateProducerEdgesForAssets(snapshotAssetIds, producer.serviceName(), now);
+
+        for (MetadataDtos.MetadataItemRequest item : metadataItems) {
+            AssetDtos.AssetResponse currentAsset = requireAssetFromSnapshotOrRepository(assetsByCode, item.assetCode());
+            if (item.lineage() == null) {
+                continue;
+            }
+
+            for (MetadataDtos.MetadataLineageEdgeRequest upstream : safeLineageEdges(item.lineage().upstreams())) {
+                AssetDtos.AssetResponse upstreamAsset = requireAssetFromSnapshotOrRepository(
+                        assetsByCode,
+                        upstream.assetCode());
+                createSnapshotEdge(upstreamAsset, currentAsset, producer, upstream, now);
+            }
+
+            for (MetadataDtos.MetadataLineageEdgeRequest downstream : safeLineageEdges(item.lineage().downstreams())) {
+                AssetDtos.AssetResponse downstreamAsset = requireAssetFromSnapshotOrRepository(
+                        assetsByCode,
+                        downstream.assetCode());
+                createSnapshotEdge(currentAsset, downstreamAsset, producer, downstream, now);
+            }
+        }
     }
 
     public LineageDtos.LineageGraphResponse getLineage(String assetCode, String direction, int depth) {
@@ -122,6 +159,89 @@ public class LineageService {
     private AssetDtos.AssetResponse requireAsset(String assetCode) {
         return assetRepository.findAssetByCode(assetCode)
                 .orElseThrow(() -> new AssetNotFoundException(assetCode));
+    }
+
+    private List<MetadataDtos.MetadataLineageEdgeRequest> safeLineageEdges(
+            List<MetadataDtos.MetadataLineageEdgeRequest> lineageEdges
+    ) {
+        return lineageEdges == null ? List.of() : lineageEdges;
+    }
+
+    private List<MetadataDtos.MetadataFieldMappingRequest> safeFieldMappings(
+            List<MetadataDtos.MetadataFieldMappingRequest> fieldMappings
+    ) {
+        return fieldMappings == null ? List.of() : fieldMappings;
+    }
+
+    private AssetDtos.AssetResponse requireAssetFromSnapshotOrRepository(
+            Map<String, AssetDtos.AssetResponse> assetsByCode,
+            String assetCode
+    ) {
+        AssetDtos.AssetResponse asset = assetsByCode.get(assetCode);
+        return asset == null ? requireAsset(assetCode) : asset;
+    }
+
+    private LineageDtos.LineageEdgeResponse createSnapshotEdge(
+            AssetDtos.AssetResponse source,
+            AssetDtos.AssetResponse target,
+            MetadataDtos.ProducerRequest producer,
+            MetadataDtos.MetadataLineageEdgeRequest request,
+            Instant now
+    ) {
+        if (source.assetId().equals(target.assetId())) {
+            throw new LineageValidationException(
+                    "INVALID_LINEAGE_EDGE",
+                    "Lineage edge source and target must be different assets");
+        }
+
+        LineageType lineageType = request.lineageType() == null ? LineageType.TABLE : request.lineageType();
+        LineageTransformType transformType = request.transformType() == null
+                ? LineageTransformType.DIRECT
+                : request.transformType();
+        Map<String, Object> properties = Map.of(
+                "lineageType", lineageType.name(),
+                "transformType", transformType.name());
+        LineageDtos.LineageEdgeResponse edge = new LineageDtos.LineageEdgeResponse(
+                newId("lin_"),
+                toNode(source),
+                toNode(target),
+                LineageRelationType.DERIVES,
+                producer.serviceName(),
+                request.processName(),
+                request.jobName(),
+                request.expression(),
+                properties,
+                true,
+                now,
+                now);
+        lineageRepository.insertEdge(edge);
+
+        if (lineageType == LineageType.FIELD) {
+            for (MetadataDtos.MetadataFieldMappingRequest fieldMapping : safeFieldMappings(request.fieldMappings())) {
+                lineageRepository.insertFieldEdge(new LineageRepository.FieldLineageRecord(
+                        newId("lfe_"),
+                        edge.edgeId(),
+                        requireFieldId(source.assetId(), fieldMapping.sourceField()),
+                        requireFieldId(target.assetId(), fieldMapping.targetField()),
+                        fieldMapping.expression(),
+                        request.expression(),
+                        properties,
+                        now,
+                        now));
+            }
+        }
+
+        return edge;
+    }
+
+    private String requireFieldId(String assetId, String fieldName) {
+        return assetRepository.findFields(assetId).stream()
+                .filter(field -> field.fieldName().equals(fieldName))
+                .map(AssetDtos.FieldResponse::fieldId)
+                .findFirst()
+                .orElseThrow(() -> new LineageValidationException(
+                        "UNKNOWN_LINEAGE_FIELD",
+                        "Unknown lineage field: " + fieldName));
     }
 
     private LineageDtos.LineageAssetNode toNode(AssetDtos.AssetResponse asset) {

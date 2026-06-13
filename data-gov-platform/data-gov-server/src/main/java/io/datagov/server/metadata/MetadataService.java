@@ -12,6 +12,7 @@ import io.datagov.common.enums.MetadataSyncMode;
 import io.datagov.server.asset.AssetNotFoundException;
 import io.datagov.server.asset.AssetRepository;
 import io.datagov.server.asset.AssetService;
+import io.datagov.server.lineage.LineageService;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -22,9 +23,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -32,17 +35,20 @@ import java.util.Set;
 public class MetadataService {
     private final AssetRepository assetRepository;
     private final AssetService assetService;
+    private final LineageService lineageService;
     private final TransactionTemplate transactionTemplate;
     private final ObjectWriter declarationHashWriter;
 
     public MetadataService(
             AssetRepository assetRepository,
             AssetService assetService,
+            LineageService lineageService,
             TransactionTemplate transactionTemplate,
             ObjectMapper objectMapper
     ) {
         this.assetRepository = assetRepository;
         this.assetService = assetService;
+        this.lineageService = lineageService;
         this.transactionTemplate = transactionTemplate;
         this.declarationHashWriter = objectMapper.writer()
                 .with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -69,6 +75,7 @@ public class MetadataService {
         Instant syncedAt = Instant.now();
         List<MetadataDtos.MetadataSyncItemResponse> items = new ArrayList<>();
         Set<String> currentAssetCodes = new LinkedHashSet<>();
+        Map<String, AssetDtos.AssetResponse> assetsByCode = new LinkedHashMap<>();
         int created = 0;
         int updated = 0;
         int unchanged = 0;
@@ -103,12 +110,14 @@ public class MetadataService {
                     declarationHash,
                     request.producer().instanceId(),
                     syncedAt);
+            assetsByCode.put(asset.assetCode(), asset);
             items.add(new MetadataDtos.MetadataSyncItemResponse(
                     asset.assetId(),
                     asset.assetCode(),
                     itemStatus));
         }
 
+        lineageService.replaceSnapshotLineage(request.producer(), request.metadataList(), assetsByCode);
         int removed = markMissingScopedAssetsRemoved(request, currentAssetCodes, syncedAt, items);
 
         return new MetadataDtos.MetadataSyncResponse(
