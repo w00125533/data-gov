@@ -34,15 +34,6 @@
 | [09-acceptance-suite.md](09-acceptance-suite.md) | API、Docker、UI、真实端到端验收用例集。 |
 | [10-migration-appendix.md](10-migration-appendix.md) | FastAPI、Neo4j、旧 `/api`、G6 和旧 compose 的迁移策略。 |
 | [11-open-decisions.md](11-open-decisions.md) | 已确认决策和后续需要产品或技术确认的问题。 |
-| [12-rno-domain-and-metadata-detailed-spec.md](12-rno-domain-and-metadata-detailed-spec.md) | 继承 5 月文档的信息量，展开 RNO 样例域、分层模型、样例表、字段、血缘、YAML 和元数据演进细节。 |
-| [13-agent-search-sandbox-detailed-spec.md](13-agent-search-sandbox-detailed-spec.md) | 展开 NL-to-Code Agent、LangGraph 节点、工具、语义检索、benchmark、沙箱和重试机制。 |
-| [14-ui-x6-interaction-detailed-spec.md](14-ui-x6-interaction-detailed-spec.md) | 展开完整 UI 目标态，按页面、布局、操作、X6 画布、右键菜单和跨页面联动描述。 |
-| [15-api-runtime-sdk-detailed-spec.md](15-api-runtime-sdk-detailed-spec.md) | 展开 Spring Boot API、GaussDB 表、SDK Builder、订阅、查询、通知、drift 和运行时序。 |
-| [16-e2e-acceptance-detailed-spec.md](16-e2e-acceptance-detailed-spec.md) | 展开 Phase 1 到 Phase 7 的详细验收用例、命令、数据和预期结果。 |
-| [17-feature-matrix-detailed.md](17-feature-matrix-detailed.md) | 以 5 月功能树为基准，逐项映射目标态、当前状态、迁移动作和验收方式。 |
-| [18-api-parameter-matrix.md](18-api-parameter-matrix.md) | 展开正式 API 的请求参数、响应字段、校验规则、错误码和 DTO 口径。 |
-| [19-project-structure-and-infra-detailed.md](19-project-structure-and-infra-detailed.md) | 展开目标项目结构、shared infra 复用、初始化、健康检查和本地运行方式。 |
-| [20-source-coverage-map.md](20-source-coverage-map.md) | 对照 5 月和 6 月历史文档，逐节说明内容迁移到新文档集的位置。 |
 
 ## 3. 当前实施状态
 
@@ -63,4 +54,3 @@
 - 历史文档只作为来源和迁移依据，不再作为目标态权威口径。
 - 如果实现与本文档冲突，应优先判断是文档需要更新，还是实现仍处于迁移阶段。
 - 基础设施相关变更必须遵守仓库根目录 `AGENTS.md` 中的 shared infra 约束。
-- 详细规格文档不是附录摘要，而是后续实施计划的主要信息来源；实现计划应优先引用 `12` 到 `16` 的具体用例和交互细节。
