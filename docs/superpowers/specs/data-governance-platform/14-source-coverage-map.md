@@ -2,7 +2,7 @@
 
 ## 1. 5 月文档覆盖
 
-来源文件：`../archive/2026-05-13-wireless-rno-data-service-design.md`。
+来源：5 月无线 RNO 语义化服务设计。归档文件已删除，本表保留覆盖映射。
 
 | 来源 | 新落点 | 说明 |
 | --- | --- | --- |
@@ -21,10 +21,7 @@
 
 ## 2. 6 月文档覆盖
 
-来源文件：
-
-- `../archive/2026-06-10-data-product-governance-design.md`
-- `../archive/data-governance/`
+来源：6 月数据产品治理设计及 data-governance 拆分文档。归档文件已删除，本表保留覆盖映射。
 
 | 来源 | 新落点 | 说明 |
 | --- | --- | --- |
