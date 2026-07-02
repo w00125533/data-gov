@@ -1608,6 +1608,8 @@ class SandboxController:
 4. 保存 → 创建 (target)-[:DERIVES_FROM {transform_expr}]->(upstream) 边 → G6 图实时刷新
 ```
 
+当前 Web 实现已接入同一后端 API，并先提供弹窗式新建血缘边：用户输入源字段 `table.field`、目标字段 `table.field` 和转换表达式后保存；后续可在 G6 字段点拖拽能力稳定后，将弹窗入口与拖拽连线合并。
+
 #### 跳转 /chat 联动的上下文注入
 
 右键选择「用 NL 修改...」时：
@@ -1702,6 +1704,10 @@ context_prompt = """
 | PUT | `/api/fields/:id` | 编辑字段 (含表达式/上游引用) |
 | DELETE | `/api/fields/:id` | 删除字段 (含断链校验) |
 | GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) — Cypher: `MATCH path=(f:Field)-[:DERIVES_FROM*1..$d]->(u) RETURN path` |
+| POST | `/api/lineage/edges` | 新建字段级血缘边，入参为源字段、目标字段、转换表达式 |
+| PUT | `/api/lineage/edges/:edge_id` | 更新血缘边转换表达式 |
+| DELETE | `/api/lineage/edges/:edge_id` | 删除血缘边 |
+| GET | `/api/metadata/impact` | 删除/变更前下游影响预检查 (?table= ?field=) |
 | POST | `/api/chat/start` | 新建对话 |
 | POST | `/api/chat/message` | 发送消息 → SSE stream |
 | GET | `/api/chat/:id/result` | 获取 dry-run 结果 |
