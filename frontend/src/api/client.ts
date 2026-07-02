@@ -58,11 +58,13 @@ export type SchemaApplyPayload = {
 }
 
 export type LineageEdge = {
+  edge_id?: string
   from_table: string
   from_field: string
   to_table: string
   to_field: string
   transform_expr: string
+  created_at?: string
 }
 
 export type LineageResponse = {
@@ -75,8 +77,11 @@ export type LineageResponse = {
 export type PipelineResponse = {
   mode: 'forward' | 'reverse'
   table?: string | null
-  nodes: Array<TableSummary & { selected?: boolean }>
-  edges: Array<{ source: string; target: string; weight: number }>
+  depth: number
+  nodes: Array<TableSummary & { selected?: boolean; upstream_tables?: string[]; downstream_tables?: string[] }>
+  edges: Array<{ source: string; target: string; weight: number; fields?: string[]; constraint_summary?: string }>
+  selected_path: string[]
+  constraints: Array<{ field: string; range: [number, number] | number[]; rows: number; bucket: string }>
 }
 
 export type YamlFile = {
@@ -85,13 +90,39 @@ export type YamlFile = {
   content: string
 }
 
+export type YamlExportResponse = {
+  table?: string | null
+  files: YamlFile[]
+}
+
 export type SchemaChange = {
   change_id: string
   operation: string
   table_name?: string | null
   field_name?: string | null
+  version?: number | null
+  previous_version?: number | null
+  old_value?: unknown
+  new_value?: unknown
+  downstream?: Array<{ table?: string; field?: string }>
   changed_at: string
   commit_hash?: string | null
+}
+
+export type ImpactResponse = {
+  table: string
+  field?: string | null
+  has_downstream: boolean
+  affected_tables: string[]
+  downstream: LineageEdge[]
+}
+
+export type LineageEdgePayload = {
+  from_table: string
+  from_field: string
+  to_table: string
+  to_field: string
+  transform_expr: string
 }
 
 export type HealthPayload = {
@@ -157,6 +188,8 @@ export const api = {
     fetch(`${API_BASE}/api/fields/${id}`, { method: 'DELETE' }).then(async (res) => {
       if (!res.ok) throw new Error(await res.text())
     }),
+  impact: (params: { table: string; field?: string | null }) =>
+    fetchJson<ImpactResponse>(`/api/metadata/impact${qs(params)}`),
   applySchema: (payload: SchemaApplyPayload) =>
     fetchJson<{ passed: boolean; errors: unknown[]; warnings: unknown[]; applied: unknown[] }>('/api/schema/apply', {
       method: 'POST',
@@ -164,9 +197,24 @@ export const api = {
     }),
   lineage: (params: { table: string; direction?: 'up' | 'down'; depth?: number }) =>
     fetchJson<LineageResponse>(`/api/lineage${qs(params)}`),
-  pipeline: (params: { mode?: 'forward' | 'reverse'; table?: string | null } = {}) =>
+  createLineageEdge: (payload: LineageEdgePayload) =>
+    fetchJson<LineageEdge>('/api/lineage/edges', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateLineageEdge: (edgeId: string, payload: { transform_expr: string }) =>
+    fetchJson<LineageEdge>(`/api/lineage/edges/${encodeURIComponent(edgeId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteLineageEdge: (edgeId: string) =>
+    fetch(`${API_BASE}/api/lineage/edges/${encodeURIComponent(edgeId)}`, { method: 'DELETE' }).then(async (res) => {
+      if (!res.ok) throw new Error(await res.text())
+    }),
+  pipeline: (params: { mode?: 'forward' | 'reverse'; table?: string | null; depth?: number } = {}) =>
     fetchJson<PipelineResponse>(`/api/pipeline${qs(params)}`),
   yamlPreview: (table: string) => fetchJson<YamlFile>(`/api/yaml/preview/${table}`),
+  yamlExport: (table?: string | null) => fetchJson<YamlExportResponse>(`/api/yaml/export${qs({ table })}`),
   health: () => fetchJson<HealthPayload>('/api/health'),
   schemaEvolution: (table: string) =>
     fetchJson<{ table: string; changes: SchemaChange[] }>(`/api/schema/evolution/${table}`),

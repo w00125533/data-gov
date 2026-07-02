@@ -3,11 +3,14 @@ import { Alert, Button, Card, Input, Space, Tag, Typography } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import AgentStepper from '../components/AgentStepper'
 import ChatStream from '../components/ChatStream'
 import CodeCard from '../components/CodeCard'
 import ConstraintSlider from '../components/ConstraintSlider'
 import DiffPanel from '../components/DiffPanel'
 import DryRunPreview from '../components/DryRunPreview'
+import GapProposalCard from '../components/GapProposalCard'
+import ReverseSynthesisPanel from '../components/ReverseSynthesisPanel'
 
 type ChatItem = {
   role: 'user' | 'assistant' | 'event'
@@ -26,6 +29,10 @@ type PresenterPayload = {
   applied?: Array<Record<string, unknown>>
   warnings?: unknown[]
   errors?: unknown[]
+  intent?: string
+  gaps?: unknown[]
+  draft?: unknown
+  constraints?: Array<{ field: string; range: [number, number] | number[]; rows: number; bucket: string }>
 }
 
 function ResultPanel({ payload }: { payload?: PresenterPayload }) {
@@ -44,7 +51,11 @@ function ResultPanel({ payload }: { payload?: PresenterPayload }) {
         <Tag color={payload.success ? 'success' : 'error'} icon={payload.success ? <CheckCircleOutlined /> : <AlertOutlined />}>
           {payload.success ? '执行成功' : '执行失败'}
         </Tag>
-        <CodeCard title={payload.code_type ?? '生成代码'} code={payload.code ?? ''} language={payload.code_type?.includes('java') ? 'java' : 'sql'} />
+        <CodeCard
+          title={payload.code_type ?? '生成代码'}
+          code={payload.code ?? ''}
+          language={payload.code_type?.includes('java') ? 'java' : 'sql'}
+        />
         <DryRunPreview row={payload.preview_row} />
         {payload.error_log ? <Alert type="error" message="错误日志" description={payload.error_log} /> : null}
       </Space>
@@ -66,6 +77,14 @@ function ResultPanel({ payload }: { payload?: PresenterPayload }) {
         {payload.warnings?.length ? <Alert type="warning" message="影响提示" description={JSON.stringify(payload.warnings)} /> : null}
       </Space>
     )
+  }
+
+  if (payload.type === 'gap_proposal_card') {
+    return <GapProposalCard gaps={payload.gaps} draft={payload.draft} />
+  }
+
+  if (payload.type === 'reverse_constraints' || payload.constraints?.length) {
+    return <ReverseSynthesisPanel constraints={payload.constraints ?? []} />
   }
 
   if (payload.type === 'clarification') {
@@ -92,6 +111,7 @@ export default function Chat() {
   const [items, setItems] = useState<ChatItem[]>([])
   const [streaming, setStreaming] = useState(false)
   const [resultPayload, setResultPayload] = useState<PresenterPayload>()
+  const [completedNodes, setCompletedNodes] = useState<string[]>([])
 
   useEffect(() => {
     api.chatStart(context)
@@ -111,6 +131,7 @@ export default function Chat() {
     const content = input.trim()
     setInput('')
     setResultPayload(undefined)
+    setCompletedNodes([])
     setItems((prev) => [...prev, { role: 'user', content }])
     setStreaming(true)
     try {
@@ -135,6 +156,7 @@ export default function Chat() {
           if (!dataLine) return
           const payload = JSON.parse(dataLine.slice(5))
           if (payload.event === 'node_complete') {
+            setCompletedNodes((prev) => [...prev, payload.node])
             setItems((prev) => [...prev, { role: 'event', node: payload.node, content: '节点执行完成' }])
           }
           if (payload.event === 'presenter_payload') {
@@ -185,7 +207,13 @@ export default function Chat() {
         </Space.Compact>
       </section>
       <aside className="panel panel-pad">
-        <Typography.Title level={4} style={{ marginTop: 0 }}>结果面板</Typography.Title>
+        <Space direction="vertical" style={{ width: '100%' }} size={14}>
+          <div className="toolbar">
+            <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 0 }}>结果面板</Typography.Title>
+            {resultPayload?.intent ? <Tag color="blue">{resultPayload.intent}</Tag> : null}
+          </div>
+          {completedNodes.length ? <AgentStepper nodes={completedNodes} /> : null}
+        </Space>
         <ResultPanel payload={resultPayload} />
       </aside>
     </div>

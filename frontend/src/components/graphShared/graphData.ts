@@ -3,7 +3,7 @@ import { colorForLayer } from './palette'
 
 export type GraphDatum = {
   nodes: Array<{ id: string; data?: Record<string, unknown>; style?: Record<string, unknown> }>
-  edges: Array<{ source: string; target: string; data?: Record<string, unknown>; style?: Record<string, unknown> }>
+  edges: Array<{ id?: string; source: string; target: string; data?: Record<string, unknown>; style?: Record<string, unknown> }>
 }
 
 export function lineageToGraph(edges: LineageEdge[]): GraphDatum {
@@ -25,9 +25,10 @@ export function lineageToGraph(edges: LineageEdge[]): GraphDatum {
   return {
     nodes: Array.from(nodes.values()),
     edges: edges.map((edge) => ({
+      id: edge.edge_id || `${edge.from_table}.${edge.from_field}->${edge.to_table}.${edge.to_field}`,
       source: `${edge.from_table}.${edge.from_field}`,
       target: `${edge.to_table}.${edge.to_field}`,
-      data: { transform_expr: edge.transform_expr },
+      data: { ...edge },
       style: { labelText: edge.transform_expr || 'DERIVES_FROM' },
     })),
   }
@@ -53,7 +54,7 @@ export function pipelineToGraph(payload?: PipelineResponse): GraphDatum {
       source: edge.source,
       target: edge.target,
       data: edge,
-      style: { labelText: `${edge.weight} 字段` },
+      style: { labelText: edge.constraint_summary || `${edge.weight} 字段` },
     })),
   }
 }

@@ -1,12 +1,14 @@
 import {
   DeleteOutlined,
   EditOutlined,
+  ExportOutlined,
   EyeOutlined,
   ForkOutlined,
   HistoryOutlined,
   PlusOutlined,
   SaveOutlined,
 } from '@ant-design/icons'
+import Editor from '@monaco-editor/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
@@ -16,7 +18,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Table,
@@ -26,7 +27,7 @@ import {
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -37,7 +38,9 @@ import {
   type TableResponse,
   type TableSummary,
   type UpdateFieldPayload,
+  type UpstreamRef,
 } from '../api/client'
+import FieldUpstreamEditor from '../components/FieldUpstreamEditor'
 
 const layers: Array<Layer | 'ALL'> = ['ALL', 'ODS', 'DWD', 'DWS', 'ADS', 'EVAL']
 const fieldTypes = ['STRING', 'INT', 'BIGINT', 'DOUBLE', 'TIMESTAMP', 'DATE']
@@ -61,23 +64,7 @@ type FieldFormValues = {
   is_partition: boolean
   expression?: string
   description: string
-  upstream_text?: string
-}
-
-function parseUpstream(text?: string) {
-  return (text ?? '')
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const [table, field] = item.split('.')
-      return { table, field }
-    })
-    .filter((item) => item.table && item.field)
-}
-
-function upstreamText(field?: FieldResponse) {
-  return field?.upstream.map((up) => `${up.table}.${up.field}`).join('\n') ?? ''
+  upstream?: UpstreamRef[]
 }
 
 export default function Metadata() {
@@ -92,6 +79,7 @@ export default function Metadata() {
   const [fieldDrawer, setFieldDrawer] = useState<{ mode: 'create' | 'edit'; field?: FieldResponse } | undefined>()
   const [tableForm] = Form.useForm<TableFormValues>()
   const [fieldForm] = Form.useForm<FieldFormValues>()
+  const expressionValue = Form.useWatch('expression', fieldForm)
 
   const tableQuery = useQuery({
     queryKey: ['tables', layer, search],
@@ -122,7 +110,28 @@ export default function Metadata() {
   }
 
   const createTableMutation = useMutation({
-    mutationFn: api.createTable,
+    mutationFn: async (values: TableFormValues) => {
+      const table = await api.createTable({
+        name: values.name,
+        layer: values.layer,
+        storage_type: values.storage_type,
+        description: values.description,
+      })
+      const initialFields = (values.fields ?? []).filter((field) => field.name)
+      for (const field of initialFields) {
+        await api.createField({
+          table_id: table.id,
+          name: field.name!,
+          field_type: field.data_type ?? 'STRING',
+          is_nullable: field.nullable ?? true,
+          is_partition: field.partition ?? false,
+          expression: field.expression || null,
+          description: field.description ?? '',
+          upstream: [],
+        })
+      }
+      return api.table(table.id)
+    },
     onSuccess: (table) => {
       apiMessage.success('表已创建')
       setTableModal(undefined)
@@ -133,7 +142,11 @@ export default function Metadata() {
   })
 
   const updateTableMutation = useMutation({
-    mutationFn: (values: TableFormValues) => api.updateTable(detailQuery.data!.id, values),
+    mutationFn: (values: TableFormValues) => api.updateTable(detailQuery.data!.id, {
+      layer: values.layer,
+      storage_type: values.storage_type,
+      description: values.description,
+    }),
     onSuccess: (table) => {
       apiMessage.success('表信息已更新')
       setTableModal(undefined)
@@ -155,6 +168,14 @@ export default function Metadata() {
       }
     },
     onError: (error) => apiMessage.error(`同步失败: ${(error as Error).message}`),
+  })
+
+  const yamlExportMutation = useMutation({
+    mutationFn: (table?: string) => api.yamlExport(table),
+    onSuccess: (payload) => {
+      apiMessage.success(`已导出 ${payload.files.length} 个 YAML 文件`)
+    },
+    onError: (error) => apiMessage.error(`导出失败: ${(error as Error).message}`),
   })
 
   const createFieldMutation = useMutation({
@@ -196,8 +217,7 @@ export default function Metadata() {
     onError: (error) => apiMessage.error(`删除被拒绝: ${(error as Error).message}`),
   })
 
-  const columns = useMemo<ColumnsType<FieldResponse>>(
-    () => [
+  const columns: ColumnsType<FieldResponse> = [
       {
         title: '字段',
         dataIndex: 'name',
@@ -240,20 +260,16 @@ export default function Metadata() {
                   is_partition: row.is_partition,
                   expression: row.expression ?? '',
                   description: row.description,
-                  upstream_text: upstreamText(row),
+                  upstream: row.upstream,
                 })
                 setFieldDrawer({ mode: 'edit', field: row })
               }}
             />
-            <Popconfirm title="删除字段" description="有下游依赖时后端会拒绝删除。" onConfirm={() => deleteFieldMutation.mutate(row.id)}>
-              <Button size="small" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => void confirmDeleteField(row)} />
           </Space>
         ),
       },
-    ],
-    [deleteFieldMutation, fieldForm],
-  )
+    ]
 
   function openCreateTable() {
     tableForm.resetFields()
@@ -308,12 +324,7 @@ export default function Metadata() {
         })
         return
       }
-      createTableMutation.mutate({
-        name: values.name,
-        layer: values.layer,
-        storage_type: values.storage_type,
-        description: values.description,
-      })
+      createTableMutation.mutate(values)
     })
   }
 
@@ -326,7 +337,7 @@ export default function Metadata() {
         is_partition: values.is_partition,
         expression: values.expression || null,
         description: values.description,
-        upstream: parseUpstream(values.upstream_text),
+        upstream: values.upstream ?? [],
       }
       if (fieldDrawer?.mode === 'edit' && fieldDrawer.field) {
         updateFieldMutation.mutate({ id: fieldDrawer.field.id, payload: basePayload })
@@ -341,13 +352,62 @@ export default function Metadata() {
     })
   }
 
+  async function confirmDeleteField(field: FieldResponse) {
+    if (!detailQuery.data) return
+    try {
+      const impact = await api.impact({ table: detailQuery.data.name, field: field.name })
+      if (impact.has_downstream) {
+        Modal.warning({
+          title: '字段存在下游依赖',
+          content: `影响下游: ${impact.downstream.map((edge) => `${edge.to_table}.${edge.to_field}`).join(', ')}`,
+        })
+        return
+      }
+      deleteFieldMutation.mutate(field.id)
+    } catch (error) {
+      apiMessage.error(`影响检查失败: ${(error as Error).message}`)
+    }
+  }
+
+  async function confirmDeleteTable(table: TableResponse) {
+    try {
+      const impact = await api.impact({ table: table.name })
+      if (impact.has_downstream) {
+        Modal.warning({
+          title: '表存在下游依赖',
+          content: `影响下游表: ${impact.affected_tables.join(', ')}`,
+        })
+        return
+      }
+      deleteTableMutation.mutate(table.id)
+    } catch (error) {
+      apiMessage.error(`影响检查失败: ${(error as Error).message}`)
+    }
+  }
+
+  function openCreateDownstreamTable() {
+    if (!detailQuery.data) return
+    tableForm.resetFields()
+    tableForm.setFieldsValue({
+      name: `${detailQuery.data.name}_downstream`,
+      layer: detailQuery.data.layer,
+      storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
+      description: `下游表，来源: ${detailQuery.data.name}`,
+      fields: [{ data_type: 'STRING', nullable: true, partition: false, description: `来自 ${detailQuery.data.name}` }],
+    })
+    setTableModal('create')
+  }
+
   return (
     <div className="page-grid">
       {holder}
       <section className="panel panel-pad">
         <div className="toolbar">
           <Typography.Title level={4} style={{ margin: 0 }}>元数据管理</Typography.Title>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateTable}>新建表</Button>
+          <Space>
+            <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(undefined)} loading={yamlExportMutation.isPending}>导出 YAML</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateTable}>新建表</Button>
+          </Space>
         </div>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Input.Search
@@ -405,19 +465,19 @@ export default function Metadata() {
                 <Button icon={<EditOutlined />} onClick={openEditTable}>编辑表</Button>
                 <Button icon={<PlusOutlined />} onClick={() => {
                   fieldForm.resetFields()
-                  fieldForm.setFieldsValue({ field_type: 'STRING', is_nullable: true, is_partition: false, description: '' })
+                  fieldForm.setFieldsValue({ field_type: 'STRING', is_nullable: true, is_partition: false, description: '', upstream: [] })
                   setFieldDrawer({ mode: 'create' })
                 }}>新建字段</Button>
                 <Button icon={<EyeOutlined />} onClick={() => setYamlTable(detailQuery.data.name)}>预览 YAML</Button>
+                <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(detailQuery.data.name)} loading={yamlExportMutation.isPending}>导出单表</Button>
                 <Link to={`/metadata/lineage?table=${detailQuery.data.name}`}>
                   <Button icon={<ForkOutlined />}>查看血缘</Button>
                 </Link>
                 <Link to={`/schema-evolution?table=${detailQuery.data.name}`}>
                   <Button icon={<HistoryOutlined />}>演化历史</Button>
                 </Link>
-                <Popconfirm title="删除表" description="会先检查字段下游依赖。" onConfirm={() => deleteTableMutation.mutate(detailQuery.data.id)}>
-                  <Button danger icon={<DeleteOutlined />}>删除</Button>
-                </Popconfirm>
+                <Button icon={<PlusOutlined />} onClick={openCreateDownstreamTable}>创建下游表</Button>
+                <Button danger icon={<DeleteOutlined />} onClick={() => void confirmDeleteTable(detailQuery.data)}>删除</Button>
               </Space>
             </div>
             <Descriptions bordered size="small" column={4}>
@@ -501,8 +561,18 @@ export default function Metadata() {
             <Form.Item name="is_nullable" valuePropName="checked"><Checkbox>可空</Checkbox></Form.Item>
             <Form.Item name="is_partition" valuePropName="checked"><Checkbox>分区字段</Checkbox></Form.Item>
           </Space>
-          <Form.Item name="expression" label="表达式"><Input.TextArea rows={4} /></Form.Item>
-          <Form.Item name="upstream_text" label="上游字段"><Input.TextArea rows={3} placeholder="每行一个: table.field" /></Form.Item>
+          <Form.Item label="表达式">
+            <Editor
+              height="180px"
+              language="sql"
+              value={expressionValue ?? ''}
+              options={{ minimap: { enabled: false } }}
+              onChange={(value) => fieldForm.setFieldValue('expression', value ?? '')}
+            />
+          </Form.Item>
+          <Form.Item name="upstream" label="上游字段">
+            <FieldUpstreamEditor />
+          </Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
         </Form>
       </Drawer>

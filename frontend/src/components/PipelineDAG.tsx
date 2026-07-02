@@ -2,6 +2,7 @@ import { Graph } from '@antv/g6'
 import { Empty, List, Tag } from 'antd'
 import { useEffect, useRef } from 'react'
 import type { PipelineResponse } from '../api/client'
+import GraphToolbar from './GraphToolbar'
 import { pipelineToGraph } from './graphShared/graphData'
 import { colorForLayer } from './graphShared/palette'
 
@@ -10,13 +11,25 @@ type Props = {
   onSelectTable?: (table: string) => void
 }
 
+type GraphEvent = {
+  target?: { id?: string }
+}
+
+type RuntimeGraph = {
+  render: () => void
+  destroy: () => void
+  fitView?: () => void
+  on?: (eventName: string, handler: (event: GraphEvent) => void) => void
+}
+
 export default function PipelineDAG({ payload, onSelectTable }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  const graphRef = useRef<RuntimeGraph>()
   const data = pipelineToGraph(payload)
 
   useEffect(() => {
     if (!ref.current || data.nodes.length === 0) return
-    const graph: any = new Graph({
+    const graph = new Graph({
       container: ref.current,
       autoFit: 'view',
       data,
@@ -41,13 +54,17 @@ export default function PipelineDAG({ payload, onSelectTable }: Props) {
         },
       },
       behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
-    })
+    }) as RuntimeGraph
+    graphRef.current = graph
     graph.render()
-    graph.on?.('node:click', (event: any) => {
-      const id = event.target?.id as string | undefined
+    graph.on?.('node:click', (event) => {
+      const id = event.target?.id
       if (id) onSelectTable?.(id)
     })
-    return () => graph.destroy()
+    return () => {
+      graph.destroy()
+      graphRef.current = undefined
+    }
   }, [data, onSelectTable, payload?.mode])
 
   if (!payload || data.nodes.length === 0) {
@@ -56,6 +73,10 @@ export default function PipelineDAG({ payload, onSelectTable }: Props) {
 
   return (
     <div className="graph-shell">
+      <GraphToolbar
+        onFit={() => graphRef.current?.fitView?.()}
+        onFullscreen={() => ref.current?.requestFullscreen?.()}
+      />
       <div className="graph-container" ref={ref} />
       <div className="graph-fallback">
         <List

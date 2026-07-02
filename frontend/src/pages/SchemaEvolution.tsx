@@ -26,8 +26,8 @@ export default function SchemaEvolution() {
   })
   const selectedTable = selected?.table_name ?? effectiveTable
   const diffQuery = useQuery({
-    queryKey: ['yaml-diff', selectedTable, selected?.change_id],
-    queryFn: () => api.yamlDiff(selectedTable!, 1),
+    queryKey: ['yaml-diff', selectedTable, selected?.version, selected?.change_id],
+    queryFn: () => api.yamlDiff(selectedTable!, selected?.version ?? 1),
     enabled: Boolean(selectedTable && selected),
   })
 
@@ -71,7 +71,12 @@ export default function SchemaEvolution() {
         footer={null}
         width={980}
       >
-        <DiffPanel oldValue={diffQuery.data?.historical ?? ''} newValue={diffQuery.data?.current ?? ''} />
+        <DiffPanel
+          oldValue={diffQuery.data?.historical ?? ''}
+          newValue={diffQuery.data?.current ?? ''}
+          oldLabel={`历史版本 v${selected?.previous_version ?? '-'}`}
+          newLabel={`当前版本 v${selected?.version ?? '-'}`}
+        />
       </Modal>
     </div>
   )
