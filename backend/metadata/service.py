@@ -14,7 +14,10 @@ from backend.metadata.models import (
     CreateFieldRequest,
     CreateTableRequest,
     FieldResponse,
+    ImpactResponse,
     LineageEdge,
+    LineageEdgeCreateRequest,
+    LineageEdgeUpdateRequest,
     TableResponse,
     TableSummary,
     UpdateFieldRequest,
@@ -39,8 +42,14 @@ class FieldHasDownstream(Exception):
         super().__init__(f"field has {len(downstream)} downstream dependents")
 
 
-class CycleDetected(Exception):
+class LineageEdgeNotFound(Exception):
     pass
+
+
+class CycleDetected(Exception):
+    def __init__(self, path: list[dict]):
+        self.path = path
+        super().__init__("lineage cycle detected")
 
 
 # ----------------------- Tables -----------------------
@@ -261,45 +270,214 @@ def delete_field(field_id: str) -> None:
 
 # ----------------------- Lineage -----------------------
 
+def _serialize_neo4j_datetime(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "iso_format"):
+        return value.iso_format()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _lineage_edge_from_row(row: dict) -> LineageEdge:
+    return LineageEdge(
+        edge_id=str(row.get("edge_id") or ""),
+        from_table=row["from_table"],
+        from_field=row["from_field"],
+        to_table=row["to_table"],
+        to_field=row["to_field"],
+        transform_expr=row.get("transform_expr") or "",
+        created_at=_serialize_neo4j_datetime(row.get("created_at")),
+    )
+
+
+def _load_lineage_edge(edge_id: str) -> LineageEdge:
+    rows = run_query(
+        """
+        MATCH (to_f:Field)-[r:DERIVES_FROM]->(from_f:Field)
+        WHERE r.edge_id = $edge_id OR elementId(r) = $edge_id
+        MATCH (from_t:Table)-[:HAS_FIELD]->(from_f)
+        MATCH (to_t:Table)-[:HAS_FIELD]->(to_f)
+        RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
+               from_t.name AS from_table, from_f.name AS from_field,
+               to_t.name AS to_table, to_f.name AS to_field,
+               r.transform_expr AS transform_expr, r.created_at AS created_at
+        """,
+        edge_id=edge_id,
+    )
+    if not rows:
+        raise LineageEdgeNotFound(edge_id)
+    return _lineage_edge_from_row(rows[0])
+
+
+def assert_no_lineage_cycle(target_field_id: str, source_field_id: str) -> None:
+    if target_field_id == source_field_id:
+        rows = run_query(
+            """
+            MATCH (f:Field {id: $id})<-[:HAS_FIELD]-(t:Table)
+            RETURN [{table: t.name, field: f.name, field_id: f.id}] AS path
+            """,
+            id=target_field_id,
+        )
+        raise CycleDetected(rows[0]["path"] if rows else [])
+    rows = run_query(
+        """
+        MATCH p = (source:Field {id: $source_field_id})-[:DERIVES_FROM*1..20]->(target:Field {id: $target_field_id})
+        WITH nodes(p) AS path_nodes
+        UNWIND path_nodes AS f
+        MATCH (t:Table)-[:HAS_FIELD]->(f)
+        RETURN collect({table: t.name, field: f.name, field_id: f.id}) AS path
+        LIMIT 1
+        """,
+        source_field_id=source_field_id,
+        target_field_id=target_field_id,
+    )
+    if rows:
+        raise CycleDetected(rows[0]["path"])
+
+
+def create_lineage_edge(req: LineageEdgeCreateRequest) -> LineageEdge:
+    rows = run_query(
+        """
+        MATCH (from_t:Table {name: $from_table})-[:HAS_FIELD]->(from_f:Field {name: $from_field})
+        MATCH (to_t:Table {name: $to_table})-[:HAS_FIELD]->(to_f:Field {name: $to_field})
+        RETURN from_f.id AS source_field_id, to_f.id AS target_field_id
+        """,
+        from_table=req.from_table,
+        from_field=req.from_field,
+        to_table=req.to_table,
+        to_field=req.to_field,
+    )
+    if not rows:
+        raise FieldNotFound(f"{req.from_table}.{req.from_field} -> {req.to_table}.{req.to_field}")
+
+    source_field_id = rows[0]["source_field_id"]
+    target_field_id = rows[0]["target_field_id"]
+    assert_no_lineage_cycle(target_field_id=target_field_id, source_field_id=source_field_id)
+
+    rows = run_query(
+        """
+        MATCH (from_f:Field {id: $source_field_id})
+        MATCH (to_f:Field {id: $target_field_id})
+        MERGE (to_f)-[r:DERIVES_FROM]->(from_f)
+        ON CREATE SET r.edge_id = $edge_id,
+                      r.created_at = datetime(),
+                      r.transform_expr = $transform_expr
+        ON MATCH SET r.transform_expr = $transform_expr
+        RETURN coalesce(r.edge_id, elementId(r)) AS edge_id
+        """,
+        source_field_id=source_field_id,
+        target_field_id=target_field_id,
+        edge_id=str(uuid.uuid4()),
+        transform_expr=req.transform_expr,
+    )
+    if not rows:
+        raise LineageEdgeNotFound(f"{req.from_table}.{req.from_field} -> {req.to_table}.{req.to_field}")
+    return _load_lineage_edge(rows[0]["edge_id"])
+
+
+def update_lineage_edge(edge_id: str, req: LineageEdgeUpdateRequest) -> LineageEdge:
+    rows = run_query(
+        """
+        MATCH ()-[r:DERIVES_FROM]->()
+        WHERE r.edge_id = $edge_id OR elementId(r) = $edge_id
+        SET r.transform_expr = $transform_expr
+        RETURN coalesce(r.edge_id, elementId(r)) AS edge_id
+        """,
+        edge_id=edge_id,
+        transform_expr=req.transform_expr,
+    )
+    if not rows:
+        raise LineageEdgeNotFound(edge_id)
+    return _load_lineage_edge(rows[0]["edge_id"])
+
+
+def delete_lineage_edge(edge_id: str) -> None:
+    rows = run_query(
+        """
+        MATCH ()-[r:DERIVES_FROM]->()
+        WHERE r.edge_id = $edge_id OR elementId(r) = $edge_id
+        WITH collect(r) AS rels
+        FOREACH (r IN rels | DELETE r)
+        RETURN size(rels) AS deleted
+        """,
+        edge_id=edge_id,
+    )
+    if not rows or rows[0]["deleted"] == 0:
+        raise LineageEdgeNotFound(edge_id)
+
 def get_lineage(table: str, direction: str = "down", depth: int = 5) -> list[LineageEdge]:
     if direction not in ("up", "down"):
         raise ValueError(f"direction must be 'up' or 'down', got {direction!r}")
     if not 1 <= depth <= 5:
         raise ValueError(f"depth must be in [1,5], got {depth}")
-    pattern = (
-        f"MATCH (root_t:Table {{name: $name}})-[:HAS_FIELD]->(root_f:Field)<-[:DERIVES_FROM*1..{depth}]-(down_f:Field)<-[:HAS_FIELD]-(down_t:Table)"
+    if get_table_by_name(table, optional=True) is None:
+        raise TableNotFound(table)
+    path_match = (
+        f"MATCH p = (:Table {{name: $name}})-[:HAS_FIELD]->(:Field)<-[:DERIVES_FROM*1..{depth}]-(:Field)"
         if direction == "down"
-        else
-        f"MATCH (root_t:Table {{name: $name}})-[:HAS_FIELD]->(root_f:Field)-[:DERIVES_FROM*1..{depth}]->(up_f:Field)<-[:HAS_FIELD]-(up_t:Table)"
+        else f"MATCH p = (:Table {{name: $name}})-[:HAS_FIELD]->(:Field)-[:DERIVES_FROM*1..{depth}]->(:Field)"
     )
-    cypher = pattern + " RETURN root_t.name AS root_t, root_f.name AS root_f, " + (
-        "down_t.name AS other_t, down_f.name AS other_f"
-        if direction == "down"
-        else "up_t.name AS other_t, up_f.name AS other_f"
+    rows = run_query(
+        path_match + """
+        UNWIND relationships(p) AS r
+        WITH DISTINCT r, startNode(r) AS to_f, endNode(r) AS from_f
+        MATCH (from_t:Table)-[:HAS_FIELD]->(from_f)
+        MATCH (to_t:Table)-[:HAS_FIELD]->(to_f)
+        RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
+               from_t.name AS from_table, from_f.name AS from_field,
+               to_t.name AS to_table, to_f.name AS to_field,
+               r.transform_expr AS transform_expr, r.created_at AS created_at
+        ORDER BY from_table, from_field, to_table, to_field
+        """,
+        name=table,
     )
-    rows = run_query(cypher, name=table)
-    seen: set[tuple] = set()
-    edges: list[LineageEdge] = []
-    for r in rows:
-        if direction == "down":
-            key = (r["root_t"], r["root_f"], r["other_t"], r["other_f"])
-            if key in seen:
-                continue
-            seen.add(key)
-            edges.append(LineageEdge(
-                from_table=r["root_t"], from_field=r["root_f"],
-                to_table=r["other_t"], to_field=r["other_f"], transform_expr="",
-            ))
-        else:
-            key = (r["other_t"], r["other_f"], r["root_t"], r["root_f"])
-            if key in seen:
-                continue
-            seen.add(key)
-            edges.append(LineageEdge(
-                from_table=r["other_t"], from_field=r["other_f"],
-                to_table=r["root_t"], to_field=r["root_f"], transform_expr="",
-            ))
-    return edges
+    return [_lineage_edge_from_row(r) for r in rows]
+
+
+def get_downstream_impact(table: str, field: Optional[str] = None) -> ImpactResponse:
+    if get_table_by_name(table, optional=True) is None:
+        raise TableNotFound(table)
+    field_filter = "AND root_f.name = $field" if field is not None else ""
+    rows = run_query(
+        f"""
+        MATCH (:Table {{name: $table}})-[:HAS_FIELD]->(root_f:Field)
+        {field_filter}
+        MATCH p = (root_f)<-[:DERIVES_FROM*1..5]-(:Field)
+        UNWIND relationships(p) AS r
+        WITH DISTINCT r, startNode(r) AS to_f, endNode(r) AS from_f
+        MATCH (from_t:Table)-[:HAS_FIELD]->(from_f)
+        MATCH (to_t:Table)-[:HAS_FIELD]->(to_f)
+        RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
+               from_t.name AS from_table, from_f.name AS from_field,
+               to_t.name AS to_table, to_f.name AS to_field,
+               r.transform_expr AS transform_expr, r.created_at AS created_at
+        ORDER BY to_t.name, to_f.name
+        """,
+        table=table,
+        field=field,
+    )
+    if field is not None and not rows:
+        exists = run_query(
+            """
+            MATCH (:Table {name: $table})-[:HAS_FIELD]->(:Field {name: $field})
+            RETURN 1 AS found
+            """,
+            table=table,
+            field=field,
+        )
+        if not exists:
+            raise FieldNotFound(f"{table}.{field}")
+    downstream = [_lineage_edge_from_row(r) for r in rows]
+    affected_tables = sorted({edge.to_table for edge in downstream})
+    return ImpactResponse(
+        table=table,
+        field=field,
+        has_downstream=bool(downstream),
+        affected_tables=affected_tables,
+        downstream=downstream,
+    )
 
 
 def run_query_update_table(table_id: str, req) -> None:

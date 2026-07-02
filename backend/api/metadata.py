@@ -8,6 +8,10 @@ from backend.metadata.models import (
     CreateFieldRequest,
     CreateTableRequest,
     FieldResponse,
+    ImpactResponse,
+    LineageEdge,
+    LineageEdgeCreateRequest,
+    LineageEdgeUpdateRequest,
     LineageResponse,
     TableResponse,
     TableSummary,
@@ -110,3 +114,62 @@ def lineage_endpoint(
     except service.TableNotFound:
         raise HTTPException(status_code=404, detail="table not found")
     return LineageResponse(root_table=table, direction=direction, depth=depth, edges=edges)
+
+
+@router.post("/api/lineage/edges", response_model=LineageEdge, status_code=201)
+def create_lineage_edge_endpoint(req: LineageEdgeCreateRequest):
+    try:
+        return service.create_lineage_edge(req)
+    except service.FieldNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "lineage endpoint field not found",
+            "from": {"table": req.from_table, "field": req.from_field},
+            "to": {"table": req.to_table, "field": req.to_field},
+        })
+    except service.CycleDetected as e:
+        raise HTTPException(status_code=409, detail={
+            "error": "lineage cycle detected",
+            "path": e.path,
+        })
+
+
+@router.put("/api/lineage/edges/{edge_id}", response_model=LineageEdge)
+def update_lineage_edge_endpoint(edge_id: str, req: LineageEdgeUpdateRequest):
+    try:
+        return service.update_lineage_edge(edge_id, req)
+    except service.LineageEdgeNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "lineage edge not found",
+            "edge_id": edge_id,
+        })
+
+
+@router.delete("/api/lineage/edges/{edge_id}", status_code=204)
+def delete_lineage_edge_endpoint(edge_id: str):
+    try:
+        service.delete_lineage_edge(edge_id)
+    except service.LineageEdgeNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "lineage edge not found",
+            "edge_id": edge_id,
+        })
+
+
+@router.get("/api/metadata/impact", response_model=ImpactResponse)
+def downstream_impact_endpoint(
+    table: str = Query(..., description="source table name"),
+    field: Optional[str] = Query(None, description="optional source field name"),
+):
+    try:
+        return service.get_downstream_impact(table=table, field=field)
+    except service.TableNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "table not found",
+            "table": table,
+        })
+    except service.FieldNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "field not found",
+            "table": table,
+            "field": field,
+        })

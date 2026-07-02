@@ -80,11 +80,13 @@ class TableSummary(BaseModel):
 
 
 class LineageEdge(BaseModel):
+    edge_id: str = ""
     from_table: str
     from_field: str
     to_table: str
     to_field: str
     transform_expr: str
+    created_at: str = ""
 
 
 class LineageResponse(BaseModel):
@@ -92,3 +94,23 @@ class LineageResponse(BaseModel):
     direction: Literal["up", "down"]
     depth: int
     edges: list[LineageEdge]
+
+
+class LineageEdgeCreateRequest(BaseModel):
+    from_table: str = Field(min_length=1, max_length=128)
+    from_field: str = Field(min_length=1, max_length=128)
+    to_table: str = Field(min_length=1, max_length=128)
+    to_field: str = Field(min_length=1, max_length=128)
+    transform_expr: str = Field(min_length=1)
+
+
+class LineageEdgeUpdateRequest(BaseModel):
+    transform_expr: str = Field(min_length=1)
+
+
+class ImpactResponse(BaseModel):
+    table: str
+    field: Optional[str] = None
+    has_downstream: bool
+    affected_tables: list[str]
+    downstream: list[LineageEdge]
