@@ -1,5 +1,6 @@
 """/api/schema/* - apply + evolution timeline (spec §6.7)。"""
 from __future__ import annotations
+import json
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,54 @@ def _yaml_path_for_table(table_name: str) -> Path:
     if not path.is_relative_to(root):
         raise HTTPException(status_code=400, detail="invalid yaml path")
     return path
+
+
+def _parse_json_value(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _parse_downstream(value) -> list:
+    parsed = _parse_json_value(value)
+    if parsed is None:
+        return []
+    if isinstance(parsed, list):
+        return parsed
+    return [parsed]
+
+
+def _version_from_row(row: dict) -> int | None:
+    version = row.get("version")
+    if version is None:
+        version = row.get("field_version")
+    return int(version) if version is not None else None
+
+
+def _change_from_row(row: dict) -> dict:
+    version = _version_from_row(row)
+    return {
+        "change_id": row["id"],
+        "operation": row["operation"],
+        "table_name": row.get("table_name"),
+        "field_name": row.get("field_name"),
+        "version": version,
+        "previous_version": version - 1 if version and version > 1 else None,
+        "old_value": _parse_json_value(row.get("old_value")),
+        "new_value": _parse_json_value(row.get("new_value")),
+        "downstream": _parse_downstream(row.get("downstream")),
+        "changed_at": str(row["changed_at"]),
+        "commit_hash": row.get("commit_hash"),
+    }
 
 
 @router.get("/api/schema/evolution/yaml-diff")
@@ -102,6 +151,8 @@ def schema_evolution_list(
         MATCH (c:Change)
         {where}
         RETURN c.id AS id, c.operation AS operation, c.table_name AS table_name, c.field_name AS field_name,
+               c.version AS version, c.field_version AS field_version,
+               c.old_value AS old_value, c.new_value AS new_value, c.downstream AS downstream,
                c.changed_at AS changed_at, c.commit_hash AS commit_hash
         ORDER BY c.changed_at DESC
         LIMIT 200
@@ -110,21 +161,21 @@ def schema_evolution_list(
     )
     return {
         "table": table,
-        "changes": [
-            {
-                "change_id": r["id"],
-                "operation": r["operation"],
-                "table_name": r["table_name"],
-                "field_name": r["field_name"],
-                "changed_at": str(r["changed_at"]),
-                "commit_hash": r["commit_hash"],
-            }
-            for r in rows
-        ],
+        "changes": [_change_from_row(r) for r in rows],
     }
 
 
 @router.get("/api/schema/evolution/{table}")
 def schema_evolution(table: str) -> dict:
-    rows = run_query("""MATCH (c:Change {table_name: $table}) RETURN c.id AS id, c.operation AS operation, c.table_name AS table_name, c.field_name AS field_name, c.changed_at AS changed_at, c.commit_hash AS commit_hash ORDER BY c.changed_at DESC""", table=table)
-    return {"table": table, "changes": [{"change_id": r["id"], "operation": r["operation"], "field_name": r["field_name"], "changed_at": str(r["changed_at"]), "commit_hash": r["commit_hash"]} for r in rows]}
+    rows = run_query(
+        """
+        MATCH (c:Change {table_name: $table})
+        RETURN c.id AS id, c.operation AS operation, c.table_name AS table_name, c.field_name AS field_name,
+               c.version AS version, c.field_version AS field_version,
+               c.old_value AS old_value, c.new_value AS new_value, c.downstream AS downstream,
+               c.changed_at AS changed_at, c.commit_hash AS commit_hash
+        ORDER BY c.changed_at DESC
+        """,
+        table=table,
+    )
+    return {"table": table, "changes": [_change_from_row(r) for r in rows]}
