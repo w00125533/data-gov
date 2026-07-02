@@ -64,7 +64,6 @@ export default function App() {
           />
           <Space size={16}>
             <Badge status="processing" text="FastAPI :8000" />
-            <Badge status="processing" text="Governance :8080" />
             <Badge status="success" text="Neo4j metadata" />
           </Space>
         </Header>

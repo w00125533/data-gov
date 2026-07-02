@@ -9,23 +9,13 @@ type Props = {
   onSelectEdge?: (edge: LineageEdge) => void
 }
 
-type GraphEvent = {
-  target?: {
-    id?: string
-  }
-}
-
-function graphTargetId(event: unknown) {
-  return (event as GraphEvent).target?.id
-}
-
 export default function LineageGraph({ edges, onSelectEdge }: Props) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!ref.current || edges.length === 0) return
     const data = lineageToGraph(edges)
-    const graph = new Graph({
+    const graph: any = new Graph({
       container: ref.current,
       autoFit: 'view',
       data,
@@ -51,8 +41,8 @@ export default function LineageGraph({ edges, onSelectEdge }: Props) {
       behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
     })
     graph.render()
-    graph.on?.('edge:click', (event: unknown) => {
-      const id = graphTargetId(event)
+    graph.on?.('edge:click', (event: any) => {
+      const id = event.target?.id as string | undefined
       const edge = edges.find((candidate) => `${candidate.from_table}.${candidate.from_field}-${candidate.to_table}.${candidate.to_field}` === id)
       if (edge) onSelectEdge?.(edge)
     })
