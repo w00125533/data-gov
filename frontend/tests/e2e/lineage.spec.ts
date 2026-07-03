@@ -12,7 +12,7 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(page.locator('.lineage-x6-canvas .x6-graph')).toBeVisible()
   await expect(page.locator('.lineage-x6-canvas')).toContainText('dws_cell_hourly')
   await expect(page.locator('.lineage-x6-canvas')).toContainText('dwd_session_qos')
-  await expect(page.locator('[data-cell-id^="table-edge-"]').first()).toBeVisible()
+  await expect(page.locator('.lineage-x6-canvas .x6-graph [data-cell-id^="table-edge-"]').first()).toBeAttached()
 
   await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
   await expect(page.getByText('avg_rsrp').first()).toBeVisible()

@@ -4,7 +4,7 @@ import type { Edge } from '@antv/x6'
 import { MiniMap } from '@antv/x6-plugin-minimap'
 import '@antv/x6/dist/index.css'
 import type { DragEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LineageEdge, LineageGraphResponse } from '../api/client'
 import { buildLineageX6GraphData, edgeKey } from './graphShared/lineageX6Adapter'
 
@@ -90,6 +90,7 @@ export default function LineageWorkspaceGraph({
   const payloadRef = useRef(payload)
   const [pendingMove, setPendingMove] = useState<PendingMove | undefined>()
   const [tooltip, setTooltip] = useState<TooltipState | undefined>()
+  const [containersReady, setContainersReady] = useState(false)
   const graphData = useMemo(
     () => buildLineageX6GraphData({
       payload,
@@ -107,8 +108,24 @@ export default function LineageWorkspaceGraph({
     payloadRef.current = payload
   }, [payload])
 
+  const markContainersReady = useCallback(() => {
+    if (canvasRef.current && minimapRef.current) {
+      setContainersReady(true)
+    }
+  }, [])
+
+  const setCanvasRef = useCallback((element: HTMLDivElement | null) => {
+    canvasRef.current = element
+    if (element) markContainersReady()
+  }, [markContainersReady])
+
+  const setMinimapRef = useCallback((element: HTMLDivElement | null) => {
+    minimapRef.current = element
+    if (element) markContainersReady()
+  }, [markContainersReady])
+
   useEffect(() => {
-    if (!canvasRef.current || !minimapRef.current || graphRef.current) return
+    if (!containersReady || !canvasRef.current || !minimapRef.current || graphRef.current) return
 
     const graph = new Graph({
       container: canvasRef.current,
@@ -216,7 +233,7 @@ export default function LineageWorkspaceGraph({
       graph.dispose()
       graphRef.current = null
     }
-  }, [graphData.nodes.length])
+  }, [containersReady])
 
   useEffect(() => {
     const graph = graphRef.current
@@ -262,14 +279,9 @@ export default function LineageWorkspaceGraph({
   return (
     <div className="lineage-workspace-graph lineage-x6-shell">
       <div className="lineage-x6-canvas">
-        {graphData.edges
-          .filter((edge) => edge.data?.kind === 'table-edge' && typeof edge.id === 'string')
-          .map((edge) => (
-            <span className="lineage-x6-edge-probe" data-cell-id={edge.id} key={edge.id} />
-          ))}
-        <div className="lineage-x6-graph-host" ref={canvasRef} />
+        <div className="lineage-x6-graph-host" ref={setCanvasRef} />
       </div>
-      <div className="lineage-x6-minimap" ref={minimapRef} />
+      <div className="lineage-x6-minimap" ref={setMinimapRef} />
       <Tooltip open={Boolean(tooltip)} title={tooltip ? renderTooltipContent(tooltip.edge) : null}>
         <span
           className="lineage-x6-tooltip-anchor"
