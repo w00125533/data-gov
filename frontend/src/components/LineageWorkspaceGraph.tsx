@@ -91,14 +91,20 @@ export default function LineageWorkspaceGraph({
   const [pendingMove, setPendingMove] = useState<PendingMove | undefined>()
   const [tooltip, setTooltip] = useState<TooltipState | undefined>()
   const [containersReady, setContainersReady] = useState(false)
+  const [graphReady, setGraphReady] = useState(false)
   const graphData = useMemo(
     () => buildLineageX6GraphData({
       payload,
       expandedTables,
-      selectedEdgeKey: selectedEdge ? edgeKey(selectedEdge) : undefined,
     }),
-    [payload, expandedTables, selectedEdge],
+    [payload, expandedTables],
   )
+  const selectedEdgeKey = selectedEdge ? edgeKey(selectedEdge) : undefined
+  const topologyKey = useMemo(() => {
+    const tables = (payload?.tables ?? []).map((table) => table.name).sort().join('|')
+    const expanded = Array.from(expandedTables).sort().join('|')
+    return `${payload?.graph_version ?? 'empty'}:${tables}:${expanded}`
+  }, [payload, expandedTables])
 
   useEffect(() => {
     callbacksRef.current = { onToggleTable, onSelectFieldEdge, onMoveEdgeEndpoint }
@@ -185,10 +191,6 @@ export default function LineageWorkspaceGraph({
       }
     })
 
-    graph.on('lineage:toggle-table' as never, ({ cell }: { cell: { id: string } }) => {
-      callbacksRef.current.onToggleTable(cell.id)
-    })
-
     graph.on('edge:click', ({ edge }) => {
       const data = edge.getData<FieldEdgeData>()
       if (data?.kind === 'field-edge' && data.edge) {
@@ -228,23 +230,46 @@ export default function LineageWorkspaceGraph({
     })
 
     graphRef.current = graph
+    setGraphReady(true)
 
     return () => {
       graph.dispose()
       graphRef.current = null
+      setGraphReady(false)
     }
   }, [containersReady])
 
   useEffect(() => {
     const graph = graphRef.current
-    if (!graph) return
+    if (!graphReady || !graph) return
 
     const cells = graph.parseJSON({ cells: [...graphData.nodes, ...graphData.edges] } as Parameters<Graph['parseJSON']>[0])
     graph.resetCells(cells)
     if (graphData.nodes.length > 0) {
-      window.requestAnimationFrame(() => graph.centerContent())
+      const frame = window.requestAnimationFrame(() => {
+        if (graphRef.current === graph) {
+          graph.centerContent()
+        }
+      })
+      return () => window.cancelAnimationFrame(frame)
     }
-  }, [graphData])
+  }, [graphData, graphReady, topologyKey])
+
+  useEffect(() => {
+    const graph = graphRef.current
+    if (!graphReady || !graph) return
+
+    graph.getEdges().forEach((edge) => {
+      const data = edge.getData<FieldEdgeData & { lineageEdgeKey?: string }>()
+      if (data?.kind !== 'field-edge') return
+
+      const selected = data.lineageEdgeKey === selectedEdgeKey
+      edge.attr('line/stroke', selected ? '#2563eb' : '#64748b')
+      edge.attr('line/strokeWidth', selected ? 3 : 2)
+      edge.attr('line/opacity', selectedEdgeKey ? (selected ? 1 : 0.45) : 1)
+      edge.setZIndex(selected ? 4 : 3)
+    })
+  }, [selectedEdgeKey, graphData, graphReady])
 
   function handleDragStart(event: DragEvent<HTMLButtonElement>, edge: LineageEdge, endpoint: EdgeEndpoint) {
     event.dataTransfer.setData('application/lineage-edge-endpoint', dragPayload(edge, endpoint))
@@ -272,9 +297,7 @@ export default function LineageWorkspaceGraph({
     setPendingMove(undefined)
   }
 
-  if (!payload || graphData.nodes.length === 0) {
-    return <Empty className="lineage-workspace-graph lineage-x6-shell" description="鏆傛棤琛€缂樺伐浣滃尯鏁版嵁" />
-  }
+  const isEmpty = !payload || graphData.nodes.length === 0
 
   return (
     <div className="lineage-workspace-graph lineage-x6-shell">
@@ -288,8 +311,12 @@ export default function LineageWorkspaceGraph({
           style={{ left: tooltip?.left ?? -9999, top: tooltip?.top ?? -9999 }}
         />
       </Tooltip>
-      <div className="lineage-x6-accessible" aria-label="lineage graph controls">
-        {payload.tables.map((table) => {
+      {isEmpty ? (
+        <Empty className="lineage-x6-empty" description="鏆傛棤琛€缂樺伐浣滃尯鏁版嵁" />
+      ) : null}
+      {payload ? (
+        <div className="lineage-x6-accessible" aria-label="lineage graph controls">
+          {payload.tables.map((table) => {
           const expanded = expandedTables.has(table.name)
           return (
             <button
@@ -301,8 +328,8 @@ export default function LineageWorkspaceGraph({
               {expanded ? 'collapse' : 'expand'} table {table.name}
             </button>
           )
-        })}
-        {(payload.field_edges ?? []).map((edge) => {
+          })}
+          {(payload.field_edges ?? []).map((edge) => {
           const key = edgeKey(edge)
           return (
             <span key={key}>
@@ -331,8 +358,8 @@ export default function LineageWorkspaceGraph({
               </button>
             </span>
           )
-        })}
-        {payload.tables.flatMap((table) =>
+          })}
+          {payload.tables.flatMap((table) =>
           table.fields.map((field) => (
             <button
               aria-label={`字段锚点 ${table.name}.${field.name}`}
@@ -345,8 +372,9 @@ export default function LineageWorkspaceGraph({
               field port {table.name}.{field.name}
             </button>
           )),
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

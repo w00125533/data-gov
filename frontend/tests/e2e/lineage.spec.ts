@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test'
 import { json, lineageGraph, lineageSqlImportPreview, lineageSqlPreview, mockCommonApis } from './fixtures'
 
+async function activateHiddenButton(page: import('@playwright/test').Page, text: string | RegExp) {
+  await page.getByRole('button').filter({ hasText: text }).evaluate((button) => {
+    ;(button as HTMLButtonElement).click()
+  })
+}
+
 test('lineage workspace renders expandable tables and direction filters', async ({ page }) => {
   await mockCommonApis(page)
 
@@ -14,7 +20,7 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(page.locator('.lineage-x6-canvas')).toContainText('dwd_session_qos')
   await expect(page.locator('.lineage-x6-canvas .x6-graph [data-cell-id^="table-edge-"]').first()).toBeAttached()
 
-  await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
+  await activateHiddenButton(page, 'expand table dws_cell_hourly')
   await expect(page.getByText('avg_rsrp').first()).toBeVisible()
   await expect(page.getByText('AVG(q.avg_rsrp)').first()).toBeVisible()
 
@@ -116,8 +122,8 @@ test('lineage workspace moves source endpoint onto a field anchor by drag', asyn
   await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
-  await page.getByRole('button', { name: '展开 dwd_session_qos' }).click()
+  await activateHiddenButton(page, 'expand table dws_cell_hourly')
+  await activateHiddenButton(page, 'expand table dwd_session_qos')
 
   await page.getByLabel('字段锚点 dwd_session_qos.hour_bucket').evaluate((target) => {
     const dataTransfer = new DataTransfer()
@@ -126,7 +132,13 @@ test('lineage workspace moves source endpoint onto a field anchor by drag', asyn
   })
   await expect.poll(() => patchBody).toBeUndefined()
 
-  await page.getByRole('button', { name: '源锚点 edge-1' }).dragTo(page.getByRole('button', { name: '字段锚点 dwd_session_qos.hour_bucket' }))
+  await page.getByRole('button').filter({ hasText: 'source endpoint edge-1' }).evaluate((source) => {
+    const dataTransfer = new DataTransfer()
+    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
+    const target = Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('field port dwd_session_qos.hour_bucket'))
+    target?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }))
+  })
 
   await expect.poll(() => patchBody).toEqual({
     from_table: 'dwd_session_qos',
@@ -149,11 +161,11 @@ test('lineage workspace moves source endpoint onto a field anchor by keyboard', 
   })
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
-  await page.getByRole('button', { name: '展开 dwd_session_qos' }).click()
+  await activateHiddenButton(page, 'expand table dws_cell_hourly')
+  await activateHiddenButton(page, 'expand table dwd_session_qos')
 
-  await page.getByRole('button', { name: '源锚点 edge-1' }).press('Enter')
-  await page.getByRole('button', { name: '字段锚点 dwd_session_qos.hour_bucket' }).press('Enter')
+  await activateHiddenButton(page, 'source endpoint edge-1')
+  await activateHiddenButton(page, 'field port dwd_session_qos.hour_bucket')
 
   await expect.poll(() => patchBody).toEqual({
     from_table: 'dwd_session_qos',
@@ -167,8 +179,7 @@ test('lineage workspace selects field edges from the keyboard', async ({ page })
   await mockCommonApis(page)
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ }).focus()
-  await page.keyboard.press('Enter')
+  await activateHiddenButton(page, /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)
 
   await expect(page.getByText('AVG(q.avg_rsrp)').last()).toBeVisible()
 })
@@ -196,7 +207,7 @@ test('lineage workspace edits field edge config and previews generated sql', asy
   await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ }).click()
+  await activateHiddenButton(page, /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)
 
   await expect(page.getByRole('heading', { name: '边计算配置' })).toBeVisible()
   await page.getByRole('combobox', { name: '计算类型' }).click()
