@@ -22,7 +22,7 @@
 |-------|------|
 | Phase 1 | 基础设施 (Docker 栈) + 语义元数据服务 |
 | Phase 2 | NL-to-Code Agent (LangGraph + DeepSeek) + 沙箱 |
-| Phase 3 | Web 可视化 UI (React + Ant Design + AntV G6) |
+| Phase 3 | Web 可视化 UI (React + Ant Design + AntV X6/G6) |
 
 ### 技术决策总表
 
@@ -36,7 +36,7 @@
 | Docker 编排 | base-compose (基础设施) + app-compose (应用) |
 | 前端 | React 18 + TypeScript + Vite |
 | UI 库 | Ant Design |
-| 血缘图 | AntV G6 |
+| 图可视化 | AntV X6 (血缘工作台) + AntV G6 (Pipeline DAG) |
 | 沙箱提交 | 统一 Java 打包 + spark-submit / flink CLI（均提交到 YARN） |
 
 ### 功能树全景
@@ -72,7 +72,7 @@
 │
 ├── 3. 血缘图 (/metadata/lineage)
 │   ├── 3.1 可视化
-│   │   ├── 3.1.1 表级血缘主图 (G6 Graph)
+│   │   ├── 3.1.1 表级血缘主图 (X6 Graph)
 │   │   ├── 3.1.2 前向/后向 checkbox 显示控制
 │   │   ├── 3.1.3 表节点展开后显示字段行与字段级虚线血缘
 │   │   ├── 3.1.4 节点拖拽 + 缩放
@@ -143,7 +143,7 @@
 │   │   └── 5.2.3 图上直接调整约束值域
 │   └── 5.3 联动
 │       ├── 5.3.1 与 /chat 联动 (图上操作跳转对话)
-│       ├── 5.3.2 与 /metadata/lineage 联动 (共享 G6 组件)
+│       ├── 5.3.2 与 /metadata/lineage 联动 (共享图数据和层级配色)
 │       └── 5.3.3 正向/反向一键切换
 │
 ├── 6. 元数据演进历史 (/schema-evolution)
@@ -1380,7 +1380,7 @@ class SandboxController:
 | 框架 | React 18 + TypeScript |
 | 构建 | Vite |
 | UI 库 | Ant Design |
-| 血缘图 | AntV G6 |
+| 图可视化 | AntV X6 (血缘工作台) + AntV G6 (Pipeline DAG) |
 | 代码高亮 | Monaco Editor (readonly + 可编辑切换) |
 | 图表 | @antv/g2 (柱状图等) |
 | SSE | fetch + ReadableStream |
@@ -1516,6 +1516,8 @@ class SandboxController:
 
 血缘页采用“表级主图 + 字段按需展开 + 右侧编辑/SQL 面板”。默认先呈现表级血缘，避免字段级边过早铺满画布；用户展开表节点后，再在同一个节点内按字段行显示字段级血缘。
 
+血缘工作台的中间画布使用 AntV X6，而不是复用 `/pipeline` 的 G6 DAG。X6 负责可编辑图工作台能力：表节点、字段端口、曲线边、字段级虚线边、边 hover/click、拖动端点重连和画布导航。左侧控制面板、右侧边编辑器、SQL 预览和 SQL 导入抽屉继续复用现有 React/Ant Design 组件。
+
 #### 页面布局
 
 ```
@@ -1540,10 +1542,10 @@ class SandboxController:
 
 | 图层 | 节点/边 | 展示规则 | 交互 |
 |------|---------|----------|------|
-| 表节点 | `Table` | 默认展示目标表、直接上游表、直接下游表；按层级和方向扩展 | 点击选中；节点内 `+/-` 展开或折叠字段 |
-| 表级边 | 字段边实时聚合 | 实线曲线；前向/后向由左侧 checkbox 控制显示 | hover 显示字段边数量、涉及字段、计算类型分布 |
-| 字段行 | `Field` | 仅在表节点展开后显示；字段在一个节点内分行排列 | 字段行左右两侧提供连线锚点 |
-| 字段级边 | `DERIVES_FROM` | 淡色虚线曲线；仅当源表或目标表展开后显示 | hover 显示血缘关系；click 打开右侧编辑面板 |
+| 表节点 | X6 node + `Table` data | 默认展示目标表、直接上游表、直接下游表；按层级和方向扩展 | 点击选中；节点内 `+/-` 展开或折叠字段 |
+| 表级边 | X6 edge + 字段边实时聚合 | 实线曲线；前向/后向由左侧 checkbox 控制显示 | hover 显示字段边数量、涉及字段、计算类型分布 |
+| 字段行 | node 内字段分行 + X6 port | 仅在表节点展开后显示；字段在一个节点内分行排列 | 字段行左右两侧提供 `in:<field>` / `out:<field>` 端口 |
+| 字段级边 | X6 edge + `DERIVES_FROM` data | 淡色虚线曲线；仅当源表或目标表展开后显示 | hover 显示血缘关系；click 打开右侧编辑面板；端点可重连到其它字段 port |
 
 #### 交互清单
 
@@ -1560,6 +1562,48 @@ class SandboxController:
 | SQL 写回（第一版） | 在“导入 SQL”抽屉确认应用 | 将导入 SQL 写入 `Table.sql_logic` 并追加 `Change`；右侧“同步到表定义”按钮作为后续直接写回入口 |
 | 导入 SQL | 点击“导入 SQL”并粘贴 `SELECT ... FROM ...` | 解析后展示字段/血缘变更预览；确认后第一版写入 `Table.sql_logic` 和 `Change`，字段/血缘变更应用为后续扩展 |
 | 画布导航 | 拖拽、缩放、全屏、Mini-map | 支持大图定位和局部查看 |
+
+#### X6 画布数据模型
+
+前端新增血缘画布适配层，把 `LineageGraphResponse` 转为 X6 的 nodes/edges。转换层是纯函数，便于单元测试和后续替换布局算法。
+
+| 输入 | X6 输出 | 说明 |
+|------|---------|------|
+| `tables[]` | table nodes | node id 使用表名；node data 保存原始 `LineageTableNode` |
+| `table_edges[]` | table edges | 表级边连接表节点主连接点或节点中心，不绑定具体字段 |
+| `field_edges[]` | field edges | 字段级边连接 `source table out:<field>` 到 `target table in:<field>` |
+| `expandedTables` | node height + ports | 折叠态固定高度；展开态按字段数计算高度并生成字段 port |
+| `includeUpstream/includeDownstream` | visible cells | 决定哪些节点、表级边、字段级边进入画布 |
+| `selectedEdge` | selected X6 edge | 选中字段边高亮，并与右侧边编辑器同步 |
+
+节点布局采用确定性三向布局：
+
+- 中心目标表位于画布中间列。
+- 上游表位于左侧，按距离目标表的层级向左扩展，同层多表纵向分布。
+- 下游表位于右侧，按距离目标表的层级向右扩展，同层多表纵向分布。
+- 深度大于 1 时继续向左右扩展列；第一版不引入复杂自动布局，后续可接入 Dagre/ELK 优化。
+
+#### X6 事件流
+
+| X6 事件 | 前端处理 | 后端/API |
+|---------|----------|----------|
+| `node:click` | 选中表节点，保留后续表详情扩展入口 | 无 |
+| 展开按钮 click | 更新 React `expandedTables`，重新计算 X6 graph data | 无 |
+| `edge:mouseenter` / `edge:mouseleave` | 展示/隐藏 tooltip | 无 |
+| `edge:click` | 若为字段级边，调用 `onSelectFieldEdge(edge)` | 无 |
+| 字段级边端点重连 | 解析 source/target port，构造新的源/目标字段 | `PATCH /api/lineage/edges/:edge_id/endpoints` |
+| 边编辑保存成功 | 高亮更新后的边，刷新图和 SQL 预览 | `PUT /api/lineage/edges/:edge_id` + `POST /api/lineage/sql/preview` |
+| 端点重连失败 | 回滚到上一次 graph data，提示错误 | 后端返回 409/422 时保留原血缘 |
+
+SQL 逻辑不存放在 X6 cell data 中。右侧 `LineageSqlPanel` 仍通过 `/api/lineage/sql/preview` 读取生成结果；字段级边编辑、端点重连、新建/删除边成功后，统一刷新 `lineage-graph` 与 `lineage-sql-preview`。
+
+#### 第一版边界
+
+- `/metadata/lineage` 使用 X6 作为可编辑血缘工作台；`/pipeline` 继续使用 G6 作为只读全局 DAG。
+- 第一版不使用 `@antv/x6-react-shape`，优先用 X6 标准 SVG/HTML markup、自定义 port 和 edge tool 降低集成复杂度。
+- 第一版不做批量框选、复制粘贴、撤销重做；这些属于后续图编辑器增强。
+- 第一版不改后端数据模型；复用 `/api/lineage/graph`、`PUT /api/lineage/edges/:edge_id`、`PATCH /api/lineage/edges/:edge_id/endpoints` 和 SQL 预览/导入接口。
+- 移动端保证页面可打开和左右面板可滚动；血缘编辑工作台的主要交互目标是桌面视口。
 
 ### 6.5 血缘维护、SQL 联动与 /chat
 
@@ -1741,12 +1785,12 @@ context_prompt = """
 
 `/pipeline` 和 `/metadata/lineage` 都会展示表级血缘，但职责不同：
 
-| 页面 | 定位 | 图粒度 | 是否编辑血缘 | SQL 能力 |
-|------|------|--------|--------------|----------|
-| `/metadata/lineage` 血缘工作台 | 元数据和血缘维护入口 | 表级主图 + 展开后的字段级血缘 | 是。支持改边、拖锚点、计算类型、字段血缘 | 是。基于当前表血缘生成 SQL、导入 SQL 并写回 `Table.sql_logic` |
-| `/pipeline` Pipeline 可视化 | 链路分析、路径观察和反向合成入口 | 主要是表级 DAG | 否。只读消费血缘结果，不维护字段级边 | 不负责维护表 SQL；只展示链路约束、路径和反向合成相关信息 |
+| 页面 | 定位 | 图引擎 | 图粒度 | 是否编辑血缘 | SQL 能力 |
+|------|------|--------|--------|--------------|----------|
+| `/metadata/lineage` 血缘工作台 | 元数据和血缘维护入口 | X6 | 表级主图 + 展开后的字段级血缘 | 是。支持改边、拖锚点、计算类型、字段血缘 | 是。基于当前表血缘生成 SQL、导入 SQL 并写回 `Table.sql_logic` |
+| `/pipeline` Pipeline 可视化 | 链路分析、路径观察和反向合成入口 | G6 | 主要是表级 DAG | 否。只读消费血缘结果，不维护字段级边 | 不负责维护表 SQL；只展示链路约束、路径和反向合成相关信息 |
 
-因此，`/metadata/lineage` 是血缘建模源头，回答“这个表由哪些字段算出来、字段血缘怎么连、当前表 SQL 应该是什么”；`/pipeline` 是基于已有血缘聚合出的链路视图，回答“整体加工链路怎么走、上下游路径有哪些、约束如何沿链路传递”。`/pipeline` 不做字段级血缘编辑、不做 SQL 导入写回。
+因此，`/metadata/lineage` 是血缘建模源头，回答“这个表由哪些字段算出来、字段血缘怎么连、当前表 SQL 应该是什么”；`/pipeline` 是基于已有血缘聚合出的链路视图，回答“整体加工链路怎么走、上下游路径有哪些、约束如何沿链路传递”。`/pipeline` 不做字段级血缘编辑、不做 SQL 导入写回，也不承担 X6 图编辑器交互。
 
 > **表级血缘聚合规则**：Pipeline 页面展示的是表级 DAG（节点 = 表）。表级血缘 = 该表所有字段沿 `:DERIVES_FROM` 关系到达的上游字段所属表的去重集合；边权 = 跨这两张表的字段级血缘边数。后端 `/api/pipeline` 通过 Cypher 聚合查询构建（`MATCH (t1:Table)-[:HAS_FIELD]->(f1)-[:DERIVES_FROM]->(f2)<-[:HAS_FIELD]-(t2) RETURN t1, t2, count(*) AS edge_weight`），不在 Neo4j 冗余存储表级血缘。
 
@@ -2008,9 +2052,10 @@ data-gov/
         │   ├── SchemaEvolution.tsx
         │   └── Health.tsx
         ├── components/
-        │   ├── LineageGraph.tsx   # G6 血缘图封装 (字段级, 被 /metadata/lineage 使用)
+        │   ├── LineageWorkspaceGraph.tsx # X6 血缘工作台画布 (表级节点、字段端口、可编辑边)
+        │   ├── lineageGraphAdapter.ts    # LineageGraphResponse -> X6 nodes/edges 的纯函数转换
         │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装 (表级, 被 /pipeline 使用)
-        │   ├── graphShared/       # 与 LineageGraph/PipelineDAG 共享: G6 注册行为 (tooltip/drag/zoom/minimap), 层颜色映射, 节点/边样式
+        │   ├── graphShared/       # 层级配色、图数据公共类型、Pipeline G6 数据转换
         │   ├── CodeCard.tsx       # Monaco 代码卡片
         │   ├── DryRunPreview.tsx  # 1 行预览表格
         │   ├── ConstraintSlider.tsx # 反向合成约束调整
@@ -2080,11 +2125,11 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P3-3 | 元数据维护: 新建表 | 点击 [+ 新建表] → 填写表名/层/存储 → 添加 5 个字段 → 保存 | Neo4j 写入 Table 节点 + 5 个 Field 节点 + 5 条 HAS_FIELD 边成功，GET /api/tables 新增 1 条，metadata-yaml/ 下生成对应 .yaml |
 | P3-4 | 元数据维护: 编辑字段表达式 | 点击 `dws_cell_hourly.drop_rate` → 抽屉打开 → Monaco 编辑表达式 → 保存 | Field 节点 expression 属性更新，version +1，previous_expr (JSON 字符串) 追加旧版本 |
 | P3-5 | 元数据维护: 删除字段被拒绝 | 点击删除 `ods_ue_signal.rsrp` | 系统检测到 dwd_session_qos.avg_rsrp 依赖此字段，弹出下游影响警告，拒绝删除 |
-| P3-6 | 血缘工作台: 表级默认图 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | 默认只渲染表级血缘，表节点用曲线连接，目标表高亮并自动居中 |
+| P3-6 | 血缘工作台: X6 表级默认图 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | X6 画布默认只渲染表级血缘，表节点用实线曲线连接，目标表高亮并自动居中 |
 | P3-7 | 血缘方向控制 | 取消勾选左侧「前向」或「后向」checkbox | 对应方向的表节点和表级边被隐藏；重新勾选后恢复 |
-| P3-8 | 字段展开与字段级血缘 | 点击 `dws_cell_hourly` 表节点展开按钮 | 节点内分行显示字段；展开相关表后出现淡色虚线字段级边，hover 显示源字段、目标字段、计算类型和表达式 |
+| P3-8 | 字段展开与字段级血缘 | 点击 `dws_cell_hourly` 表节点展开按钮 | X6 节点内分行显示字段并生成字段 port；展开相关表后出现淡色虚线字段级边，hover 显示源字段、目标字段、计算类型和表达式 |
 | P3-9 | 血缘边结构化编辑 | 点击字段级边 → 修改计算类型为 `AGGREGATE` 并填写参数 → 保存 | `DERIVES_FROM` 更新 `calc_type/calc_params/transform_expr`，图刷新，右侧 SQL 预览同步变化 |
-| P3-10 | 拖动锚点改血缘端点 | 拖动字段级边源锚点到另一个上游字段 | 后端即时保存新端点并做循环校验；成功后图与 SQL 预览刷新，失败时连线回滚 |
+| P3-10 | 拖动锚点改血缘端点 | 在 X6 画布中拖动字段级边源锚点到另一个上游字段 port | 后端即时保存新端点并做循环校验；成功后图与 SQL 预览刷新，失败时连线回滚 |
 | P3-10a | 基于血缘生成 SQL | 选中目标表 → 点击「生成 SQL」或完成一次血缘编辑 | 右侧展示当前目标表直接上游 Spark/Hive SELECT SQL；第一版“同步到表定义”按钮展示占位提示，直接写回为后续扩展 |
 | P3-10b | SQL 导入预览应用 | 选择目标表 → 粘贴 `SELECT ... FROM ...` → 点击解析 | UI 展示字段变更、血缘变更、计算类型推断和风险；确认后第一版写入 `Table.sql_logic` 和 Change，字段/血缘应用为后续扩展 |
 | P3-10c | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [用 NL 修改] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 注入当前表达式、计算类型、上游信息和当前表 SQL |
