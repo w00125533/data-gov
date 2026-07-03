@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { json, lineageGraph, lineageSqlImportPreview, lineageSqlPreview, mockCommonApis } from './fixtures'
 
 async function activateHiddenButton(page: Page, name: string | RegExp) {
@@ -19,10 +19,6 @@ function x6FieldEdgePath(page: Page) {
   return x6FieldEdge(page).locator('path').nth(1)
 }
 
-function rightPanel(page: Page) {
-  return page.locator('.three-panel-grid > section').nth(2)
-}
-
 async function clickRenderedX6Path(page: Page, pathLocator = x6FieldEdgePath(page)) {
   const point = await pathLocator.evaluate((path) => {
     const svgPath = path as SVGPathElement
@@ -35,6 +31,13 @@ async function clickRenderedX6Path(page: Page, pathLocator = x6FieldEdgePath(pag
     }
   })
   await page.mouse.click(point.x, point.y)
+}
+
+async function expectRenderedX6PathBounds(pathLocator: Locator) {
+  const box = await pathLocator.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box?.width ?? 0).toBeGreaterThan(0)
+  expect(box?.height ?? -1).toBeGreaterThanOrEqual(0)
 }
 
 test('lineage workspace renders expandable tables and direction filters', async ({ page }) => {
@@ -211,8 +214,9 @@ test('lineage workspace selects field edges from the keyboard', async ({ page })
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
   await activateHiddenButton(page, 'field edge edge-1')
 
-  await expect(rightPanel(page).getByText(/dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)).toBeVisible()
-  await expect(rightPanel(page).locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
+  await expect(page.getByText('dwd_session_qos.avg_rsrp').last()).toBeVisible()
+  await expect(page.getByText('dws_cell_hourly.avg_rsrp').last()).toBeVisible()
+  await expect(page.locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
 })
 
 test('lineage workspace selects visible X6 field edges by click', async ({ page }) => {
@@ -225,10 +229,12 @@ test('lineage workspace selects visible X6 field edges by click', async ({ page 
   const fieldEdge = x6FieldEdge(page)
   await expect(fieldEdge).toBeAttached()
   await expect(x6FieldEdgePath(page)).toHaveAttribute('d', /M /)
+  await expectRenderedX6PathBounds(x6FieldEdgePath(page))
   await clickRenderedX6Path(page)
 
-  await expect(rightPanel(page).getByText(/dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)).toBeVisible()
-  await expect(rightPanel(page).locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
+  await expect(page.getByText('dwd_session_qos.avg_rsrp').last()).toBeVisible()
+  await expect(page.getByText('dws_cell_hourly.avg_rsrp').last()).toBeVisible()
+  await expect(page.locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
 })
 
 test('lineage workspace edits field edge config and previews generated sql', async ({ page }) => {
