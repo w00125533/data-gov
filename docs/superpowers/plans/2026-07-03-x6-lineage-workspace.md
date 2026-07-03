@@ -31,7 +31,7 @@
 
 ## File Structure
 
-- Modify `frontend/package.json`: add `@antv/x6`, `@antv/x6-plugin-minimap`, `vitest`, and `test:unit`.
+- Modify `frontend/package.json`: add `@antv/x6`, `@antv/x6-plugin-minimap`, `vitest`, and `test:unit`. The unit script must exclude Playwright e2e specs because Vitest's default include pattern otherwise picks up `frontend/tests/e2e/*.spec.ts`.
 - Modify `frontend/package-lock.json`: dependency lock update from `npm install`.
 - Create `frontend/src/components/graphShared/lineageX6Adapter.ts`: pure layout and X6 cell adapter; no React imports.
 - Create `frontend/src/components/graphShared/lineageX6Adapter.test.ts`: Vitest tests for table layout, ports, edge ids, and direction filtering.
@@ -62,7 +62,7 @@ Expected: `frontend/package.json` contains `@antv/x6` and `@antv/x6-plugin-minim
 In `frontend/package.json`, add this script next to `test:e2e`:
 
 ```json
-"test:unit": "vitest run"
+"test:unit": "vitest run --exclude tests/e2e/**"
 ```
 
 Expected scripts block contains:
@@ -71,7 +71,7 @@ Expected scripts block contains:
 {
   "lint": "eslint .",
   "preview": "vite preview",
-  "test:unit": "vitest run",
+  "test:unit": "vitest run --exclude tests/e2e/**",
   "test:e2e": "playwright test",
   "test:e2e:ui": "playwright test --ui"
 }
