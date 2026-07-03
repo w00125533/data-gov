@@ -2053,9 +2053,9 @@ data-gov/
         │   └── Health.tsx
         ├── components/
         │   ├── LineageWorkspaceGraph.tsx # X6 血缘工作台画布 (表级节点、字段端口、可编辑边)
-        │   ├── lineageGraphAdapter.ts    # LineageGraphResponse -> X6 nodes/edges 的纯函数转换
         │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装 (表级, 被 /pipeline 使用)
-        │   ├── graphShared/       # 层级配色、图数据公共类型、Pipeline G6 数据转换
+        │   ├── graphShared/       # 层级配色、图数据公共类型、Pipeline G6 与血缘 X6 数据转换
+        │   │   └── lineageX6Adapter.ts # LineageGraphResponse -> X6 nodes/edges 的纯函数转换
         │   ├── CodeCard.tsx       # Monaco 代码卡片
         │   ├── DryRunPreview.tsx  # 1 行预览表格
         │   ├── ConstraintSlider.tsx # 反向合成约束调整
