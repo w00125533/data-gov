@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { json, lineageGraph, lineageSqlPreview, mockCommonApis } from './fixtures'
+import { json, lineageGraph, lineageSqlImportPreview, lineageSqlPreview, mockCommonApis } from './fixtures'
 
 test('lineage workspace renders expandable tables and direction filters', async ({ page }) => {
   await mockCommonApis(page)
@@ -18,6 +18,86 @@ test('lineage workspace renders expandable tables and direction filters', async 
 
   await page.getByRole('checkbox', { name: '反向' }).uncheck()
   await expect(page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ })).toBeHidden()
+})
+
+test('lineage workspace previews imported select sql before applying', async ({ page }) => {
+  let applyBody: unknown
+  let graphCalls = 0
+  let sqlPreviewCalls = 0
+  await mockCommonApis(page)
+  await page.route('**/api/lineage/graph**', (route) => {
+    graphCalls += 1
+    return json(route, {
+      ...lineageGraph,
+      graph_version: graphCalls === 1 ? 'v-e2e' : 'v-after-preview',
+    })
+  })
+  await page.route('**/api/lineage/sql/preview', (route) => {
+    sqlPreviewCalls += 1
+    return json(route, lineageSqlPreview)
+  })
+  await page.route('**/api/lineage/sql/import/preview', (route) => json(route, lineageSqlImportPreview))
+  await page.route('**/api/lineage/sql/apply', (route) => {
+    applyBody = route.request().postDataJSON()
+    return json(route, lineageSqlPreview)
+  })
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await expect.poll(() => graphCalls).toBeGreaterThanOrEqual(1)
+  const graphCallsBeforeDeliberateRefetch = graphCalls
+  await page.getByRole('button', { name: '导入 SQL' }).click()
+  await page.getByLabel('SQL 文本').fill('SELECT AVG(q.avg_rsrp) AS avg_rsrp FROM dwd_session_qos q GROUP BY cell_id')
+  await page.getByRole('button', { name: '解析 SQL' }).click()
+  await expect(page.getByText('字段变更')).toBeVisible()
+  await expect(page.getByText(/update \| avg_rsrp \| AVG/)).toBeVisible()
+  await page.getByRole('checkbox', { name: '反向' }).evaluate((checkbox) => {
+    ;(checkbox as HTMLInputElement).click()
+  })
+  await expect.poll(() => graphCalls).toBeGreaterThan(graphCallsBeforeDeliberateRefetch)
+  const graphCallsBeforeApply = graphCalls
+  const sqlPreviewCallsBeforeApply = sqlPreviewCalls
+  await page.getByRole('button', { name: '确认应用' }).click()
+  await expect.poll(() => applyBody).toEqual({
+    table: 'dws_cell_hourly',
+    sql: lineageSqlImportPreview.sql,
+    fields: lineageSqlImportPreview.fields,
+    edges: lineageSqlImportPreview.edges,
+    expected_graph_version: 'v-e2e',
+  })
+  await expect.poll(() => graphCalls).toBeGreaterThan(graphCallsBeforeApply)
+  await expect.poll(() => sqlPreviewCalls).toBeGreaterThan(sqlPreviewCallsBeforeApply)
+  await expect(page.getByText('SQL 导入已应用')).toBeVisible()
+})
+
+test('lineage sql import ignores stale preview after drawer close and reopen', async ({ page }) => {
+  let releasePreview: (() => void) | undefined
+  await mockCommonApis(page)
+
+  const previewRequestSeen = new Promise<void>((resolve) => {
+    void page.route('**/api/lineage/sql/import/preview', async (route) => {
+      resolve()
+      await new Promise<void>((release) => {
+        releasePreview = release
+      })
+      await json(route, lineageSqlImportPreview)
+    })
+  })
+
+  await page.route('**/api/lineage/graph**', (route) => json(route, lineageGraph))
+  await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await page.getByRole('button', { name: '导入 SQL' }).click()
+  await page.getByLabel('SQL 文本').fill('SELECT AVG(q.avg_rsrp) AS avg_rsrp FROM dwd_session_qos q GROUP BY cell_id')
+  await page.getByRole('button', { name: '解析 SQL' }).click()
+  await previewRequestSeen
+
+  await page.locator('.ant-drawer-close').click()
+  await page.getByRole('button', { name: '导入 SQL' }).click()
+  releasePreview?.()
+
+  await expect(page.getByText('字段变更')).toBeHidden()
+  await expect(page.getByRole('button', { name: '确认应用' })).toBeHidden()
 })
 
 test('lineage workspace moves source endpoint onto a field anchor by drag', async ({ page }) => {

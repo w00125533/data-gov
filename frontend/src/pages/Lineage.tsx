@@ -1,10 +1,11 @@
 import { CommentOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Checkbox, Input, Modal, Slider, Space, Typography, message } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type LineageEdge, type LineageGraphResponse } from '../api/client'
+import { api, type LineageEdge, type LineageGraphResponse, type LineageSqlImportPreviewResponse } from '../api/client'
 import LineageEdgeEditor from '../components/LineageEdgeEditor'
+import LineageSqlImportDrawer from '../components/LineageSqlImportDrawer'
 import LineageSqlPanel from '../components/LineageSqlPanel'
 import LineageWorkspaceGraph from '../components/LineageWorkspaceGraph'
 
@@ -17,6 +18,11 @@ type EdgeModal = {
 }
 
 type EdgeEndpoint = 'from' | 'to'
+
+type ImportPreviewState = {
+  preview: LineageSqlImportPreviewResponse
+  graphVersion?: string
+}
 
 function splitRef(value?: string) {
   const [table, field] = (value ?? '').split('.')
@@ -67,6 +73,9 @@ export default function Lineage() {
   const [edge, setEdge] = useState<LineageEdge | undefined>()
   const [nodeId, setNodeId] = useState<string | undefined>()
   const [edgeModal, setEdgeModal] = useState<EdgeModal | undefined>()
+  const [importOpen, setImportOpen] = useState(false)
+  const [importPreviewState, setImportPreviewState] = useState<ImportPreviewState | undefined>()
+  const importPreviewGeneration = useRef(0)
 
   const lineageQuery = useQuery({
     queryKey: ['lineage-graph', table, depth, includeUpstream, includeDownstream],
@@ -85,6 +94,41 @@ export default function Lineage() {
     queryKey: ['lineage-sql-preview', table, lineageQuery.data?.graph_version],
     queryFn: () => api.previewLineageSql({ table }),
     enabled: Boolean(table),
+  })
+
+  const importPreviewMutation = useMutation({
+    mutationFn: ({ sql }: { sql: string; generation: number; graphVersion?: string }) => api.previewLineageSqlImport({ table, sql }),
+    onSuccess: (preview, variables) => {
+      if (importOpen && variables.generation === importPreviewGeneration.current) {
+        setImportPreviewState({ preview, graphVersion: variables.graphVersion })
+      }
+    },
+    onError: (error, variables) => {
+      if (importOpen && variables.generation === importPreviewGeneration.current) {
+        apiMessage.error(`SQL 解析失败: ${(error as Error).message}`)
+      }
+    },
+  })
+
+  const importApplyMutation = useMutation({
+    mutationFn: () => {
+      if (!importPreviewState) throw new Error('missing import preview')
+      return api.applyLineageSql({
+        table,
+        sql: importPreviewState.preview.sql,
+        fields: importPreviewState.preview.fields,
+        edges: importPreviewState.preview.edges,
+        expected_graph_version: importPreviewState.graphVersion,
+      })
+    },
+    onSuccess: () => {
+      apiMessage.success('SQL 导入已应用')
+      setImportOpen(false)
+      setImportPreviewState(undefined)
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
+    },
+    onError: (error) => apiMessage.error(`SQL 应用失败: ${(error as Error).message}`),
   })
 
   useEffect(() => {
@@ -154,6 +198,25 @@ export default function Lineage() {
     if (next.table) search.set('table', next.table)
     if (next.depth) search.set('depth', String(next.depth))
     setParams(search)
+  }
+
+  function closeImportDrawer() {
+    importPreviewGeneration.current += 1
+    setImportOpen(false)
+    setImportPreviewState(undefined)
+  }
+
+  function openImportDrawer() {
+    importPreviewGeneration.current += 1
+    setImportPreviewState(undefined)
+    setImportOpen(true)
+  }
+
+  function previewImportedSql(sql: string) {
+    const generation = importPreviewGeneration.current + 1
+    importPreviewGeneration.current = generation
+    setImportPreviewState(undefined)
+    importPreviewMutation.mutate({ sql, generation, graphVersion: lineageQuery.data?.graph_version })
   }
 
   function submitEdgeModal() {
@@ -229,6 +292,7 @@ export default function Lineage() {
               updateUrl({ depth: value })
             }}
           />
+          <Button onClick={openImportDrawer}>导入 SQL</Button>
           <Button onClick={() => setEdgeModal({ mode: 'create', transform_expr: 'passthrough' })}>新建血缘边</Button>
           <Link to={chatHref()}>
             <Button icon={<CommentOutlined />} type="primary">用 NL 修改</Button>
@@ -287,6 +351,15 @@ export default function Lineage() {
           onChange={(event) => edgeModal && setEdgeModal({ ...edgeModal, transform_expr: event.target.value })}
         />
       </Modal>
+      <LineageSqlImportDrawer
+        key={importOpen ? 'lineage-sql-import-open' : 'lineage-sql-import-closed'}
+        open={importOpen}
+        loading={importPreviewMutation.isPending || importApplyMutation.isPending}
+        preview={importPreviewState?.preview}
+        onClose={closeImportDrawer}
+        onPreview={previewImportedSql}
+        onApply={() => importApplyMutation.mutate()}
+      />
     </div>
   )
 }
