@@ -224,6 +224,8 @@ describe('lineageX6Adapter', () => {
     expect(fieldEdge?.data?.kind).toBe('field-edge')
     expect(fieldEdge?.data?.edge).toBe(payload.field_edges[0])
     expect(fieldEdge?.data?.lineageEdgeKey).toBe(edgeKey(payload.field_edges[0]))
+    expect(edgeKey(payload.field_edges[0])).toBe('edge-1')
+    expect(fieldEdgeCellId(payload.field_edges[0])).toBe('field-edge-s-edge-1')
   })
 
   test('field-level edges are hidden until a related table is expanded', () => {
