@@ -11,6 +11,8 @@ from backend.metadata.models import (
     ImpactResponse,
     LineageEdge,
     LineageEdgeCreateRequest,
+    LineageEdgeEndpointUpdateRequest,
+    LineageGraphResponse,
     LineageEdgeUpdateRequest,
     LineageResponse,
     TableResponse,
@@ -120,6 +122,24 @@ def lineage_endpoint(
     return LineageResponse(root_table=table, direction=direction, depth=depth, edges=edges)
 
 
+@router.get("/api/lineage/graph", response_model=LineageGraphResponse)
+def lineage_graph_endpoint(
+    table: str = Query(..., description="root table name"),
+    depth: int = Query(2, ge=1, le=5),
+    include_upstream: bool = True,
+    include_downstream: bool = True,
+):
+    try:
+        return service.get_lineage_graph(
+            table=table,
+            depth=depth,
+            include_upstream=include_upstream,
+            include_downstream=include_downstream,
+        )
+    except service.TableNotFound:
+        raise HTTPException(status_code=404, detail="table not found")
+
+
 @router.post(
     "/api/lineage/edges",
     response_model=LineageEdge,
@@ -145,7 +165,6 @@ def create_lineage_edge_endpoint(req: LineageEdgeCreateRequest):
 @router.put(
     "/api/lineage/edges/{edge_id}",
     response_model=LineageEdge,
-    response_model_exclude={"calc_type", "calc_params", "updated_at"},
 )
 def update_lineage_edge_endpoint(edge_id: str, req: LineageEdgeUpdateRequest):
     try:
@@ -154,6 +173,31 @@ def update_lineage_edge_endpoint(edge_id: str, req: LineageEdgeUpdateRequest):
         raise HTTPException(status_code=404, detail={
             "error": "lineage edge not found",
             "edge_id": edge_id,
+        })
+
+
+@router.patch("/api/lineage/edges/{edge_id}/endpoints", response_model=LineageEdge)
+def update_lineage_edge_endpoints_endpoint(edge_id: str, req: LineageEdgeEndpointUpdateRequest):
+    try:
+        return service.update_lineage_edge_endpoints(edge_id, req)
+    except service.LineageEdgeNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "lineage edge not found",
+            "edge_id": edge_id,
+        })
+    except service.FieldNotFound:
+        raise HTTPException(status_code=404, detail={
+            "error": "lineage endpoint field not found",
+        })
+    except service.CycleDetected as e:
+        raise HTTPException(status_code=409, detail={
+            "error": "lineage cycle detected",
+            "path": e.path,
+        })
+    except service.LineageEndpointConflict as e:
+        raise HTTPException(status_code=409, detail={
+            "error": "lineage endpoint already exists",
+            "edge_id": e.edge_id,
         })
 
 

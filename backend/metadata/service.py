@@ -5,6 +5,7 @@ Both HTTP routes (backend/api/metadata.py) and future Agent tools depend on it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Optional
@@ -17,6 +18,10 @@ from backend.metadata.models import (
     ImpactResponse,
     LineageEdge,
     LineageEdgeCreateRequest,
+    LineageEdgeEndpointUpdateRequest,
+    LineageGraphResponse,
+    LineageTableEdge,
+    LineageTableNode,
     LineageEdgeUpdateRequest,
     TableResponse,
     TableSummary,
@@ -44,6 +49,12 @@ class FieldHasDownstream(Exception):
 
 class LineageEdgeNotFound(Exception):
     pass
+
+
+class LineageEndpointConflict(Exception):
+    def __init__(self, edge_id: str):
+        self.edge_id = edge_id
+        super().__init__("lineage endpoint already exists")
 
 
 class CycleDetected(Exception):
@@ -92,7 +103,9 @@ def get_table_by_name(name: str, optional: bool = False) -> Optional[TableRespon
             version: f.version, upstream: upstream
         }) AS fields
         RETURN t.id AS id, t.name AS name, t.layer AS layer, t.layer_priority AS layer_priority,
-               t.storage_type AS storage_type, t.description AS description, fields
+               t.storage_type AS storage_type, t.description AS description, fields,
+               t.sql_logic AS sql_logic, t.sql_dialect AS sql_dialect,
+               t.sql_source AS sql_source, t.sql_updated_at AS sql_updated_at
         """,
         name=name,
     )
@@ -114,6 +127,10 @@ def get_table_by_name(name: str, optional: bool = False) -> Optional[TableRespon
     return TableResponse(
         id=row["id"], name=row["name"], layer=row["layer"], layer_priority=row["layer_priority"],
         storage_type=row["storage_type"], description=row["description"], fields=fields,
+        sql_logic=row.get("sql_logic") or None,
+        sql_dialect=row.get("sql_dialect") or None,
+        sql_source=row.get("sql_source") or None,
+        sql_updated_at=_serialize_neo4j_datetime(row.get("sql_updated_at")),
     )
 
 
@@ -280,6 +297,47 @@ def _serialize_neo4j_datetime(value) -> str:
     return str(value)
 
 
+def _json_dict(value) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            return {}
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _calc_params_to_str(value) -> str:
+    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _graph_version(rows: list[LineageEdge]) -> str:
+    payload = [
+        {
+            "edge_id": edge.edge_id,
+            "from_table": edge.from_table,
+            "from_field": edge.from_field,
+            "to_table": edge.to_table,
+            "to_field": edge.to_field,
+            "transform_expr": edge.transform_expr,
+            "calc_type": edge.calc_type,
+            "calc_params": edge.calc_params,
+            "updated_at": edge.updated_at,
+        }
+        for edge in sorted(
+            rows,
+            key=lambda e: (e.edge_id, e.from_table, e.from_field, e.to_table, e.to_field),
+        )
+    ]
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"edges:{len(rows)}:{digest}"
+
+
 def _lineage_edge_from_row(row: dict) -> LineageEdge:
     return LineageEdge(
         edge_id=str(row.get("edge_id") or ""),
@@ -288,7 +346,10 @@ def _lineage_edge_from_row(row: dict) -> LineageEdge:
         to_table=row["to_table"],
         to_field=row["to_field"],
         transform_expr=row.get("transform_expr") or "",
+        calc_type=row.get("calc_type") or "DIRECT",
+        calc_params=_json_dict(row.get("calc_params")),
         created_at=_serialize_neo4j_datetime(row.get("created_at")),
+        updated_at=_serialize_neo4j_datetime(row.get("updated_at")),
     )
 
 
@@ -302,7 +363,10 @@ def _load_lineage_edge(edge_id: str) -> LineageEdge:
         RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
                from_t.name AS from_table, from_f.name AS from_field,
                to_t.name AS to_table, to_f.name AS to_field,
-               r.transform_expr AS transform_expr, r.created_at AS created_at
+               r.transform_expr AS transform_expr,
+               coalesce(r.calc_type, 'DIRECT') AS calc_type,
+               coalesce(r.calc_params, '{}') AS calc_params,
+               r.created_at AS created_at, r.updated_at AS updated_at
         """,
         edge_id=edge_id,
     )
@@ -311,7 +375,11 @@ def _load_lineage_edge(edge_id: str) -> LineageEdge:
     return _lineage_edge_from_row(rows[0])
 
 
-def assert_no_lineage_cycle(target_field_id: str, source_field_id: str) -> None:
+def assert_no_lineage_cycle(
+    target_field_id: str,
+    source_field_id: str,
+    ignore_edge_id: str | None = None,
+) -> None:
     if target_field_id == source_field_id:
         rows = run_query(
             """
@@ -324,6 +392,10 @@ def assert_no_lineage_cycle(target_field_id: str, source_field_id: str) -> None:
     rows = run_query(
         """
         MATCH p = (source:Field {id: $source_field_id})-[:DERIVES_FROM*1..20]->(target:Field {id: $target_field_id})
+        WHERE $ignore_edge_id IS NULL OR none(
+            rel IN relationships(p)
+            WHERE coalesce(rel.edge_id, elementId(rel)) = $ignore_edge_id
+        )
         WITH nodes(p) AS path_nodes
         UNWIND path_nodes AS f
         MATCH (t:Table)-[:HAS_FIELD]->(f)
@@ -332,6 +404,7 @@ def assert_no_lineage_cycle(target_field_id: str, source_field_id: str) -> None:
         """,
         source_field_id=source_field_id,
         target_field_id=target_field_id,
+        ignore_edge_id=ignore_edge_id,
     )
     if rows:
         raise CycleDetected(rows[0]["path"])
@@ -362,15 +435,23 @@ def create_lineage_edge(req: LineageEdgeCreateRequest) -> LineageEdge:
         MATCH (to_f:Field {id: $target_field_id})
         MERGE (to_f)-[r:DERIVES_FROM]->(from_f)
         ON CREATE SET r.edge_id = $edge_id,
-                      r.created_at = datetime(),
-                      r.transform_expr = $transform_expr
-        ON MATCH SET r.transform_expr = $transform_expr
+                      r.created_at = datetime()
+        ON MATCH SET r.transform_expr = $transform_expr,
+                     r.calc_type = $calc_type,
+                     r.calc_params = $calc_params,
+                     r.updated_at = datetime()
+        SET r.transform_expr = $transform_expr,
+            r.calc_type = $calc_type,
+            r.calc_params = $calc_params,
+            r.updated_at = datetime()
         RETURN coalesce(r.edge_id, elementId(r)) AS edge_id
         """,
         source_field_id=source_field_id,
         target_field_id=target_field_id,
         edge_id=str(uuid.uuid4()),
         transform_expr=req.transform_expr,
+        calc_type=req.calc_type,
+        calc_params=_calc_params_to_str(req.calc_params),
     )
     if not rows:
         raise LineageEdgeNotFound(f"{req.from_table}.{req.from_field} -> {req.to_table}.{req.to_field}")
@@ -382,11 +463,16 @@ def update_lineage_edge(edge_id: str, req: LineageEdgeUpdateRequest) -> LineageE
         """
         MATCH ()-[r:DERIVES_FROM]->()
         WHERE r.edge_id = $edge_id OR elementId(r) = $edge_id
-        SET r.transform_expr = $transform_expr
+        SET r.transform_expr = $transform_expr,
+            r.calc_type = $calc_type,
+            r.calc_params = $calc_params,
+            r.updated_at = datetime()
         RETURN coalesce(r.edge_id, elementId(r)) AS edge_id
         """,
         edge_id=edge_id,
         transform_expr=req.transform_expr,
+        calc_type=req.calc_type,
+        calc_params=_calc_params_to_str(req.calc_params),
     )
     if not rows:
         raise LineageEdgeNotFound(edge_id)
@@ -406,6 +492,68 @@ def delete_lineage_edge(edge_id: str) -> None:
     )
     if not rows or rows[0]["deleted"] == 0:
         raise LineageEdgeNotFound(edge_id)
+
+
+def update_lineage_edge_endpoints(edge_id: str, req: LineageEdgeEndpointUpdateRequest) -> LineageEdge:
+    current = _load_lineage_edge(edge_id)
+    rows = run_query(
+        """
+        MATCH (from_t:Table {name: $from_table})-[:HAS_FIELD]->(from_f:Field {name: $from_field})
+        MATCH (to_t:Table {name: $to_table})-[:HAS_FIELD]->(to_f:Field {name: $to_field})
+        RETURN from_f.id AS source_field_id, to_f.id AS target_field_id
+        """,
+        from_table=req.from_table,
+        from_field=req.from_field,
+        to_table=req.to_table,
+        to_field=req.to_field,
+    )
+    if not rows:
+        raise FieldNotFound(f"{req.from_table}.{req.from_field} -> {req.to_table}.{req.to_field}")
+
+    source_field_id = rows[0]["source_field_id"]
+    target_field_id = rows[0]["target_field_id"]
+    assert_no_lineage_cycle(
+        target_field_id=target_field_id,
+        source_field_id=source_field_id,
+        ignore_edge_id=edge_id,
+    )
+
+    rows = run_query(
+        """
+        MATCH ()-[old_r:DERIVES_FROM]->()
+        WHERE old_r.edge_id = $edge_id OR elementId(old_r) = $edge_id
+        MATCH (from_f:Field {id: $source_field_id})
+        MATCH (to_f:Field {id: $target_field_id})
+        OPTIONAL MATCH (to_f)-[existing:DERIVES_FROM]->(from_f)
+        WITH old_r, from_f, to_f, existing, properties(old_r) AS old_props,
+             coalesce(existing.edge_id, elementId(existing)) AS existing_edge_id
+        WITH old_r, from_f, to_f, old_props,
+             CASE
+                 WHEN existing IS NOT NULL AND existing <> old_r THEN existing_edge_id
+                 ELSE null
+             END AS conflict_edge_id
+        FOREACH (_ IN CASE WHEN conflict_edge_id IS NULL THEN [1] ELSE [] END |
+            DELETE old_r
+        )
+        FOREACH (_ IN CASE WHEN conflict_edge_id IS NULL THEN [1] ELSE [] END |
+            CREATE (to_f)-[new_r:DERIVES_FROM]->(from_f)
+            SET new_r = old_props,
+                new_r.edge_id = $edge_id,
+                new_r.updated_at = datetime()
+        )
+        RETURN CASE WHEN conflict_edge_id IS NULL THEN $edge_id ELSE null END AS edge_id,
+               conflict_edge_id
+        """,
+        source_field_id=source_field_id,
+        target_field_id=target_field_id,
+        edge_id=edge_id,
+    )
+    if not rows:
+        raise LineageEdgeNotFound(edge_id)
+    if rows[0].get("conflict_edge_id"):
+        raise LineageEndpointConflict(rows[0]["conflict_edge_id"])
+    return _load_lineage_edge(rows[0]["edge_id"])
+
 
 def get_lineage(table: str, direction: str = "down", depth: int = 5) -> list[LineageEdge]:
     if direction not in ("up", "down"):
@@ -428,12 +576,94 @@ def get_lineage(table: str, direction: str = "down", depth: int = 5) -> list[Lin
         RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
                from_t.name AS from_table, from_f.name AS from_field,
                to_t.name AS to_table, to_f.name AS to_field,
-               r.transform_expr AS transform_expr, r.created_at AS created_at
+               r.transform_expr AS transform_expr,
+               coalesce(r.calc_type, 'DIRECT') AS calc_type,
+               coalesce(r.calc_params, '{}') AS calc_params,
+               r.created_at AS created_at, r.updated_at AS updated_at
         ORDER BY from_table, from_field, to_table, to_field
         """,
         name=table,
     )
     return [_lineage_edge_from_row(r) for r in rows]
+
+
+def get_lineage_graph(
+    table: str,
+    depth: int = 2,
+    include_upstream: bool = True,
+    include_downstream: bool = True,
+) -> LineageGraphResponse:
+    root_table = get_table_by_name(table, optional=True)
+    if root_table is None:
+        raise TableNotFound(table)
+
+    upstream_edges = get_lineage(table, direction="up", depth=depth) if include_upstream else []
+    downstream_edges = get_lineage(table, direction="down", depth=depth) if include_downstream else []
+
+    field_edge_by_id: dict[str, LineageEdge] = {}
+    for edge in [*upstream_edges, *downstream_edges]:
+        field_edge_by_id[edge.edge_id] = edge
+    field_edges = sorted(
+        field_edge_by_id.values(),
+        key=lambda e: (e.from_table, e.to_table, e.from_field, e.to_field, e.edge_id),
+    )
+
+    table_names = {table}
+    for edge in field_edges:
+        table_names.add(edge.from_table)
+        table_names.add(edge.to_table)
+
+    tables: list[LineageTableNode] = []
+    detail_by_name: dict[str, TableResponse] = {}
+    for table_name in sorted(table_names):
+        detail = get_table_by_name(table_name)
+        detail_by_name[table_name] = detail
+        tables.append(LineageTableNode(
+            id=detail.id,
+            name=detail.name,
+            layer=detail.layer,
+            layer_priority=detail.layer_priority,
+            storage_type=detail.storage_type,
+            description=detail.description,
+            field_count=len(detail.fields),
+            fields=detail.fields,
+            sql_logic=detail.sql_logic,
+            sql_dialect=detail.sql_dialect,
+            sql_source=detail.sql_source,
+            sql_updated_at=detail.sql_updated_at,
+        ))
+
+    grouped: dict[tuple[str, str, str], list[LineageEdge]] = {}
+    for edge in upstream_edges:
+        grouped.setdefault((edge.from_table, edge.to_table, "upstream"), []).append(edge)
+    for edge in downstream_edges:
+        grouped.setdefault((edge.from_table, edge.to_table, "downstream"), []).append(edge)
+
+    table_edges: list[LineageTableEdge] = []
+    for (from_table, to_table, direction), edges in sorted(grouped.items()):
+        calc_type_counts: dict[str, int] = {}
+        for edge in edges:
+            calc_type_counts[edge.calc_type] = calc_type_counts.get(edge.calc_type, 0) + 1
+        table_edges.append(LineageTableEdge(
+            source=from_table,
+            target=to_table,
+            direction=direction,
+            field_edge_count=len(edges),
+            calc_type_counts=dict(sorted(calc_type_counts.items())),
+            fields=sorted({edge.to_field for edge in edges}),
+        ))
+
+    return LineageGraphResponse(
+        root_table=table,
+        depth=depth,
+        include_upstream=include_upstream,
+        include_downstream=include_downstream,
+        graph_version=_graph_version(field_edges),
+        tables=tables,
+        table_edges=table_edges,
+        field_edges=field_edges,
+        saved_sql=detail_by_name[table].sql_logic,
+    )
 
 
 def get_downstream_impact(table: str, field: Optional[str] = None) -> ImpactResponse:
@@ -452,7 +682,10 @@ def get_downstream_impact(table: str, field: Optional[str] = None) -> ImpactResp
         RETURN coalesce(r.edge_id, elementId(r)) AS edge_id,
                from_t.name AS from_table, from_f.name AS from_field,
                to_t.name AS to_table, to_f.name AS to_field,
-               r.transform_expr AS transform_expr, r.created_at AS created_at
+               r.transform_expr AS transform_expr,
+               coalesce(r.calc_type, 'DIRECT') AS calc_type,
+               coalesce(r.calc_params, '{{}}') AS calc_params,
+               r.created_at AS created_at, r.updated_at AS updated_at
         ORDER BY to_t.name, to_f.name
         """,
         table=table,
