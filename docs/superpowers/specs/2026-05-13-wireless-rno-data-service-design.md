@@ -12,7 +12,7 @@
 2. **正向 ETL**：用户描述目标数据集 → Agent 在已有数据 (Hive/Kafka/StarRocks) 上加工
 3. **反向合成数据**：用户给出评估 pipeline → Agent 反推输入约束并生成测试/压测数据
 4. **元数据演进**：通过自然语言增强元数据模型，自动更新字段、表达式、血缘
-5. **Web 可视化**：元数据浏览、字段级血缘、正向/反向 pipeline 呈现
+5. **Web 可视化**：元数据浏览、血缘工作台、正向/反向 pipeline 呈现
 
 ### 范围
 
@@ -1393,7 +1393,7 @@ class SandboxController:
 | `/metadata` | 元数据管理 | 表浏览/搜索/CRUD + 字段编辑 + YAML 导出 |
 | `/metadata/lineage` | 血缘工作台 | 表级血缘主图 + 字段展开血缘 + 结构化边编辑 + SQL 生成/导入 + 跳转 /chat |
 | `/chat` | NL 对话 | 对话面板 + 代码卡片 + dry-run 预览 |
-| `/pipeline` | Pipeline 可视化 | 正向 ETL DAG + 反向合成链路 |
+| `/pipeline` | Pipeline 可视化 | 正向 ETL DAG + 反向合成链路，只读消费血缘结果 |
 | `/schema-evolution` | 演化历史 | 变更时间线 + 版本 diff |
 | `/health` | 健康检查 | Docker 组件连通性状态面板 (30s 自动刷新) |
 
@@ -1738,6 +1738,15 @@ context_prompt = """
 > 分页: 当前元数据规模较小 (10 表 / ~70 字段)，列表接口暂不分页。当表数超过 50 时，`GET /api/tables` 和 `GET /api/fields` 需增加 `?page=&size=` 参数。
 
 ### 6.8 Pipeline 可视化页面 (/pipeline)
+
+`/pipeline` 和 `/metadata/lineage` 都会展示表级血缘，但职责不同：
+
+| 页面 | 定位 | 图粒度 | 是否编辑血缘 | SQL 能力 |
+|------|------|--------|--------------|----------|
+| `/metadata/lineage` 血缘工作台 | 元数据和血缘维护入口 | 表级主图 + 展开后的字段级血缘 | 是。支持改边、拖锚点、计算类型、字段血缘 | 是。基于当前表血缘生成 SQL、导入 SQL 并写回 `Table.sql_logic` |
+| `/pipeline` Pipeline 可视化 | 链路分析、路径观察和反向合成入口 | 主要是表级 DAG | 否。只读消费血缘结果，不维护字段级边 | 不负责维护表 SQL；只展示链路约束、路径和反向合成相关信息 |
+
+因此，`/metadata/lineage` 是血缘建模源头，回答“这个表由哪些字段算出来、字段血缘怎么连、当前表 SQL 应该是什么”；`/pipeline` 是基于已有血缘聚合出的链路视图，回答“整体加工链路怎么走、上下游路径有哪些、约束如何沿链路传递”。`/pipeline` 不做字段级血缘编辑、不做 SQL 导入写回。
 
 > **表级血缘聚合规则**：Pipeline 页面展示的是表级 DAG（节点 = 表）。表级血缘 = 该表所有字段沿 `:DERIVES_FROM` 关系到达的上游字段所属表的去重集合；边权 = 跨这两张表的字段级血缘边数。后端 `/api/pipeline` 通过 Cypher 聚合查询构建（`MATCH (t1:Table)-[:HAS_FIELD]->(f1)-[:DERIVES_FROM]->(f2)<-[:HAS_FIELD]-(t2) RETURN t1, t2, count(*) AS edge_weight`），不在 Neo4j 冗余存储表级血缘。
 
