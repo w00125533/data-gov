@@ -6,6 +6,7 @@ import {
   edgeKey,
   fieldEdgeCellId,
   fieldPortId,
+  safeCellId,
   tableEdgeCellId,
 } from './lineageX6Adapter'
 
@@ -184,6 +185,25 @@ describe('lineageX6Adapter', () => {
     expect(graph.edges.map((edge) => edge.id)).toContain(tableEdgeCellId('dwd_session_qos', 'dws_cell_hourly'))
   })
 
+  test('uses built-in node shapes and stable table metadata', () => {
+    const graph = buildLineageX6GraphData({
+      payload,
+      expandedTables: new Set(['dws_cell_hourly']),
+      selectedEdgeKey: undefined,
+    })
+
+    const root = graph.nodes.find((node) => node.id === 'dws_cell_hourly')
+    const tableEdge = graph.edges.find((edge) => edge.id === tableEdgeCellId('dwd_session_qos', 'dws_cell_hourly'))
+
+    expect(root?.shape).toBe('rect')
+    expect(root?.data?.kind).toBe('table')
+    expect(root?.data?.table.name).toBe('dws_cell_hourly')
+    expect(root?.data?.expanded).toBe(true)
+    expect(tableEdge?.data?.kind).toBe('table-edge')
+    expect(tableEdge?.data?.edge.source).toBe('dwd_session_qos')
+    expect(tableEdge?.data?.edge.target).toBe('dws_cell_hourly')
+  })
+
   test('expanded tables expose stable field ports and dashed field edges', () => {
     const graph = buildLineageX6GraphData({
       payload,
@@ -201,6 +221,9 @@ describe('lineageX6Adapter', () => {
     expect(fieldEdge?.target).toEqual({ cell: 'dws_cell_hourly', port: fieldPortId('in', 'avg_rsrp') })
     expect(fieldEdge?.attrs?.line?.strokeDasharray).toBe('5 5')
     expect(fieldEdge?.attrs?.line?.stroke).toBe('#2563eb')
+    expect(fieldEdge?.data?.kind).toBe('field-edge')
+    expect(fieldEdge?.data?.edge).toBe(payload.field_edges[0])
+    expect(fieldEdge?.data?.lineageEdgeKey).toBe(edgeKey(payload.field_edges[0]))
   })
 
   test('field-level edges are hidden until a related table is expanded', () => {
@@ -218,5 +241,10 @@ describe('lineageX6Adapter', () => {
 
     expect(collapsed.edges.some((item) => item.id === fieldEdgeCellId(payload.field_edges[0]))).toBe(false)
     expect(expanded.edges.some((item) => item.id === fieldEdgeCellId(payload.field_edges[0]))).toBe(true)
+  })
+
+  test('encodes cell ids without punctuation collisions', () => {
+    expect(safeCellId('db.table')).not.toBe(safeCellId('db_table'))
+    expect(tableEdgeCellId('db.table', 'a-b')).not.toBe(tableEdgeCellId('db', 'table-a-b'))
   })
 })

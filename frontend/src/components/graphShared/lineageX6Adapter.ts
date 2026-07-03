@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@antv/x6'
-import type { LineageEdge, LineageGraphResponse, LineageTableNode } from '../../api/client'
+import type { LineageEdge, LineageGraphResponse, LineageTableEdge, LineageTableNode } from '../../api/client'
 import { colorForLayer } from './palette'
 
 export type LineageX6GraphInput = {
@@ -36,11 +36,15 @@ export function edgeKey(edge: LineageEdge): string {
 }
 
 export function safeCellId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, '_')
+  if (/^[a-zA-Z0-9_-]+$/.test(value)) return `s-${value}`
+
+  const bytes = new TextEncoder().encode(value)
+  const encoded = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `h-${encoded}`
 }
 
 export function tableEdgeCellId(source: string, target: string): string {
-  return `table-edge-${safeCellId(`${source}-${target}`)}`
+  return `table-edge-${safeCellId(source)}-${safeCellId(target)}`
 }
 
 export function fieldEdgeCellId(edge: LineageEdge): string {
@@ -246,7 +250,7 @@ function buildTableNode(
 
   return {
     id: table.name,
-    shape: 'lineage-table',
+    shape: 'rect',
     x: position.x,
     y: position.y,
     width: NODE_WIDTH,
@@ -276,12 +280,12 @@ function buildTableNode(
   }
 }
 
-function buildTableEdge(source: string, target: string): Edge.Metadata {
+function buildTableEdge(edge: LineageTableEdge): Edge.Metadata {
   return {
-    id: tableEdgeCellId(source, target),
+    id: tableEdgeCellId(edge.source, edge.target),
     shape: 'edge',
-    source: { cell: source },
-    target: { cell: target },
+    source: { cell: edge.source },
+    target: { cell: edge.target },
     connector: { name: 'smooth' },
     attrs: {
       line: {
@@ -290,7 +294,7 @@ function buildTableEdge(source: string, target: string): Edge.Metadata {
         targetMarker: { name: 'block', width: 8, height: 6 },
       },
     },
-    data: { kind: 'table-edge', source, target },
+    data: { kind: 'table-edge', edge },
     zIndex: 1,
   }
 }
@@ -312,7 +316,7 @@ function buildFieldEdge(edge: LineageEdge, selectedEdgeKey?: string): Edge.Metad
         targetMarker: { name: 'block', width: 8, height: 6 },
       },
     },
-    data: { kind: 'field-edge', edge },
+    data: { kind: 'field-edge', edge, lineageEdgeKey: edgeKey(edge) },
     zIndex: selected ? 4 : 3,
   }
 }
@@ -330,7 +334,7 @@ export function buildLineageX6GraphData({
     .map((table) =>
       buildTableNode(table, positions.get(table.name) ?? positions.get(payload.root_table)!, payload.root_table, expandedTables.has(table.name)),
     )
-  const tableEdges = payload.table_edges.map((edge) => buildTableEdge(edge.source, edge.target))
+  const tableEdges = payload.table_edges.map((edge) => buildTableEdge(edge))
   const fieldEdgeByCellId = new Map<string, LineageEdge>()
   const fieldEdges = payload.field_edges
     .filter((edge) => expandedTables.has(edge.from_table) || expandedTables.has(edge.to_table))
