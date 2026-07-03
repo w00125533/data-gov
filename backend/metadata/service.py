@@ -11,6 +11,7 @@ import uuid
 from typing import Optional
 
 from backend.metadata.graph import run_query
+from backend.metadata.lineage_sql import generate_select_sql, parse_select_preview
 from backend.metadata.models import (
     CreateFieldRequest,
     CreateTableRequest,
@@ -20,6 +21,9 @@ from backend.metadata.models import (
     LineageEdgeCreateRequest,
     LineageEdgeEndpointUpdateRequest,
     LineageGraphResponse,
+    LineageSqlApplyRequest,
+    LineageSqlImportPreviewResponse,
+    LineageSqlPreviewResponse,
     LineageTableEdge,
     LineageTableNode,
     LineageEdgeUpdateRequest,
@@ -730,3 +734,62 @@ def run_query_update_table(table_id: str, req) -> None:
     if not sets:
         return
     run_query(f"MATCH (t:Table {{id: $id}}) SET {', '.join(sets)}", **params)
+
+
+# ----------------------- Lineage SQL -----------------------
+
+def preview_lineage_sql(
+    table: str,
+    field_edges: Optional[list[LineageEdge]] = None,
+) -> LineageSqlPreviewResponse:
+    detail = get_table_by_name(table)
+    edges = field_edges if field_edges is not None else get_lineage(table=table, direction="up", depth=1)
+    sql, complete, warnings = generate_select_sql(
+        table=table,
+        fields=[field.name for field in detail.fields],
+        saved_sql=detail.sql_logic,
+        edges=edges,
+    )
+    return LineageSqlPreviewResponse(
+        table=table,
+        sql=sql,
+        complete=complete,
+        warnings=warnings,
+        saved_sql=detail.sql_logic,
+        changed=(detail.sql_logic or "").strip() != sql.strip(),
+    )
+
+
+def preview_sql_import(table: str, sql: str) -> LineageSqlImportPreviewResponse:
+    get_table_by_name(table)
+    return parse_select_preview(table, sql)
+
+
+def apply_lineage_sql(req: LineageSqlApplyRequest) -> LineageSqlPreviewResponse:
+    get_table_by_name(req.table)
+    run_query(
+        """
+        MATCH (t:Table {name: $table})
+        SET t.sql_logic = $sql,
+            t.sql_dialect = $sql_dialect,
+            t.sql_source = $sql_source,
+            t.sql_updated_at = datetime()
+        CREATE (:Change {
+            id: $change_id,
+            operation: $operation,
+            table_name: $table,
+            field_name: $field_name,
+            changed_at: datetime(),
+            commit_hash: $commit_hash
+        })
+        """,
+        table=req.table,
+        sql=req.sql,
+        sql_dialect="hive",
+        sql_source="imported",
+        change_id=str(uuid.uuid4()),
+        operation="lineage_sql_apply",
+        field_name="",
+        commit_hash="",
+    )
+    return preview_lineage_sql(req.table)

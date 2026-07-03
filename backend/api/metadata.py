@@ -2,8 +2,10 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlglot.errors import ParseError
 
 from backend.metadata import service
+from backend.metadata.lineage_sql import UnsupportedSqlError
 from backend.metadata.models import (
     CreateFieldRequest,
     CreateTableRequest,
@@ -13,6 +15,11 @@ from backend.metadata.models import (
     LineageEdgeCreateRequest,
     LineageEdgeEndpointUpdateRequest,
     LineageGraphResponse,
+    LineageSqlApplyRequest,
+    LineageSqlImportPreviewRequest,
+    LineageSqlImportPreviewResponse,
+    LineageSqlPreviewRequest,
+    LineageSqlPreviewResponse,
     LineageEdgeUpdateRequest,
     LineageResponse,
     TableResponse,
@@ -136,6 +143,35 @@ def lineage_graph_endpoint(
             include_upstream=include_upstream,
             include_downstream=include_downstream,
         )
+    except service.TableNotFound:
+        raise HTTPException(status_code=404, detail="table not found")
+
+
+@router.post("/api/lineage/sql/preview", response_model=LineageSqlPreviewResponse)
+def lineage_sql_preview_endpoint(req: LineageSqlPreviewRequest):
+    try:
+        return service.preview_lineage_sql(req.table, field_edges=req.field_edges)
+    except service.TableNotFound:
+        raise HTTPException(status_code=404, detail="table not found")
+
+
+@router.post("/api/lineage/sql/import/preview", response_model=LineageSqlImportPreviewResponse)
+def lineage_sql_import_preview_endpoint(req: LineageSqlImportPreviewRequest):
+    try:
+        return service.preview_sql_import(req.table, req.sql)
+    except service.TableNotFound:
+        raise HTTPException(status_code=404, detail="table not found")
+    except (ParseError, UnsupportedSqlError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "sql parse failed", "message": str(exc)},
+        )
+
+
+@router.post("/api/lineage/sql/apply", response_model=LineageSqlPreviewResponse)
+def lineage_sql_apply_endpoint(req: LineageSqlApplyRequest):
+    try:
+        return service.apply_lineage_sql(req)
     except service.TableNotFound:
         raise HTTPException(status_code=404, detail="table not found")
 
