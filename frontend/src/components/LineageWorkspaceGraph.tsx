@@ -14,6 +14,7 @@ type Props = {
   payload?: LineageGraphResponse
   expandedTables: Set<string>
   selectedEdge?: LineageEdge
+  resetVersion?: number
   onToggleTable: (table: string) => void
   onSelectFieldEdge: (edge: LineageEdge) => void
   onMoveEdgeEndpoint: (edge: LineageEdge, endpoint: EdgeEndpoint, table: string, field: string) => void
@@ -79,6 +80,7 @@ export default function LineageWorkspaceGraph({
   payload,
   expandedTables,
   selectedEdge,
+  resetVersion = 0,
   onToggleTable,
   onSelectFieldEdge,
   onMoveEdgeEndpoint,
@@ -253,7 +255,7 @@ export default function LineageWorkspaceGraph({
       })
       return () => window.cancelAnimationFrame(frame)
     }
-  }, [graphData, graphReady, topologyKey])
+  }, [graphData, graphReady, resetVersion, topologyKey])
 
   useEffect(() => {
     const graph = graphRef.current

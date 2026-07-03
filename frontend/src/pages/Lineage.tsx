@@ -70,6 +70,7 @@ export default function Lineage() {
   const [includeUpstream, setIncludeUpstream] = useState(true)
   const [includeDownstream, setIncludeDownstream] = useState(true)
   const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set())
+  const [graphResetVersion, setGraphResetVersion] = useState(0)
   const [edge, setEdge] = useState<LineageEdge | undefined>()
   const [nodeId, setNodeId] = useState<string | undefined>()
   const [edgeModal, setEdgeModal] = useState<EdgeModal | undefined>()
@@ -182,6 +183,7 @@ export default function Lineage() {
     },
     onError: (error) => {
       apiMessage.error(`端点更新失败: ${(error as Error).message}`)
+      setGraphResetVersion((version) => version + 1)
       void invalidateLineage()
       void sqlPreviewQuery.refetch()
     },
@@ -308,6 +310,7 @@ export default function Lineage() {
           payload={workspacePayload}
           expandedTables={expandedTables}
           selectedEdge={edge}
+          resetVersion={graphResetVersion}
           onToggleTable={toggleTable}
           onSelectFieldEdge={(next) => {
             setEdge(next)

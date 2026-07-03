@@ -44,6 +44,12 @@ async function locatorCenter(locator: Locator) {
   }
 }
 
+async function locatorDistance(a: Locator, b: Locator) {
+  const left = await locatorCenter(a)
+  const right = await locatorCenter(b)
+  return Math.hypot(left.x - right.x, left.y - right.y)
+}
+
 async function clickVisibleTableToggle(page: Page, table: string) {
   const toggle = x6TableToggle(page, table)
   await expect(toggle).toBeAttached()
@@ -239,11 +245,20 @@ test('lineage workspace refetches graph and sql preview when endpoint drag fails
   await clickVisibleTableToggle(page, 'dwd_session_qos')
   const graphCallsBeforeMove = graphCalls
   const sqlPreviewCallsBeforeMove = sqlPreviewCalls
+  await expect.poll(() =>
+    locatorDistance(x6EdgeArrowhead(page, 'source'), x6Port(page, 'dwd_session_qos', 'out:avg_rsrp')),
+  ).toBeLessThan(10)
 
   await dragVisibleSourceArrowheadToPort(page, 'dwd_session_qos', 'hour_bucket')
 
   await expect.poll(() => graphCalls).toBeGreaterThan(graphCallsBeforeMove)
   await expect.poll(() => sqlPreviewCalls).toBeGreaterThan(sqlPreviewCallsBeforeMove)
+  await expect.poll(() =>
+    locatorDistance(x6EdgeArrowhead(page, 'source'), x6Port(page, 'dwd_session_qos', 'out:avg_rsrp')),
+  ).toBeLessThan(10)
+  await expect.poll(() =>
+    locatorDistance(x6EdgeArrowhead(page, 'source'), x6Port(page, 'dwd_session_qos', 'out:hour_bucket')),
+  ).toBeGreaterThan(10)
   await expect(page.getByText(/端点更新失败/)).toBeVisible()
 })
 
