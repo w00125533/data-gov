@@ -1,12 +1,11 @@
 import { CommentOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Modal, Segmented, Slider, Space, Typography, message } from 'antd'
-import { useState } from 'react'
+import { Button, Checkbox, Input, Modal, Slider, Space, Typography, message } from 'antd'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type LineageEdge } from '../api/client'
-import LineageContextMenu, { type LineageMenuAction } from '../components/LineageContextMenu'
-import LineageGraph from '../components/LineageGraph'
+import { api, type LineageEdge, type LineageGraphResponse } from '../api/client'
 import LineageSidePanel from '../components/LineageSidePanel'
+import LineageWorkspaceGraph from '../components/LineageWorkspaceGraph'
 
 type EdgeModal = {
   mode: 'create' | 'edit'
@@ -15,6 +14,8 @@ type EdgeModal = {
   to?: string
   transform_expr?: string
 }
+
+type EdgeEndpoint = 'from' | 'to'
 
 function splitRef(value?: string) {
   const [table, field] = (value ?? '').split('.')
@@ -25,29 +26,70 @@ function edgeId(edge: LineageEdge) {
   return edge.edge_id || `${edge.from_table}.${edge.from_field}->${edge.to_table}.${edge.to_field}`
 }
 
+function filterWorkspacePayload(payload: LineageGraphResponse | undefined, includeUpstream: boolean, includeDownstream: boolean) {
+  if (!payload) return undefined
+  const visibleNames = new Set([payload.root_table])
+  let changed = true
+  while (changed) {
+    changed = false
+    payload.table_edges.forEach((edge) => {
+      if (includeUpstream && visibleNames.has(edge.target) && !visibleNames.has(edge.source)) {
+        visibleNames.add(edge.source)
+        changed = true
+      }
+      if (includeDownstream && visibleNames.has(edge.source) && !visibleNames.has(edge.target)) {
+        visibleNames.add(edge.target)
+        changed = true
+      }
+    })
+  }
+
+  return {
+    ...payload,
+    include_upstream: includeUpstream,
+    include_downstream: includeDownstream,
+    tables: payload.tables.filter((table) => visibleNames.has(table.name)),
+    table_edges: payload.table_edges.filter((edge) => visibleNames.has(edge.source) && visibleNames.has(edge.target)),
+    field_edges: payload.field_edges.filter((edge) => visibleNames.has(edge.from_table) && visibleNames.has(edge.to_table)),
+  }
+}
+
 export default function Lineage() {
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [apiMessage, holder] = message.useMessage()
   const [table, setTable] = useState(params.get('table') ?? 'dws_cell_hourly')
-  const [direction, setDirection] = useState<'up' | 'down'>((params.get('direction') as 'up' | 'down') ?? 'down')
   const [depth, setDepth] = useState(Number(params.get('depth') ?? 5))
+  const [includeUpstream, setIncludeUpstream] = useState(true)
+  const [includeDownstream, setIncludeDownstream] = useState(true)
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set())
   const [edge, setEdge] = useState<LineageEdge | undefined>()
   const [nodeId, setNodeId] = useState<string | undefined>()
   const [edgeModal, setEdgeModal] = useState<EdgeModal | undefined>()
-  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; targetType: 'node' | 'edge' | 'canvas'; targetId?: string }>({
-    open: false,
-    x: 0,
-    y: 0,
-    targetType: 'canvas',
-  })
 
   const lineageQuery = useQuery({
-    queryKey: ['lineage', table, direction, depth],
-    queryFn: () => api.lineage({ table, direction, depth }),
+    queryKey: ['lineage-graph', table, depth, includeUpstream, includeDownstream],
+    queryFn: () => api.lineageGraph({
+      table,
+      depth,
+      include_upstream: includeUpstream,
+      include_downstream: includeDownstream,
+    }),
   })
 
-  const invalidateLineage = () => queryClient.invalidateQueries({ queryKey: ['lineage'] })
+  const workspacePayload = filterWorkspacePayload(lineageQuery.data, includeUpstream, includeDownstream)
+  const invalidateLineage = () => queryClient.invalidateQueries({ queryKey: ['lineage-graph'] })
+
+  useEffect(() => {
+    if (!edge) return
+    const selectedEdgeId = edgeId(edge)
+    const stillVisible = (workspacePayload?.field_edges ?? []).some((candidate) => edgeId(candidate) === selectedEdgeId)
+    if (!stillVisible) {
+      const handle = window.setTimeout(() => setEdge(undefined), 0)
+      return () => window.clearTimeout(handle)
+    }
+  }, [edge, workspacePayload])
+
   const createEdgeMutation = useMutation({
     mutationFn: api.createLineageEdge,
     onSuccess: () => {
@@ -67,6 +109,21 @@ export default function Lineage() {
     },
     onError: (error) => apiMessage.error(`更新失败: ${(error as Error).message}`),
   })
+  const moveEndpointMutation = useMutation({
+    mutationFn: ({ id, nextEdge }: { id: string; nextEdge: LineageEdge }) =>
+      api.updateLineageEdgeEndpoints(id, {
+        from_table: nextEdge.from_table,
+        from_field: nextEdge.from_field,
+        to_table: nextEdge.to_table,
+        to_field: nextEdge.to_field,
+      }),
+    onSuccess: (updated) => {
+      apiMessage.success('端点已更新')
+      setEdge(updated)
+      invalidateLineage()
+    },
+    onError: (error) => apiMessage.error(`端点更新失败: ${(error as Error).message}`),
+  })
   const deleteEdgeMutation = useMutation({
     mutationFn: api.deleteLineageEdge,
     onSuccess: () => {
@@ -77,10 +134,9 @@ export default function Lineage() {
     onError: (error) => apiMessage.error(`删除失败: ${(error as Error).message}`),
   })
 
-  function updateUrl(next: { table?: string; direction?: 'up' | 'down'; depth?: number }) {
+  function updateUrl(next: { table?: string; depth?: number }) {
     const search = new URLSearchParams(params)
     if (next.table) search.set('table', next.table)
-    if (next.direction) search.set('direction', next.direction)
     if (next.depth) search.set('depth', String(next.depth))
     setParams(search)
   }
@@ -112,28 +168,31 @@ export default function Lineage() {
     return `/chat?context=lineage&table=${selectedTable}${selectedField ? `&field=${selectedField}` : ''}`
   }
 
-  function handleMenuAction(action: LineageMenuAction) {
-    setMenu((prev) => ({ ...prev, open: false }))
-    if (action === 'edit-edge' && edge) {
-      setEdgeModal({ mode: 'edit', edge, transform_expr: edge.transform_expr })
-    }
-    if (action === 'delete-edge' && edge) {
-      deleteEdgeMutation.mutate(edgeId(edge))
-    }
-    if (action === 'create-edge') {
-      setEdgeModal({ mode: 'create', from: nodeId, transform_expr: 'passthrough' })
-    }
-    if (action === 'chat') {
-      window.location.href = chatHref()
-    }
+  function toggleTable(tableName: string) {
+    setExpandedTables((prev) => {
+      const next = new Set(prev)
+      if (next.has(tableName)) {
+        next.delete(tableName)
+      } else {
+        next.add(tableName)
+      }
+      return next
+    })
+  }
+
+  function moveEndpoint(selectedEdge: LineageEdge, endpoint: EdgeEndpoint, nextTable: string, nextField: string) {
+    const nextEdge = endpoint === 'from'
+      ? { ...selectedEdge, from_table: nextTable, from_field: nextField }
+      : { ...selectedEdge, to_table: nextTable, to_field: nextField }
+    moveEndpointMutation.mutate({ id: edgeId(selectedEdge), nextEdge })
   }
 
   return (
     <div className="three-panel-grid">
       {holder}
       <section className="panel panel-pad">
-        <Typography.Title level={4} style={{ marginTop: 0 }}>字段级血缘</Typography.Title>
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Typography.Title level={4} style={{ marginTop: 0 }}>血缘工作区</Typography.Title>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Input.Search
             value={table}
             onChange={(event) => setTable(event.target.value)}
@@ -141,14 +200,10 @@ export default function Lineage() {
               updateUrl({ table: value })
             }}
           />
-          <Segmented
-            value={direction}
-            options={[{ label: '正向', value: 'down' }, { label: '反向', value: 'up' }]}
-            onChange={(value) => {
-              setDirection(value as 'up' | 'down')
-              updateUrl({ direction: value as 'up' | 'down' })
-            }}
-          />
+          <Space>
+            <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>正向</Checkbox>
+            <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>反向</Checkbox>
+          </Space>
           <Typography.Text className="muted">展开层级: {depth}</Typography.Text>
           <Slider
             min={1}
@@ -166,25 +221,15 @@ export default function Lineage() {
         </Space>
       </section>
       <section className="panel panel-pad">
-        <LineageGraph
-          edges={lineageQuery.data?.edges ?? []}
-          onSelectNode={(id) => {
-            setNodeId(id)
-            setEdge(undefined)
-          }}
-          onSelectEdge={(next) => {
+        <LineageWorkspaceGraph
+          payload={workspacePayload}
+          expandedTables={expandedTables}
+          onToggleTable={toggleTable}
+          onSelectFieldEdge={(next) => {
             setEdge(next)
             setNodeId(undefined)
           }}
-          onContextMenu={(payload) => setMenu({ open: true, ...payload })}
-        />
-        <LineageContextMenu
-          open={menu.open}
-          x={menu.x}
-          y={menu.y}
-          targetType={menu.targetType}
-          onClose={() => setMenu((prev) => ({ ...prev, open: false }))}
-          onAction={handleMenuAction}
+          onMoveEdgeEndpoint={moveEndpoint}
         />
       </section>
       <section className="panel panel-pad">
@@ -205,7 +250,7 @@ export default function Lineage() {
         confirmLoading={createEdgeMutation.isPending || updateEdgeMutation.isPending}
       >
         {edgeModal?.mode === 'create' ? (
-          <Space direction="vertical" style={{ width: '100%' }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
             <Input value={edgeModal.from} placeholder="源字段: table.field" onChange={(event) => setEdgeModal({ ...edgeModal, from: event.target.value })} />
             <Input value={edgeModal.to} placeholder="目标字段: table.field" onChange={(event) => setEdgeModal({ ...edgeModal, to: event.target.value })} />
           </Space>
