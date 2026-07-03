@@ -72,22 +72,24 @@
 │
 ├── 3. 血缘图 (/metadata/lineage)
 │   ├── 3.1 可视化
-│   │   ├── 3.1.1 字段级 DAG (G6 Graph)
-│   │   ├── 3.1.2 展开/折叠层级 (1~5)
-│   │   ├── 3.1.3 正向/反向切换
+│   │   ├── 3.1.1 表级血缘主图 (G6 Graph)
+│   │   ├── 3.1.2 前向/后向 checkbox 显示控制
+│   │   ├── 3.1.3 表节点展开后显示字段行与字段级虚线血缘
 │   │   ├── 3.1.4 节点拖拽 + 缩放
-│   │   ├── 3.1.5 边详情 (点击查看转换表达式)
+│   │   ├── 3.1.5 边详情 (点击查看计算类型、参数、转换表达式)
 │   │   ├── 3.1.6 Mini-map 导航
 │   │   └── 3.1.7 全屏模式
 │   ├── 3.2 维护 (右键菜单)
 │   │   ├── 3.2.1 编辑节点 (表/字段)
-│   │   ├── 3.2.2 新建血缘边 (拖拽连线)
-│   │   ├── 3.2.3 编辑边表达式
+│   │   ├── 3.2.2 新建血缘边 (字段锚点连线)
+│   │   ├── 3.2.3 编辑边计算类型、参数与表达式
 │   │   ├── 3.2.4 删除边/节点
-│   │   └── 3.2.5 从血缘图新建下游表
+│   │   ├── 3.2.5 拖动边端点修改源/目标字段
+│   │   ├── 3.2.6 基于血缘生成当前表 SQL
+│   │   └── 3.2.7 粘贴 SELECT SQL 解析表定义与血缘
 │   └── 3.3 与流程 3 联动
 │       ├── 3.3.1 右键跳转 /chat (自动注入上下文)
-│       ├── 3.3.2 NL 修改后自动刷新血缘图
+│       ├── 3.3.2 NL 修改后自动刷新血缘图和 SQL 预览
 │       └── 3.3.3 新建对象后血缘图实时更新
 │
 ├── 4. NL 对话 (/chat)
@@ -207,7 +209,11 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
     layer,               // ODS / DWD / DWS / ADS / EVAL
     layer_priority,
     description,
-    storage_type         // KAFKA / HIVE / STARROCKS
+    storage_type,        // KAFKA / HIVE / STARROCKS
+    sql_logic,           // 可空: 当前表级计算 SQL (Spark/Hive SELECT 片段)
+    sql_dialect,         // 可空: spark_hive
+    sql_source,          // generated / imported / manual
+    sql_updated_at       // datetime, SQL 逻辑保存时间
 })
 
 // 字段节点
@@ -244,7 +250,14 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
 (Table)-[:HAS_FIELD]->(Field)
 
 // 字段级血缘 (target 由 upstream 派生; 语义等同旧 upstream_field_refs)
-(Field)-[:DERIVES_FROM {transform_expr, created_at}]->(Field)
+(Field)-[:DERIVES_FROM {
+    edge_id,
+    transform_expr,
+    calc_type,           // DIRECT / EXPRESSION / AGGREGATE / JOIN / WINDOW / CONDITION / CONSTANT
+    calc_params,         // JSON 字符串: 计算类型参数
+    created_at,
+    updated_at
+}]->(Field)
 ```
 
 #### 约束与索引
@@ -263,11 +276,15 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 应用层强制约束（写入前 Cypher 校验）：
 - `(t:Table)-[:HAS_FIELD]->(f:Field)` 在同一 `(t.name, f.name)` 维度唯一
 - `DERIVES_FROM` 不能成环：写入新边前执行 `MATCH (target)-[:DERIVES_FROM*1..]->(target) RETURN count(*)`，结果必须为 0
+- `DERIVES_FROM.calc_type` 必须来自固定枚举；`calc_params` 必须符合该计算类型的最小参数约束
+- `Table.sql_logic` 只保存当前生效或用户确认同步的 SQL，不保存历史版本；历史 SQL 进入 `Change.old_value/new_value`
 
 #### 写入语义
 
 - 单 Neo4j 事务内同时写元数据节点/边 + 创建对应 `Change` 节点；失败原子回滚
 - 审计 `Change` 节点为孤立节点，不与 Table/Field 建关系：删除操作的目标节点已不存在，关系会丢，字符串属性 `table_name`/`field_name` 独立保存即可。审计为只读追加日志，不参与图遍历
+- 血缘图编辑动作即时写入 `DERIVES_FROM`；写入成功后前端重新拉取规范化图数据并刷新 SQL 预览
+- SQL 逻辑预览不自动覆盖 `Table.sql_logic`；只有用户点击“同步到表定义”时才写入 Table 节点并追加 `Change`
 
 #### 派生查询
 
@@ -276,6 +293,8 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 - 字段级血缘 DAG：`MATCH path=(f:Field {id:$id})-[:DERIVES_FROM*1..$d]->(u) RETURN path`
 - 表级血缘聚合：`MATCH (t1:Table)-[:HAS_FIELD]->(f1)-[:DERIVES_FROM]->(f2)<-[:HAS_FIELD]-(t2) RETURN t1, t2, count(*) AS edge_weight`
 - 表分区键集合：`MATCH (t:Table {name:$n})-[:HAS_FIELD]->(f:Field {is_partition:true}) RETURN f.name`
+- 血缘工作台图数据：以目标表为中心实时聚合表节点、表级边、字段清单和字段级边；不在 Neo4j 中冗余表级边
+- 表 SQL 预览：根据当前目标表字段、直接上游 `DERIVES_FROM` 边、`calc_type/calc_params/transform_expr` 生成 Spark/Hive SELECT SQL
 
 ### 2.4 元数据演进策略
 
@@ -1372,7 +1391,7 @@ class SandboxController:
 | 路由 | 页面 | 核心功能 |
 |------|------|----------|
 | `/metadata` | 元数据管理 | 表浏览/搜索/CRUD + 字段编辑 + YAML 导出 |
-| `/metadata/lineage` | 血缘图 | 字段级 DAG 可视化 + 右键维护 + 跳转 /chat |
+| `/metadata/lineage` | 血缘工作台 | 表级血缘主图 + 字段展开血缘 + 结构化边编辑 + SQL 生成/导入 + 跳转 /chat |
 | `/chat` | NL 对话 | 对话面板 + 代码卡片 + dry-run 预览 |
 | `/pipeline` | Pipeline 可视化 | 正向 ETL DAG + 反向合成链路 |
 | `/schema-evolution` | 演化历史 | 变更时间线 + 版本 diff |
@@ -1493,122 +1512,111 @@ class SandboxController:
 └───────────────────────────────────────────────┘
 ```
 
-### 6.4 血缘图界面 (/metadata/lineage)
+### 6.4 血缘工作台界面 (/metadata/lineage)
+
+血缘页采用“表级主图 + 字段按需展开 + 右侧编辑/SQL 面板”。默认先呈现表级血缘，避免字段级边过早铺满画布；用户展开表节点后，再在同一个节点内按字段行显示字段级血缘。
 
 #### 页面布局
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  血缘图: dws_cell_hourly                  [正向 ↑] [反向 ↓]  │
-│                              [展开层级: 2 ▼] [全屏]          │
-├──────────────────────────────────────────┬───────────────────┤
-│                                          │ 右侧信息面板 (320px)│
-│  ┌─────────┐                             │                    │
-│  │ods_ue    │  ← L1 ODS                  │ ┌──────────────┐   │
-│  │_signal  │                             │ │ 选中边详情:    │   │
-│  │         │                             │ │              │   │
-│  │ rsrp ●──┼── AVG(rsrp) ──────┐        │ │ 源: ods_ue    │   │
-│  │ sinr ●──┼── AVG(sinr) ──┐   │        │ │  _signal.rsrp│   │
-│  │ imsi ●──┤               │   │        │ │              │   │
-│  │cell_id●─┤   COUNT(DIST) │   │        │ │ 目标: dwd     │   │
-│  └─────────┘           │   │   │        │ │ _session_qos  │   │
-│             │          │   │   │        │ │ .avg_rsrp    │   │
-│             │          ▼   ▼   ▼        │ │              │   │
-│  ┌──────────┴──────────────────┐        │ │ 转换: AVG(rsrp)│   │
-│  │ dwd_session_qos ← L2 DWD   │        │ │              │   │
-│  │   avg_rsrp ●────────────────┤        │ │ [编辑] [删除] │   │
-│  │   avg_sinr ●────────────────┤        │ └──────────────┘   │
-│  │ session_id ●───────────────→│        │                    │
-│  └──────────┬──────────────────┘        │                    │
-│             │                            │                    │
-│  ┌──────────┴─────┐                     │                    │
-│  │ dwd_ho_event    │ ← L2 DWD            │                    │
-│  │  ho_result ●───→│                     │                    │
-│  └──────────┬──────┘                     │                    │
-│             │                            │                    │
-│             ▼                            │ [Mini-map]        │
-│  ┌─────────────────────┐                │ ┌──────────────┐   │
-│  │ dws_cell_hourly ★    │ ← L3 DWS       │ │ ○ ○ ○ ○ ○ ○ │   │
-│  │  当前表               │                │ │ ○ ○ ○ ○ ○ ○ │   │
-│  └──────────┬──────────┘                │ │ ○ ○ ○ ○ ○ ○ │   │
-│             │                            │ └──────────────┘   │
-│             ▼                            │                    │
-│  ┌──────────────────┐                   │                    │
-│  │ ads_cell_profile  │ ← L4 ADS          │                    │
-│  └─────────┬─────────┘                   │                    │
-│            │                             │                    │
-│            ▼                             │                    │
-│  ┌──────────────────┐                   │                    │
-│  │ eval_user_score   │ ← L5 EVAL         │                    │
-│  └──────────────────┘                   │                    │
-└──────────────────────────────────────────┴───────────────────┘
+┌────────────── 控制面板 ──────────────┬──────────────────── 血缘画布 ────────────────────┬──────────── 详情 / SQL ────────────┐
+│ 目标表: [dws_cell_hourly      🔍]    │                                                      │ 当前表: dws_cell_hourly             │
+│                                      │     ┌──────────────────┐      ┌──────────────────┐ │ 表级概览 / 选中边详情              │
+│ [x] 前向  [x] 后向                   │     │ ods_ue_signal   + │~~~▶ │ dwd_session_qos + │ │                                      │
+│ 展开层级: [1 -- 5]                  │     └──────────────────┘      └──────────────────┘ │ 计算类型: [AGGREGATE ▼]             │
+│                                      │                 ╲                    ╲             │ 参数: function=AVG, group_by=...     │
+│ [全部折叠] [展开当前表] [刷新图]      │                  ╲                    ╲            │ 表达式: AVG(rsrp)                   │
+│                                      │                   ╲                    ▼           │ [保存] [删除] [用 NL 修改]          │
+│ [生成 SQL] [导入 SQL]                │                ┌────────────────────────────┐       │                                      │
+│                                      │                │ dws_cell_hourly       -     │       │ 生成 SQL 预览                       │
+│ 图例:                                │                │ avg_rsrp       ◀ · · · · · │       │ SELECT ...                          │
+│  实线曲线 = 表级血缘                 │                │ avg_sinr       ◀ · · · · · │       │                                      │
+│  淡色虚线 = 字段级血缘               │                │ cell_id        ◀ · · · · · │       │ [同步到表定义] [复制]               │
+│                                      │                └────────────────────────────┘       │                                      │
+└──────────────────────────────────────┴──────────────────────────────────────────────────────┴──────────────────────────────────────┘
 ```
+
+#### 图层语义
+
+| 图层 | 节点/边 | 展示规则 | 交互 |
+|------|---------|----------|------|
+| 表节点 | `Table` | 默认展示目标表、直接上游表、直接下游表；按层级和方向扩展 | 点击选中；节点内 `+/-` 展开或折叠字段 |
+| 表级边 | 字段边实时聚合 | 实线曲线；前向/后向由左侧 checkbox 控制显示 | hover 显示字段边数量、涉及字段、计算类型分布 |
+| 字段行 | `Field` | 仅在表节点展开后显示；字段在一个节点内分行排列 | 字段行左右两侧提供连线锚点 |
+| 字段级边 | `DERIVES_FROM` | 淡色虚线曲线；仅当源表或目标表展开后显示 | hover 显示血缘关系；click 打开右侧编辑面板 |
 
 #### 交互清单
 
 | 交互 | 操作 | 效果 |
 |------|------|------|
-| 定位中心表 | URL param `?table=` | 该表节点高亮 + 自动居中 |
-| 展开层级 | 滑块 [1~5] 或双击节点 | 展开/折叠上下游 |
-| 方向切换 | [正向] [反向] toggle | 正向:源→目标 ; 反向:目标→约束 |
-| 节点拖拽 | 鼠标拖拽 | G6 画布自由移动 |
-| 缩放 | 滚轮/手势 | 放大缩小 |
-| 节点 hover | 鼠标悬停 | tooltip: 表名/层/存储/字段数 |
-| 字段节点 | ● 点 click | 展开该字段的上下游 |
-| 边详情 | 点击边 | 右侧面板显示源→目标+转换表达式 |
-| Mini-map | 右下角 | 大图定位导航 |
-| 全屏 | [全屏] 按钮 | 全屏模式 |
+| 定位中心表 | URL param `?table=` 或左侧搜索 | 目标表高亮并自动居中 |
+| 控制方向 | 勾选/取消 `前向`、`后向` checkbox | 隐藏或显示目标表的下游/上游表节点和表级边 |
+| 展开字段 | 点击表节点 `+` 小按钮 | 表节点变高，在节点内分行显示所有字段和字段锚点 |
+| 字段级血缘显示 | 展开相关表节点 | 在字段锚点之间显示淡色虚线曲线 |
+| 边 hover | 鼠标移动到表级边或字段级边 | tooltip 展示源/目标、计算类型、表达式和参数摘要 |
+| 边 click | 点击字段级边 | 右侧显示计算类型、参数和表达式编辑器 |
+| 锚点拖动 | 拖动字段级边的源/目标锚点到其他字段 | 即时调用后端保存新端点；成功后刷新图和 SQL 预览，失败则回滚 |
+| 图编辑联动 SQL | 新建/删除/改边、改计算类型、拖动端点 | 自动重新生成当前目标表 SQL 预览 |
+| SQL 写回 | 点击“同步到表定义” | 将当前 SQL 预览写入 `Table.sql_logic` 并追加 `Change` |
+| 导入 SQL | 点击“导入 SQL”并粘贴 `SELECT ... FROM ...` | 解析后展示字段/血缘变更预览，确认后应用 |
+| 画布导航 | 拖拽、缩放、全屏、Mini-map | 支持大图定位和局部查看 |
 
-### 6.5 血缘图维护 & 与流程 3 联动
+### 6.5 血缘维护、SQL 联动与 /chat
 
-#### 右键菜单
+#### 计算类型模型
 
-```
-右键节点 (表):
-  ┌──────────────────────┐
-  │ ✎ 编辑表名/描述       │  → 打开编辑弹窗 (复用 /metadata)
-  │ ✚ 在此表上加字段       │  → 打开字段编辑抽屉
-  │ ✚ 创建下游表          │  → 打开新建表弹窗, 预填上游引用
-  │ ✕ 删除此表 (无下游时)  │  → 二次确认 + 下游影响检查
-  │ ⊕ 新建血缘边          │  → 拖拽模式: 从此节点画线
-  ├──────────────────────┤
-  │ 💬 用 NL 修改...      │  → 跳转 /chat?context=lineage&table=xxx
-  └──────────────────────┘
+字段级血缘边不再只保存自由文本表达式，而是保存 `calc_type + calc_params + transform_expr`。`transform_expr` 是可读 SQL 片段，`calc_params` 是表单化配置，后端负责最小校验。
 
-右键边:
-  ┌──────────────────────┐
-  │ ✎ 编辑转换表达式       │  → Monaco 编辑器弹出
-  │ ✕ 删除此血缘边         │  → 确认后删除 (target)-[:DERIVES_FROM]->(upstream) 边
-  ├──────────────────────┤
-  │ 💬 用 NL 修改...      │  → 跳转 /chat
-  └──────────────────────┘
+| calc_type | 含义 | 最小参数 | SQL 生成规则 |
+|-----------|------|----------|--------------|
+| DIRECT | 直通映射 | source field | `source.field AS target_field` |
+| EXPRESSION | 普通表达式 | expression | `<transform_expr> AS target_field` |
+| AGGREGATE | 聚合 | function, source field, group_by | `AVG/SUM/COUNT(...) AS target_field` 并汇总 `GROUP BY` |
+| JOIN | 关联条件 | join_type, left/right keys | 生成 `JOIN ... ON ...` 片段 |
+| WINDOW | 窗口计算 | partition_by, order_by, frame | 生成 `OVER (...)` |
+| CONDITION | 条件计算 | condition, then, else | 生成 `CASE WHEN ... THEN ... ELSE ... END` |
+| CONSTANT | 常量或派生值 | value 或 expression | 生成常量表达式 |
 
-右键空白画布:
-  ┌──────────────────────┐
-  │ ✚ 新建表             │  → 打开新建表弹窗
-  │ 💬 用 NL 描述血缘...  │  → 跳转 /chat, 注入上下文
-  └──────────────────────┘
-```
+#### 编辑与保存语义
 
-#### 拖拽新建血缘边
+| 操作 | 保存策略 | 失败处理 |
+|------|----------|----------|
+| 新建字段级边 | 即时保存到 `DERIVES_FROM`，默认 `calc_type=DIRECT` 或用户选择的类型 | 字段不存在返回 404；成环返回 409 并高亮路径 |
+| 修改计算类型/参数 | 保存 `calc_type/calc_params/transform_expr`，成功后刷新图 | 参数缺失时前端阻止提交，后端再次校验 |
+| 拖动源/目标锚点 | 调用端点更新 API，后端做字段存在、重复边、循环检测 | 前端回滚到原连线并提示原因 |
+| 删除字段级边 | 删除 `DERIVES_FROM`，成功后刷新图和 SQL 预览 | 若边已不存在，前端刷新图并提示已被其他操作删除 |
+| 同步 SQL 到表定义 | 写入 `Table.sql_logic/sql_source/sql_updated_at`，追加 `Change` | 若图版本已变更，提示刷新后重试 |
 
-```
-1. 右键节点 → [⊕ 新建血缘边] → 进入拖拽模式
-2. 从源字段点拖到目标字段点
-3. 弹出面板:
-   ┌── 新建血缘边 ─────────────────────────┐
-   │ 源: ods_ue_signal.imsi                │
-   │ 目标: dwd_ho_event.imsi                │
-   │                                       │
-   │ 转换表达式: [直通映射            ]       │
-   │ 描述: [UE 标识关联切换事件               │
-   │                                       │
-   │          [保存] [取消]                  │
-   └───────────────────────────────────────┘
-4. 保存 → 创建 (target)-[:DERIVES_FROM {transform_expr}]->(upstream) 边 → G6 图实时刷新
-```
+#### SQL 生成
 
-当前 Web 实现已接入同一后端 API，并先提供弹窗式新建血缘边：用户输入源字段 `table.field`、目标字段 `table.field` 和转换表达式后保存；后续可在 G6 字段点拖拽能力稳定后，将弹窗入口与拖拽连线合并。
+第一版只为当前目标表生成直接上游 Spark/Hive `SELECT` SQL，不递归展开多跳链路，不自动生成 CTE。多跳 CTE 和 Agent 辅助 SQL 生成作为后续扩展。
+
+生成流程：
+1. 读取目标表字段、直接上游字段级边和 `calc_type/calc_params/transform_expr`。
+2. 选择主源表；多上游表按 `JOIN` 边参数生成 join 片段。
+3. 为每个目标字段生成 SELECT 表达式。
+4. 聚合字段收集 `GROUP BY`。
+5. 若 JOIN 参数不足、字段无表达式或血缘不完整，SQL 标记为“不完整”，但仍展示可编辑预览。
+
+#### SQL 导入
+
+导入 SQL 第一版只支持用户选择目标表后粘贴 `SELECT ... FROM ...`。不在第一版解析完整 `CREATE TABLE`、`ALTER TABLE`、`INSERT SELECT`。
+
+解析结果先进入预览，不直接写库：
+- 新增字段、更新字段表达式、保留字段。
+- 新增、修改、删除字段级血缘边。
+- 推断出的 `calc_type/calc_params`。
+- 无法识别的表达式、缺失 JOIN key、源表/字段不存在等风险。
+
+用户确认后，`sql/apply` 在同一事务内更新字段、血缘边、`Table.sql_logic` 和 `Change`。如果用户取消，Neo4j 不发生变更。
+
+#### 错误处理
+
+- 循环血缘：后端返回成环路径，前端高亮相关字段和边。
+- SQL 解析失败：保留原 SQL 文本，展示失败位置或无法识别片段。
+- SQL 预览不完整：允许继续编辑图；“同步到表定义”需要用户显式确认。
+- 并发冲突：通过图版本或 `updated_at` 检测，提示刷新后重试。
+- 图编辑导致 SQL 改变：右侧 SQL 区展示“生成 SQL”和“表上已保存 SQL”的差异提示。
 
 #### 跳转 /chat 联动的上下文注入
 
@@ -1623,12 +1631,14 @@ context_prompt = """
   表: dws_cell_hourly
   字段: drop_rate
   当前表达式: CAST(SUM(CASE WHEN drop_flag=1 THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*)
+  计算类型: AGGREGATE
   上游: dwd_session_qos.drop_flag
+  当前表 SQL: SELECT ...
 """
 ```
 
 3. 用户输入 NL → Agent 走 schema_evolve 路径
-4. 变更完成后自动刷新血缘图
+4. 变更完成后自动刷新血缘图和 SQL 预览
 
 ### 6.6 对话面板 (/chat)
 
@@ -1704,9 +1714,14 @@ context_prompt = """
 | PUT | `/api/fields/:id` | 编辑字段 (含表达式/上游引用) |
 | DELETE | `/api/fields/:id` | 删除字段 (含断链校验) |
 | GET | `/api/lineage` | 血缘图数据 (?table= ?direction=up/down ?depth=1-5) — Cypher: `MATCH path=(f:Field)-[:DERIVES_FROM*1..$d]->(u) RETURN path` |
-| POST | `/api/lineage/edges` | 新建字段级血缘边，入参为源字段、目标字段、转换表达式 |
-| PUT | `/api/lineage/edges/:edge_id` | 更新血缘边转换表达式 |
+| GET | `/api/lineage/graph` | 血缘工作台图数据 (?table= ?depth= ?include_upstream= ?include_downstream=)，返回表节点、表级边、字段清单和字段级边 |
+| POST | `/api/lineage/edges` | 新建字段级血缘边，入参为源字段、目标字段、计算类型、计算参数、转换表达式 |
+| PUT | `/api/lineage/edges/:edge_id` | 更新血缘边计算类型、计算参数和转换表达式 |
+| PATCH | `/api/lineage/edges/:edge_id/endpoints` | 拖动连线锚点后更新源字段或目标字段 |
 | DELETE | `/api/lineage/edges/:edge_id` | 删除血缘边 |
+| POST | `/api/lineage/sql/preview` | 根据当前或传入的血缘配置生成目标表 Spark/Hive SELECT SQL 预览 |
+| POST | `/api/lineage/sql/import/preview` | 解析用户粘贴的 `SELECT ... FROM ...`，返回字段和血缘变更预览 |
+| POST | `/api/lineage/sql/apply` | 用户确认 SQL 解析预览后，事务性应用字段、血缘和 `Table.sql_logic` 变更 |
 | GET | `/api/metadata/impact` | 删除/变更前下游影响预检查 (?table= ?field=) |
 | POST | `/api/chat/start` | 新建对话 |
 | POST | `/api/chat/message` | 发送消息 → SSE stream |
@@ -2056,11 +2071,14 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P3-3 | 元数据维护: 新建表 | 点击 [+ 新建表] → 填写表名/层/存储 → 添加 5 个字段 → 保存 | Neo4j 写入 Table 节点 + 5 个 Field 节点 + 5 条 HAS_FIELD 边成功，GET /api/tables 新增 1 条，metadata-yaml/ 下生成对应 .yaml |
 | P3-4 | 元数据维护: 编辑字段表达式 | 点击 `dws_cell_hourly.drop_rate` → 抽屉打开 → Monaco 编辑表达式 → 保存 | Field 节点 expression 属性更新，version +1，previous_expr (JSON 字符串) 追加旧版本 |
 | P3-5 | 元数据维护: 删除字段被拒绝 | 点击删除 `ods_ue_signal.rsrp` | 系统检测到 dwd_session_qos.avg_rsrp 依赖此字段，弹出下游影响警告，拒绝删除 |
-| P3-6 | 字段级血缘图: G6 渲染 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | G6 TreeGraph 渲染完整上下游: ods → dwd → dws → ads → eval，节点含字段 ● 点 |
-| P3-7 | 血缘图交互 | 双击节点展开/折叠 → 拖拽画布 → 滚轮缩放 → 点击边查看 transform_expr → Mini-map 导航 | 所有交互流畅，边详情在右侧面板显示 |
-| P3-8 | 血缘图维护: 右键菜单 | 右键 `dwd_session_qos` 节点 → 选择 [✚ 在此表上加字段] | 弹出字段编辑抽屉，预填 table=dwd_session_qos |
-| P3-9 | 血缘图维护: 拖拽新建边 | 右键节点 → [⊕ 新建血缘边] → 从 ods_ue_signal.imsi 拖线到 dwd_ho_event.imsi → 填写转换表达式 "直通映射" → 保存 | Neo4j 新建 (dwd_ho_event.imsi)-[:DERIVES_FROM {transform_expr:"直通映射"}]->(ods_ue_signal.imsi) 边，G6 图实时刷新显示新边 |
-| P3-10 | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [💬 用 NL 修改...] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 上下文已注入当前表达式和上游信息 |
+| P3-6 | 血缘工作台: 表级默认图 | 在表详情页点击「查看血缘」→ URL 跳转 `/metadata/lineage?table=dws_cell_hourly` | 默认只渲染表级血缘，表节点用曲线连接，目标表高亮并自动居中 |
+| P3-7 | 血缘方向控制 | 取消勾选左侧「前向」或「后向」checkbox | 对应方向的表节点和表级边被隐藏；重新勾选后恢复 |
+| P3-8 | 字段展开与字段级血缘 | 点击 `dws_cell_hourly` 表节点展开按钮 | 节点内分行显示字段；展开相关表后出现淡色虚线字段级边，hover 显示源字段、目标字段、计算类型和表达式 |
+| P3-9 | 血缘边结构化编辑 | 点击字段级边 → 修改计算类型为 `AGGREGATE` 并填写参数 → 保存 | `DERIVES_FROM` 更新 `calc_type/calc_params/transform_expr`，图刷新，右侧 SQL 预览同步变化 |
+| P3-10 | 拖动锚点改血缘端点 | 拖动字段级边源锚点到另一个上游字段 | 后端即时保存新端点并做循环校验；成功后图与 SQL 预览刷新，失败时连线回滚 |
+| P3-10a | 基于血缘生成 SQL | 选中目标表 → 点击「生成 SQL」或完成一次血缘编辑 | 右侧展示当前目标表直接上游 Spark/Hive SELECT SQL；用户点击「同步到表定义」后写入 `Table.sql_logic` |
+| P3-10b | SQL 导入预览应用 | 选择目标表 → 粘贴 `SELECT ... FROM ...` → 点击解析 | UI 展示字段变更、血缘变更、计算类型推断和风险；确认后更新字段、血缘、`Table.sql_logic` 和 Change |
+| P3-10c | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [用 NL 修改] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 注入当前表达式、计算类型、上游信息和当前表 SQL |
 | P3-11 | 对话面板: 流式输出 + Badge | 打开 `/chat` → 新建对话 → 输入 "计算每小区小时平均覆盖强度" | SSE 逐字流式输出，classifier badge 显示「正向ETL」，右侧展示血缘 mini 图推荐方案 |
 | P3-12 | 对话面板: 代码卡片 + DryRun 预览 | 对话完成 → 代码卡片显示 Spark SQL (Monaco 高亮) → 点击 [▶ 沙箱试跑] | 右侧代码面板可编辑，DryRun 结果卡片显示 ✅ 成功 + 1 行 Ant Table |
 | P3-13 | 对话面板: 缺失补齐子流程 UI | 输入 "按基站负载和信号质量做评估" → gap_check 发现缺失 | 对话气泡下方显示补齐建议卡片，[确认并继续] [我自己定义] [跳过] 三个按钮 |
