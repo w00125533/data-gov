@@ -9,8 +9,10 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(page.getByRole('heading', { name: '血缘工作区' })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: '正向' })).toBeChecked()
   await expect(page.getByRole('checkbox', { name: '反向' })).toBeChecked()
-  await expect(page.getByText('dws_cell_hourly').first()).toBeVisible()
-  await expect(page.getByText('dwd_session_qos').first()).toBeVisible()
+  await expect(page.locator('.lineage-x6-canvas .x6-graph')).toBeVisible()
+  await expect(page.locator('.lineage-x6-canvas')).toContainText('dws_cell_hourly')
+  await expect(page.locator('.lineage-x6-canvas')).toContainText('dwd_session_qos')
+  await expect(page.locator('[data-cell-id^="table-edge-"]').first()).toBeVisible()
 
   await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
   await expect(page.getByText('avg_rsrp').first()).toBeVisible()

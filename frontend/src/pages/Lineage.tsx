@@ -303,6 +303,7 @@ export default function Lineage() {
         <LineageWorkspaceGraph
           payload={workspacePayload}
           expandedTables={expandedTables}
+          selectedEdge={edge}
           onToggleTable={toggleTable}
           onSelectFieldEdge={(next) => {
             setEdge(next)
