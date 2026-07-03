@@ -4,7 +4,8 @@ import { Button, Checkbox, Input, Modal, Slider, Space, Typography, message } fr
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type LineageEdge, type LineageGraphResponse } from '../api/client'
-import LineageSidePanel from '../components/LineageSidePanel'
+import LineageEdgeEditor from '../components/LineageEdgeEditor'
+import LineageSqlPanel from '../components/LineageSqlPanel'
 import LineageWorkspaceGraph from '../components/LineageWorkspaceGraph'
 
 type EdgeModal = {
@@ -80,6 +81,12 @@ export default function Lineage() {
   const workspacePayload = filterWorkspacePayload(lineageQuery.data, includeUpstream, includeDownstream)
   const invalidateLineage = () => queryClient.invalidateQueries({ queryKey: ['lineage-graph'] })
 
+  const sqlPreviewQuery = useQuery({
+    queryKey: ['lineage-sql-preview', table, lineageQuery.data?.graph_version],
+    queryFn: () => api.previewLineageSql({ table }),
+    enabled: Boolean(table),
+  })
+
   useEffect(() => {
     if (!edge) return
     const selectedEdgeId = edgeId(edge)
@@ -95,17 +102,23 @@ export default function Lineage() {
     onSuccess: () => {
       apiMessage.success('血缘边已创建')
       setEdgeModal(undefined)
-      invalidateLineage()
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
     },
     onError: (error) => apiMessage.error(`创建失败: ${(error as Error).message}`),
   })
   const updateEdgeMutation = useMutation({
-    mutationFn: ({ id, transform_expr }: { id: string; transform_expr: string }) => api.updateLineageEdge(id, { transform_expr }),
+    mutationFn: (next: LineageEdge) => api.updateLineageEdge(edgeId(next), {
+      transform_expr: next.transform_expr,
+      calc_type: next.calc_type,
+      calc_params: next.calc_params,
+    }),
     onSuccess: (next) => {
-      apiMessage.success('表达式已更新')
+      apiMessage.success('边配置已更新')
       setEdge(next)
       setEdgeModal(undefined)
-      invalidateLineage()
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
     },
     onError: (error) => apiMessage.error(`更新失败: ${(error as Error).message}`),
   })
@@ -120,7 +133,8 @@ export default function Lineage() {
     onSuccess: (updated) => {
       apiMessage.success('端点已更新')
       setEdge(updated)
-      invalidateLineage()
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
     },
     onError: (error) => apiMessage.error(`端点更新失败: ${(error as Error).message}`),
   })
@@ -129,7 +143,8 @@ export default function Lineage() {
     onSuccess: () => {
       apiMessage.success('血缘边已删除')
       setEdge(undefined)
-      invalidateLineage()
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
     },
     onError: (error) => apiMessage.error(`删除失败: ${(error as Error).message}`),
   })
@@ -144,7 +159,7 @@ export default function Lineage() {
   function submitEdgeModal() {
     if (!edgeModal) return
     if (edgeModal.mode === 'edit' && edgeModal.edge) {
-      updateEdgeMutation.mutate({ id: edgeId(edgeModal.edge), transform_expr: edgeModal.transform_expr ?? '' })
+      updateEdgeMutation.mutate({ ...edgeModal.edge, transform_expr: edgeModal.transform_expr ?? '' })
       return
     }
     const from = splitRef(edgeModal.from)
@@ -233,14 +248,23 @@ export default function Lineage() {
         />
       </section>
       <section className="panel panel-pad">
-        <Typography.Title level={4} style={{ marginTop: 0 }}>详情</Typography.Title>
-        <LineageSidePanel
-          edge={edge}
-          nodeId={nodeId}
-          onEditEdge={() => edge && setEdgeModal({ mode: 'edit', edge, transform_expr: edge.transform_expr })}
-          onDeleteEdge={() => edge && deleteEdgeMutation.mutate(edgeId(edge))}
-          onChat={() => { window.location.href = chatHref() }}
-        />
+        <Space orientation="vertical" style={{ width: '100%' }} size="large">
+          <LineageEdgeEditor
+            edge={edge}
+            saving={updateEdgeMutation.isPending}
+            onSave={(next) => updateEdgeMutation.mutate(next)}
+            onDelete={() => edge && deleteEdgeMutation.mutate(edgeId(edge))}
+          />
+          <LineageSqlPanel
+            preview={sqlPreviewQuery.data}
+            loading={sqlPreviewQuery.isFetching}
+            onRefresh={() => { void sqlPreviewQuery.refetch() }}
+            onSync={() => apiMessage.info('SQL 同步将在导入/应用流程中执行')}
+          />
+          <Link to={chatHref()}>
+            <Button icon={<CommentOutlined />}>用 NL 修改</Button>
+          </Link>
+        </Space>
       </section>
       <Modal
         title={edgeModal?.mode === 'edit' ? '编辑血缘边' : '新建血缘边'}

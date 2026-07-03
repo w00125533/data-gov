@@ -14,10 +14,10 @@ test('lineage workspace renders expandable tables and direction filters', async 
 
   await page.getByRole('button', { name: '展开 dws_cell_hourly' }).click()
   await expect(page.getByText('avg_rsrp').first()).toBeVisible()
-  await expect(page.getByText('AVG(q.avg_rsrp)')).toBeVisible()
+  await expect(page.getByText('AVG(q.avg_rsrp)').first()).toBeVisible()
 
   await page.getByRole('checkbox', { name: '反向' }).uncheck()
-  await expect(page.getByText('dwd_session_qos')).toBeHidden()
+  await expect(page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ })).toBeHidden()
 })
 
 test('lineage workspace moves source endpoint onto a field anchor by drag', async ({ page }) => {
@@ -89,4 +89,46 @@ test('lineage workspace selects field edges from the keyboard', async ({ page })
   await page.keyboard.press('Enter')
 
   await expect(page.getByText('AVG(q.avg_rsrp)').last()).toBeVisible()
+})
+
+test('lineage workspace edits field edge config and previews generated sql', async ({ page }) => {
+  let updateBody: unknown
+
+  await mockCommonApis(page)
+  await page.route('**/api/lineage/graph**', (route) => json(route, {
+    ...lineageGraph,
+    field_edges: [
+      {
+        ...lineageGraph.field_edges[0],
+        calc_type: 'DIRECT',
+      },
+    ],
+  }))
+  await page.route('**/api/lineage/edges/edge-1', async (route) => {
+    updateBody = route.request().postDataJSON()
+    await json(route, {
+      ...lineageGraph.field_edges[0],
+      ...(updateBody as Record<string, unknown>),
+    })
+  })
+  await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ }).click()
+
+  await expect(page.getByRole('heading', { name: '边计算配置' })).toBeVisible()
+  await page.getByRole('combobox', { name: '计算类型' }).click()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await page.getByRole('button', { name: '保存边配置' }).click()
+
+  await expect.poll(() => updateBody).toMatchObject({
+    transform_expr: 'AVG(q.avg_rsrp)',
+    calc_type: 'AGGREGATE',
+    calc_params: { function: 'AVG', group_by: ['cell_id'] },
+  })
+  await expect(page.locator('pre.json-preview')).toContainText('SELECT AVG(q.avg_rsrp) AS avg_rsrp')
+  await page.getByRole('button', { name: '同步到表定义' }).click()
+  await expect(page.getByText('SQL 同步将在导入/应用流程中执行')).toBeVisible()
 })
