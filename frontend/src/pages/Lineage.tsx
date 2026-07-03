@@ -180,7 +180,11 @@ export default function Lineage() {
       void invalidateLineage()
       void sqlPreviewQuery.refetch()
     },
-    onError: (error) => apiMessage.error(`端点更新失败: ${(error as Error).message}`),
+    onError: (error) => {
+      apiMessage.error(`端点更新失败: ${(error as Error).message}`)
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
+    },
   })
   const deleteEdgeMutation = useMutation({
     mutationFn: api.deleteLineageEdge,

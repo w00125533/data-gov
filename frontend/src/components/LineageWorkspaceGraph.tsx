@@ -248,7 +248,7 @@ export default function LineageWorkspaceGraph({
     if (graphData.nodes.length > 0) {
       const frame = window.requestAnimationFrame(() => {
         if (graphRef.current === graph) {
-          graph.centerContent()
+          graph.zoomToFit({ padding: 32, minScale: 0.45, maxScale: 1 })
         }
       })
       return () => window.cancelAnimationFrame(frame)

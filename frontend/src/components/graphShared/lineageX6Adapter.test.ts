@@ -221,6 +221,10 @@ describe('lineageX6Adapter', () => {
     expect(fieldEdge?.target).toEqual({ cell: 'dws_cell_hourly', port: fieldPortId('in', 'avg_rsrp') })
     expect(fieldEdge?.attrs?.line?.strokeDasharray).toBe('5 5')
     expect(fieldEdge?.attrs?.line?.stroke).toBe('#2563eb')
+    expect(fieldEdge?.tools).toMatchObject([
+      { name: 'source-arrowhead' },
+      { name: 'target-arrowhead' },
+    ])
     expect(fieldEdge?.data?.kind).toBe('field-edge')
     expect(fieldEdge?.data?.edge).toBe(payload.field_edges[0])
     expect(fieldEdge?.data?.lineageEdgeKey).toBe(edgeKey(payload.field_edges[0]))

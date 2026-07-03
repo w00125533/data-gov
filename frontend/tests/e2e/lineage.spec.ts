@@ -19,6 +19,51 @@ function x6FieldEdgePath(page: Page) {
   return x6FieldEdge(page).locator('path').nth(1)
 }
 
+function x6MainHost(page: Page) {
+  return page.locator('.lineage-x6-graph-host')
+}
+
+function x6TableToggle(page: Page, table: string) {
+  return x6MainHost(page).locator(`g[data-cell-id="${table}"] rect[event="lineage:toggle-table"]`)
+}
+
+function x6Port(page: Page, table: string, port: string) {
+  return x6MainHost(page).locator(`g[data-cell-id="${table}"] circle[port="${port}"]`)
+}
+
+function x6EdgeArrowhead(page: Page, type: 'source' | 'target') {
+  return x6MainHost(page).locator(`g[data-cell-id="field-edge-s-edge-1"] .x6-edge-tool-${type}-arrowhead`)
+}
+
+async function locatorCenter(locator: Locator) {
+  const box = await locator.boundingBox()
+  expect(box).not.toBeNull()
+  return {
+    x: (box?.x ?? 0) + (box?.width ?? 0) / 2,
+    y: (box?.y ?? 0) + (box?.height ?? 0) / 2,
+  }
+}
+
+async function clickVisibleTableToggle(page: Page, table: string) {
+  const toggle = x6TableToggle(page, table)
+  await expect(toggle).toBeAttached()
+  const point = await locatorCenter(toggle)
+  await page.mouse.click(point.x, point.y)
+}
+
+async function dragVisibleSourceArrowheadToPort(page: Page, table: string, field: string) {
+  const arrowhead = x6EdgeArrowhead(page, 'source')
+  const port = x6Port(page, table, `out:${field}`)
+  await expect(arrowhead).toBeAttached()
+  await expect(port).toBeAttached()
+  const start = await locatorCenter(arrowhead)
+  const end = await locatorCenter(port)
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(end.x, end.y, { steps: 10 })
+  await page.mouse.up()
+}
+
 async function clickRenderedX6Path(page: Page, pathLocator = x6FieldEdgePath(page)) {
   const point = await pathLocator.evaluate((path) => {
     const svgPath = path as SVGPathElement
@@ -53,7 +98,7 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(x6Canvas(page)).toContainText('dwd_session_qos')
   await expect(page.locator('.lineage-x6-canvas .x6-graph [data-cell-id^="table-edge-"]').first()).toBeAttached()
 
-  await activateHiddenButton(page, 'expand table dws_cell_hourly')
+  await clickVisibleTableToggle(page, 'dws_cell_hourly')
   await expect(x6Canvas(page)).toContainText('avg_rsrp')
   await expect(x6FieldEdge(page)).toBeAttached()
 
@@ -155,23 +200,10 @@ test('lineage workspace moves source endpoint onto a field anchor by drag', asyn
   await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await activateHiddenButton(page, 'expand table dws_cell_hourly')
-  await activateHiddenButton(page, 'expand table dwd_session_qos')
+  await clickVisibleTableToggle(page, 'dws_cell_hourly')
+  await clickVisibleTableToggle(page, 'dwd_session_qos')
 
-  await page.getByLabel('字段锚点 dwd_session_qos.hour_bucket').evaluate((target) => {
-    const dataTransfer = new DataTransfer()
-    dataTransfer.setData('application/lineage-edge-endpoint', '{malformed')
-    target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }))
-  })
-  await expect.poll(() => patchBody).toBeUndefined()
-
-  await page.getByRole('button').filter({ hasText: 'source endpoint edge-1' }).evaluate((source) => {
-    const dataTransfer = new DataTransfer()
-    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
-    const target = Array.from(document.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('field port dwd_session_qos.hour_bucket'))
-    target?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }))
-  })
+  await dragVisibleSourceArrowheadToPort(page, 'dwd_session_qos', 'hour_bucket')
 
   await expect.poll(() => patchBody).toEqual({
     from_table: 'dwd_session_qos',
@@ -179,6 +211,40 @@ test('lineage workspace moves source endpoint onto a field anchor by drag', asyn
     to_table: 'dws_cell_hourly',
     to_field: 'avg_rsrp',
   })
+})
+
+test('lineage workspace refetches graph and sql preview when endpoint drag fails', async ({ page }) => {
+  let graphCalls = 0
+  let sqlPreviewCalls = 0
+
+  await mockCommonApis(page)
+  await page.route('**/api/lineage/graph**', (route) => {
+    graphCalls += 1
+    return json(route, lineageGraph)
+  })
+  await page.route('**/api/lineage/sql/preview', (route) => {
+    sqlPreviewCalls += 1
+    return json(route, lineageSqlPreview)
+  })
+  await page.route('**/api/lineage/edges/edge-1/endpoints', async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'duplicate lineage edge' }),
+    })
+  })
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await clickVisibleTableToggle(page, 'dws_cell_hourly')
+  await clickVisibleTableToggle(page, 'dwd_session_qos')
+  const graphCallsBeforeMove = graphCalls
+  const sqlPreviewCallsBeforeMove = sqlPreviewCalls
+
+  await dragVisibleSourceArrowheadToPort(page, 'dwd_session_qos', 'hour_bucket')
+
+  await expect.poll(() => graphCalls).toBeGreaterThan(graphCallsBeforeMove)
+  await expect.poll(() => sqlPreviewCalls).toBeGreaterThan(sqlPreviewCallsBeforeMove)
+  await expect(page.getByText(/端点更新失败/)).toBeVisible()
 })
 
 test('lineage workspace moves source endpoint onto a field anchor by keyboard', async ({ page }) => {
@@ -223,8 +289,8 @@ test('lineage workspace selects visible X6 field edges by click', async ({ page 
   await mockCommonApis(page)
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await activateHiddenButton(page, 'expand table dws_cell_hourly')
-  await activateHiddenButton(page, 'expand table dwd_session_qos')
+  await clickVisibleTableToggle(page, 'dws_cell_hourly')
+  await clickVisibleTableToggle(page, 'dwd_session_qos')
 
   const fieldEdge = x6FieldEdge(page)
   await expect(fieldEdge).toBeAttached()
