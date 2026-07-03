@@ -20,6 +20,7 @@ runtime = [
     "langchain-core>=0.2",
     "sse-starlette>=2.1",
     "GitPython>=3.1",
+    "sqlglot>=26",
 ]
 test = [
     "pytest>=7.4",

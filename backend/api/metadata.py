@@ -103,7 +103,11 @@ def delete_field_endpoint(field_id: str):
 
 # ---- lineage ----
 
-@router.get("/api/lineage", response_model=LineageResponse)
+@router.get(
+    "/api/lineage",
+    response_model=LineageResponse,
+    response_model_exclude={"edges": {"__all__": {"calc_type", "calc_params", "updated_at"}}},
+)
 def lineage_endpoint(
     table: str = Query(..., description="root table name"),
     direction: str = Query("down", pattern="^(up|down)$"),
@@ -116,7 +120,12 @@ def lineage_endpoint(
     return LineageResponse(root_table=table, direction=direction, depth=depth, edges=edges)
 
 
-@router.post("/api/lineage/edges", response_model=LineageEdge, status_code=201)
+@router.post(
+    "/api/lineage/edges",
+    response_model=LineageEdge,
+    response_model_exclude={"calc_type", "calc_params", "updated_at"},
+    status_code=201,
+)
 def create_lineage_edge_endpoint(req: LineageEdgeCreateRequest):
     try:
         return service.create_lineage_edge(req)
@@ -133,7 +142,11 @@ def create_lineage_edge_endpoint(req: LineageEdgeCreateRequest):
         })
 
 
-@router.put("/api/lineage/edges/{edge_id}", response_model=LineageEdge)
+@router.put(
+    "/api/lineage/edges/{edge_id}",
+    response_model=LineageEdge,
+    response_model_exclude={"calc_type", "calc_params", "updated_at"},
+)
 def update_lineage_edge_endpoint(edge_id: str, req: LineageEdgeUpdateRequest):
     try:
         return service.update_lineage_edge(edge_id, req)
@@ -155,7 +168,11 @@ def delete_lineage_edge_endpoint(edge_id: str):
         })
 
 
-@router.get("/api/metadata/impact", response_model=ImpactResponse)
+@router.get(
+    "/api/metadata/impact",
+    response_model=ImpactResponse,
+    response_model_exclude={"downstream": {"__all__": {"calc_type", "calc_params", "updated_at"}}},
+)
 def downstream_impact_endpoint(
     table: str = Query(..., description="source table name"),
     field: Optional[str] = Query(None, description="optional source field name"),

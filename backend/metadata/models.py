@@ -1,5 +1,5 @@
 """Pydantic v2 wire DTOs for the metadata API."""
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 Layer = Literal["ODS", "DWD", "DWS", "ADS", "EVAL"]
 StorageType = Literal["KAFKA", "HIVE", "STARROCKS"]
 FieldType = Literal["STRING", "INT", "BIGINT", "DOUBLE", "TIMESTAMP", "DATE"]
+CalcType = Literal[
+    "DIRECT", "EXPRESSION", "AGGREGATE", "JOIN", "WINDOW", "CONDITION", "CONSTANT",
+]
+SqlSource = Literal["generated", "imported", "manual"]
 
 
 class UpstreamRef(BaseModel):
@@ -67,6 +71,10 @@ class TableResponse(BaseModel):
     storage_type: StorageType
     description: str
     fields: list[FieldResponse]
+    sql_logic: Optional[str] = None
+    sql_dialect: Optional[str] = None
+    sql_source: Optional[SqlSource] = None
+    sql_updated_at: str = ""
 
 
 class TableSummary(BaseModel):
@@ -86,7 +94,10 @@ class LineageEdge(BaseModel):
     to_table: str
     to_field: str
     transform_expr: str
+    calc_type: CalcType = "DIRECT"
+    calc_params: dict[str, Any] = {}
     created_at: str = ""
+    updated_at: str = ""
 
 
 class LineageResponse(BaseModel):
@@ -102,10 +113,21 @@ class LineageEdgeCreateRequest(BaseModel):
     to_table: str = Field(min_length=1, max_length=128)
     to_field: str = Field(min_length=1, max_length=128)
     transform_expr: str = Field(min_length=1)
+    calc_type: CalcType = "DIRECT"
+    calc_params: dict[str, Any] = {}
 
 
 class LineageEdgeUpdateRequest(BaseModel):
     transform_expr: str = Field(min_length=1)
+    calc_type: CalcType = "DIRECT"
+    calc_params: dict[str, Any] = {}
+
+
+class LineageEdgeEndpointUpdateRequest(BaseModel):
+    from_table: str = Field(min_length=1, max_length=128)
+    from_field: str = Field(min_length=1, max_length=128)
+    to_table: str = Field(min_length=1, max_length=128)
+    to_field: str = Field(min_length=1, max_length=128)
 
 
 class ImpactResponse(BaseModel):
@@ -114,3 +136,80 @@ class ImpactResponse(BaseModel):
     has_downstream: bool
     affected_tables: list[str]
     downstream: list[LineageEdge]
+
+
+class LineageTableNode(TableSummary):
+    fields: list[FieldResponse] = []
+    sql_logic: Optional[str] = None
+    sql_dialect: Optional[str] = None
+    sql_source: Optional[SqlSource] = None
+    sql_updated_at: str = ""
+
+
+class LineageTableEdge(BaseModel):
+    source: str
+    target: str
+    direction: Literal["upstream", "downstream"]
+    field_edge_count: int
+    calc_type_counts: dict[str, int] = {}
+    fields: list[str] = []
+
+
+class LineageGraphResponse(BaseModel):
+    root_table: str
+    depth: int
+    include_upstream: bool
+    include_downstream: bool
+    graph_version: str
+    tables: list[LineageTableNode]
+    table_edges: list[LineageTableEdge]
+    field_edges: list[LineageEdge]
+    saved_sql: Optional[str] = None
+
+
+class LineageSqlPreviewRequest(BaseModel):
+    table: str = Field(min_length=1, max_length=128)
+    field_edges: Optional[list[LineageEdge]] = None
+
+
+class LineageSqlPreviewResponse(BaseModel):
+    table: str
+    sql: str
+    complete: bool
+    warnings: list[str] = Field(default_factory=list)
+    saved_sql: Optional[str] = None
+    changed: bool
+
+
+class LineageSqlImportPreviewRequest(BaseModel):
+    table: str = Field(min_length=1, max_length=128)
+    sql: str = Field(min_length=1)
+
+
+class FieldChangePreview(BaseModel):
+    action: Literal["add", "update", "keep"]
+    field: str
+    expression: str
+    field_type: FieldType = "STRING"
+    upstream: list[UpstreamRef] = []
+
+
+class EdgeChangePreview(BaseModel):
+    action: Literal["add", "update", "delete", "keep"]
+    edge: LineageEdge
+
+
+class LineageSqlImportPreviewResponse(BaseModel):
+    table: str
+    sql: str
+    fields: list[FieldChangePreview]
+    edges: list[EdgeChangePreview]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LineageSqlApplyRequest(BaseModel):
+    table: str = Field(min_length=1, max_length=128)
+    sql: str = Field(min_length=1)
+    fields: list[FieldChangePreview]
+    edges: list[EdgeChangePreview]
+    expected_graph_version: Optional[str] = None

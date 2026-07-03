@@ -55,6 +55,35 @@ def test_create_edge_persists_transform_expr(monkeypatch):
     }
 
 
+def test_create_edge_preserves_preexisting_default_response_fields(monkeypatch):
+    def fake_create_lineage_edge(req):
+        return LineageEdge(
+            from_table=req.from_table,
+            from_field=req.from_field,
+            to_table=req.to_table,
+            to_field=req.to_field,
+            transform_expr=req.transform_expr,
+        )
+
+    monkeypatch.setattr(metadata.service, "create_lineage_edge", fake_create_lineage_edge)
+
+    res = _client().post("/api/lineage/edges", json={
+        "from_table": "tmp_lineage_src",
+        "from_field": "raw_value",
+        "to_table": "tmp_lineage_mid",
+        "to_field": "normalized_value",
+        "transform_expr": "raw_value * 100",
+    })
+
+    assert res.status_code == 201
+    payload = res.json()
+    assert payload["edge_id"] == ""
+    assert payload["created_at"] == ""
+    assert "calc_type" not in payload
+    assert "calc_params" not in payload
+    assert "updated_at" not in payload
+
+
 def test_lineage_query_returns_transform_expr(monkeypatch):
     captured = {}
 
