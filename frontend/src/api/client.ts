@@ -57,6 +57,8 @@ export type SchemaApplyPayload = {
   diff: Array<Record<string, unknown>>
 }
 
+export type CalcType = 'DIRECT' | 'EXPRESSION' | 'AGGREGATE' | 'JOIN' | 'WINDOW' | 'CONDITION' | 'CONSTANT'
+
 export type LineageEdge = {
   edge_id?: string
   from_table: string
@@ -64,7 +66,10 @@ export type LineageEdge = {
   to_table: string
   to_field: string
   transform_expr: string
+  calc_type?: CalcType
+  calc_params?: Record<string, unknown>
   created_at?: string
+  updated_at?: string
 }
 
 export type LineageResponse = {
@@ -72,6 +77,65 @@ export type LineageResponse = {
   direction: 'up' | 'down'
   depth: number
   edges: LineageEdge[]
+}
+
+export type LineageTableNode = TableSummary & {
+  fields: FieldResponse[]
+  sql_logic?: string | null
+  sql_dialect?: string | null
+  sql_source?: 'generated' | 'imported' | 'manual' | null
+  sql_updated_at?: string
+}
+
+export type LineageTableEdge = {
+  source: string
+  target: string
+  direction: 'upstream' | 'downstream'
+  field_edge_count: number
+  calc_type_counts: Record<string, number>
+  fields: string[]
+}
+
+export type LineageGraphResponse = {
+  root_table: string
+  depth: number
+  include_upstream: boolean
+  include_downstream: boolean
+  graph_version: string
+  tables: LineageTableNode[]
+  table_edges: LineageTableEdge[]
+  field_edges: LineageEdge[]
+  saved_sql?: string | null
+}
+
+export type LineageSqlPreviewResponse = {
+  table: string
+  sql: string
+  complete: boolean
+  warnings: string[]
+  saved_sql?: string | null
+  changed: boolean
+}
+
+export type FieldChangePreview = {
+  action: 'add' | 'update' | 'keep'
+  field: string
+  expression: string
+  field_type: string
+  upstream: UpstreamRef[]
+}
+
+export type EdgeChangePreview = {
+  action: 'add' | 'update' | 'delete' | 'keep'
+  edge: LineageEdge
+}
+
+export type LineageSqlImportPreviewResponse = {
+  table: string
+  sql: string
+  fields: FieldChangePreview[]
+  edges: EdgeChangePreview[]
+  warnings: string[]
 }
 
 export type PipelineResponse = {
@@ -123,7 +187,11 @@ export type LineageEdgePayload = {
   to_table: string
   to_field: string
   transform_expr: string
+  calc_type?: CalcType
+  calc_params?: Record<string, unknown>
 }
+
+export type LineageEdgeUpdatePayload = Pick<LineageEdgePayload, 'transform_expr' | 'calc_type' | 'calc_params'>
 
 export type HealthPayload = {
   status: string
@@ -147,7 +215,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-function qs(params: Record<string, string | number | undefined | null>) {
+function qs(params: Record<string, string | number | boolean | undefined | null>) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') search.set(key, String(value))
@@ -197,19 +265,50 @@ export const api = {
     }),
   lineage: (params: { table: string; direction?: 'up' | 'down'; depth?: number }) =>
     fetchJson<LineageResponse>(`/api/lineage${qs(params)}`),
+  lineageGraph: (params: { table: string; depth?: number; include_upstream?: boolean; include_downstream?: boolean }) =>
+    fetchJson<LineageGraphResponse>(`/api/lineage/graph${qs(params)}`),
   createLineageEdge: (payload: LineageEdgePayload) =>
     fetchJson<LineageEdge>('/api/lineage/edges', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateLineageEdge: (edgeId: string, payload: { transform_expr: string }) =>
+  updateLineageEdge: (edgeId: string, payload: LineageEdgeUpdatePayload) =>
     fetchJson<LineageEdge>(`/api/lineage/edges/${encodeURIComponent(edgeId)}`, {
       method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  updateLineageEdgeEndpoints: (
+    edgeId: string,
+    payload: Pick<LineageEdgePayload, 'from_table' | 'from_field' | 'to_table' | 'to_field'>,
+  ) =>
+    fetchJson<LineageEdge>(`/api/lineage/edges/${encodeURIComponent(edgeId)}/endpoints`, {
+      method: 'PATCH',
       body: JSON.stringify(payload),
     }),
   deleteLineageEdge: (edgeId: string) =>
     fetch(`${API_BASE}/api/lineage/edges/${encodeURIComponent(edgeId)}`, { method: 'DELETE' }).then(async (res) => {
       if (!res.ok) throw new Error(await res.text())
+    }),
+  previewLineageSql: (payload: { table: string; field_edges?: LineageEdge[] }) =>
+    fetchJson<LineageSqlPreviewResponse>('/api/lineage/sql/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  previewLineageSqlImport: (payload: { table: string; sql: string }) =>
+    fetchJson<LineageSqlImportPreviewResponse>('/api/lineage/sql/import/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  applyLineageSql: (payload: {
+    table: string
+    sql: string
+    fields: FieldChangePreview[]
+    edges: EdgeChangePreview[]
+    expected_graph_version?: string
+  }) =>
+    fetchJson<LineageSqlPreviewResponse>('/api/lineage/sql/apply', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   pipeline: (params: { mode?: 'forward' | 'reverse'; table?: string | null; depth?: number } = {}) =>
     fetchJson<PipelineResponse>(`/api/pipeline${qs(params)}`),
