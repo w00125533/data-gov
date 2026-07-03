@@ -46,8 +46,8 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
 
   await expect(page.getByRole('heading', { name: '血缘工作区' })).toBeVisible()
-  await expect(page.getByRole('checkbox', { name: '正向' })).toBeChecked()
-  await expect(page.getByRole('checkbox', { name: '反向' })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: '前向' })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: '后向' })).toBeChecked()
   await expect(page.locator('.lineage-x6-canvas .x6-graph')).toBeVisible()
   await expect(x6Canvas(page)).toContainText('dws_cell_hourly')
   await expect(x6Canvas(page)).toContainText('dwd_session_qos')
@@ -57,7 +57,7 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(x6Canvas(page)).toContainText('avg_rsrp')
   await expect(x6FieldEdge(page)).toBeAttached()
 
-  await page.getByRole('checkbox', { name: '反向' }).uncheck()
+  await page.getByRole('checkbox', { name: '后向' }).uncheck()
   await expect(x6Canvas(page)).not.toContainText('dwd_session_qos')
 })
 
@@ -91,7 +91,7 @@ test('lineage workspace previews imported select sql before applying', async ({ 
   await page.getByRole('button', { name: '解析 SQL' }).click()
   await expect(page.getByText('字段变更')).toBeVisible()
   await expect(page.getByText(/update \| avg_rsrp \| AVG/)).toBeVisible()
-  await page.getByRole('checkbox', { name: '反向' }).evaluate((checkbox) => {
+  await page.getByRole('checkbox', { name: '后向' }).evaluate((checkbox) => {
     ;(checkbox as HTMLInputElement).click()
   })
   await expect.poll(() => graphCalls).toBeGreaterThan(graphCallsBeforeDeliberateRefetch)

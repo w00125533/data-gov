@@ -279,8 +279,8 @@ export default function Lineage() {
             }}
           />
           <Space>
-            <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>正向</Checkbox>
-            <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>反向</Checkbox>
+            <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>前向</Checkbox>
+            <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>后向</Checkbox>
           </Space>
           <Typography.Text className="muted">展开层级: {depth}</Typography.Text>
           <Slider
