@@ -7,6 +7,36 @@ async function activateHiddenButton(page: Page, name: string | RegExp) {
   await page.keyboard.press('Enter')
 }
 
+function x6Canvas(page: Page) {
+  return page.locator('.lineage-x6-canvas')
+}
+
+function x6FieldEdge(page: Page) {
+  return page.locator('.lineage-x6-canvas .x6-graph [data-cell-id^="field-edge-"]').first()
+}
+
+function x6FieldEdgePath(page: Page) {
+  return x6FieldEdge(page).locator('path').nth(1)
+}
+
+function rightPanel(page: Page) {
+  return page.locator('.three-panel-grid > section').nth(2)
+}
+
+async function clickRenderedX6Path(page: Page, pathLocator = x6FieldEdgePath(page)) {
+  const point = await pathLocator.evaluate((path) => {
+    const svgPath = path as SVGPathElement
+    const middle = svgPath.getPointAtLength(svgPath.getTotalLength() / 2)
+    const matrix = svgPath.getScreenCTM()
+    if (!matrix) throw new Error('missing SVG screen transform')
+    return {
+      x: matrix.a * middle.x + matrix.c * middle.y + matrix.e,
+      y: matrix.b * middle.x + matrix.d * middle.y + matrix.f,
+    }
+  })
+  await page.mouse.click(point.x, point.y)
+}
+
 test('lineage workspace renders expandable tables and direction filters', async ({ page }) => {
   await mockCommonApis(page)
 
@@ -16,16 +46,16 @@ test('lineage workspace renders expandable tables and direction filters', async 
   await expect(page.getByRole('checkbox', { name: '正向' })).toBeChecked()
   await expect(page.getByRole('checkbox', { name: '反向' })).toBeChecked()
   await expect(page.locator('.lineage-x6-canvas .x6-graph')).toBeVisible()
-  await expect(page.locator('.lineage-x6-canvas')).toContainText('dws_cell_hourly')
-  await expect(page.locator('.lineage-x6-canvas')).toContainText('dwd_session_qos')
+  await expect(x6Canvas(page)).toContainText('dws_cell_hourly')
+  await expect(x6Canvas(page)).toContainText('dwd_session_qos')
   await expect(page.locator('.lineage-x6-canvas .x6-graph [data-cell-id^="table-edge-"]').first()).toBeAttached()
 
   await activateHiddenButton(page, 'expand table dws_cell_hourly')
-  await expect(page.getByText('avg_rsrp').first()).toBeVisible()
-  await expect(page.getByText('AVG(q.avg_rsrp)').first()).toBeVisible()
+  await expect(x6Canvas(page)).toContainText('avg_rsrp')
+  await expect(x6FieldEdge(page)).toBeAttached()
 
   await page.getByRole('checkbox', { name: '反向' }).uncheck()
-  await expect(page.getByRole('button', { name: /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/ })).toBeHidden()
+  await expect(x6Canvas(page)).not.toContainText('dwd_session_qos')
 })
 
 test('lineage workspace previews imported select sql before applying', async ({ page }) => {
@@ -179,9 +209,26 @@ test('lineage workspace selects field edges from the keyboard', async ({ page })
   await mockCommonApis(page)
 
   await page.goto('/metadata/lineage?table=dws_cell_hourly')
-  await activateHiddenButton(page, /dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)
+  await activateHiddenButton(page, 'field edge edge-1')
 
-  await expect(page.getByText('AVG(q.avg_rsrp)').last()).toBeVisible()
+  await expect(rightPanel(page).getByText(/dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)).toBeVisible()
+  await expect(rightPanel(page).locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
+})
+
+test('lineage workspace selects visible X6 field edges by click', async ({ page }) => {
+  await mockCommonApis(page)
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await activateHiddenButton(page, 'expand table dws_cell_hourly')
+  await activateHiddenButton(page, 'expand table dwd_session_qos')
+
+  const fieldEdge = x6FieldEdge(page)
+  await expect(fieldEdge).toBeAttached()
+  await expect(x6FieldEdgePath(page)).toHaveAttribute('d', /M /)
+  await clickRenderedX6Path(page)
+
+  await expect(rightPanel(page).getByText(/dwd_session_qos\.avg_rsrp.*dws_cell_hourly\.avg_rsrp/)).toBeVisible()
+  await expect(rightPanel(page).locator('textarea').first()).toHaveValue('AVG(q.avg_rsrp)')
 })
 
 test('lineage workspace edits field edge config and previews generated sql', async ({ page }) => {
