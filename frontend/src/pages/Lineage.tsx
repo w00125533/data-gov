@@ -70,6 +70,7 @@ export default function Lineage() {
   const [includeUpstream, setIncludeUpstream] = useState(true)
   const [includeDownstream, setIncludeDownstream] = useState(true)
   const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set())
+  const [graphResetVersion, setGraphResetVersion] = useState(0)
   const [edge, setEdge] = useState<LineageEdge | undefined>()
   const [nodeId, setNodeId] = useState<string | undefined>()
   const [edgeModal, setEdgeModal] = useState<EdgeModal | undefined>()
@@ -180,7 +181,12 @@ export default function Lineage() {
       void invalidateLineage()
       void sqlPreviewQuery.refetch()
     },
-    onError: (error) => apiMessage.error(`端点更新失败: ${(error as Error).message}`),
+    onError: (error) => {
+      apiMessage.error(`端点更新失败: ${(error as Error).message}`)
+      setGraphResetVersion((version) => version + 1)
+      void invalidateLineage()
+      void sqlPreviewQuery.refetch()
+    },
   })
   const deleteEdgeMutation = useMutation({
     mutationFn: api.deleteLineageEdge,
@@ -279,8 +285,8 @@ export default function Lineage() {
             }}
           />
           <Space>
-            <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>正向</Checkbox>
-            <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>反向</Checkbox>
+            <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>前向</Checkbox>
+            <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>后向</Checkbox>
           </Space>
           <Typography.Text className="muted">展开层级: {depth}</Typography.Text>
           <Slider
@@ -303,6 +309,8 @@ export default function Lineage() {
         <LineageWorkspaceGraph
           payload={workspacePayload}
           expandedTables={expandedTables}
+          selectedEdge={edge}
+          resetVersion={graphResetVersion}
           onToggleTable={toggleTable}
           onSelectFieldEdge={(next) => {
             setEdge(next)

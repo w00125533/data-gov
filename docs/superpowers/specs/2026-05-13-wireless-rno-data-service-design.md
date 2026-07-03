@@ -1527,9 +1527,9 @@ class SandboxController:
 │ [x] 前向  [x] 后向                   │     │ ods_ue_signal   + │~~~▶ │ dwd_session_qos + │ │                                      │
 │ 展开层级: [1 -- 5]                  │     └──────────────────┘      └──────────────────┘ │ 计算类型: [AGGREGATE ▼]             │
 │                                      │                 ╲                    ╲             │ 参数: function=AVG, group_by=...     │
-│ [全部折叠] [展开当前表] [刷新图]      │                  ╲                    ╲            │ 表达式: AVG(rsrp)                   │
+│ [导入 SQL] [新建血缘边] [用 NL 修改]  │                  ╲                    ╲            │ 表达式: AVG(rsrp)                   │
 │                                      │                   ╲                    ▼           │ [保存] [删除] [用 NL 修改]          │
-│ [生成 SQL] [导入 SQL]                │                ┌────────────────────────────┐       │                                      │
+│                                      │                ┌────────────────────────────┐       │                                      │
 │                                      │                │ dws_cell_hourly       -     │       │ 生成 SQL 预览                       │
 │ 图例:                                │                │ avg_rsrp       ◀ · · · · · │       │ SELECT ...                          │
 │  实线曲线 = 表级血缘                 │                │ avg_sinr       ◀ · · · · · │       │                                      │
@@ -1561,7 +1561,7 @@ class SandboxController:
 | 图编辑联动 SQL | 新建/删除/改边、改计算类型、拖动端点 | 自动重新生成当前目标表 SQL 预览 |
 | SQL 写回（第一版） | 在“导入 SQL”抽屉确认应用 | 将导入 SQL 写入 `Table.sql_logic` 并追加 `Change`；右侧“同步到表定义”按钮作为后续直接写回入口 |
 | 导入 SQL | 点击“导入 SQL”并粘贴 `SELECT ... FROM ...` | 解析后展示字段/血缘变更预览；确认后第一版写入 `Table.sql_logic` 和 `Change`，字段/血缘变更应用为后续扩展 |
-| 画布导航 | 拖拽、缩放、全屏、Mini-map | 支持大图定位和局部查看 |
+| 画布导航 | 拖拽、缩放、Mini-map | 支持大图定位和局部查看；全屏、全部折叠、展开当前表、刷新图按钮作为后续扩展 |
 
 #### X6 画布数据模型
 
@@ -2053,9 +2053,9 @@ data-gov/
         │   └── Health.tsx
         ├── components/
         │   ├── LineageWorkspaceGraph.tsx # X6 血缘工作台画布 (表级节点、字段端口、可编辑边)
-        │   ├── lineageGraphAdapter.ts    # LineageGraphResponse -> X6 nodes/edges 的纯函数转换
         │   ├── PipelineDAG.tsx    # G6 Pipeline DAG 封装 (表级, 被 /pipeline 使用)
-        │   ├── graphShared/       # 层级配色、图数据公共类型、Pipeline G6 数据转换
+        │   ├── graphShared/       # 层级配色、图数据公共类型、Pipeline G6 与血缘 X6 数据转换
+        │   │   └── lineageX6Adapter.ts # LineageGraphResponse -> X6 nodes/edges 的纯函数转换
         │   ├── CodeCard.tsx       # Monaco 代码卡片
         │   ├── DryRunPreview.tsx  # 1 行预览表格
         │   ├── ConstraintSlider.tsx # 反向合成约束调整

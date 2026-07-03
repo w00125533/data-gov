@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test:unit": "vitest run --exclude tests/e2e/**",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
@@ -15,6 +16,8 @@
     "@ant-design/icons": "^6.2.5",
     "@antv/g2": "^5.4.8",
     "@antv/g6": "^5.1.1",
+    "@antv/x6": "^2.19.2",
+    "@antv/x6-plugin-minimap": "^2.0.7",
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.101.0",
     "antd": "^6.4.3",
@@ -36,6 +39,7 @@
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.9"
   }
 }
