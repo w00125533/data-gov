@@ -32,7 +32,8 @@ type TablePosition = {
 }
 
 export function edgeKey(edge: LineageEdge): string {
-  return edge.edge_id || `${edge.from_table}.${edge.from_field}->${edge.to_table}.${edge.to_field}`
+  if (edge.edge_id) return edge.edge_id
+  return `field-edge:${safeCellId(JSON.stringify(['field-edge', edge.from_table, edge.from_field, edge.to_table, edge.to_field]))}`
 }
 
 export function safeCellId(value: string): string {
@@ -44,7 +45,7 @@ export function safeCellId(value: string): string {
 }
 
 export function tableEdgeCellId(source: string, target: string): string {
-  return `table-edge-${safeCellId(source)}-${safeCellId(target)}`
+  return `table-edge-${safeCellId(JSON.stringify(['table-edge', source, target]))}`
 }
 
 export function fieldEdgeCellId(edge: LineageEdge): string {

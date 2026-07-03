@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { Node } from '@antv/x6'
-import type { LineageGraphResponse } from '../../api/client'
+import type { LineageEdge, LineageGraphResponse } from '../../api/client'
 import {
   buildLineageX6GraphData,
   edgeKey,
@@ -246,5 +246,26 @@ describe('lineageX6Adapter', () => {
   test('encodes cell ids without punctuation collisions', () => {
     expect(safeCellId('db.table')).not.toBe(safeCellId('db_table'))
     expect(tableEdgeCellId('db.table', 'a-b')).not.toBe(tableEdgeCellId('db', 'table-a-b'))
+    expect(tableEdgeCellId('a', 'b-s-c')).not.toBe(tableEdgeCellId('a-s-b', 'c'))
+  })
+
+  test('builds tuple-safe fallback field edge keys when backend edge ids are absent', () => {
+    const left: LineageEdge = {
+      from_table: 'a.b',
+      from_field: 'c',
+      to_table: 'x',
+      to_field: 'y',
+      transform_expr: 'p',
+    }
+    const right: LineageEdge = {
+      from_table: 'a',
+      from_field: 'b.c',
+      to_table: 'x',
+      to_field: 'y',
+      transform_expr: 'p',
+    }
+
+    expect(edgeKey(left)).not.toBe(edgeKey(right))
+    expect(fieldEdgeCellId(left)).not.toBe(fieldEdgeCellId(right))
   })
 })
