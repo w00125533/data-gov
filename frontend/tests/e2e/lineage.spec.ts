@@ -1,10 +1,10 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { json, lineageGraph, lineageSqlImportPreview, lineageSqlPreview, mockCommonApis } from './fixtures'
 
-async function activateHiddenButton(page: import('@playwright/test').Page, text: string | RegExp) {
-  await page.getByRole('button').filter({ hasText: text }).evaluate((button) => {
-    ;(button as HTMLButtonElement).click()
-  })
+async function activateHiddenButton(page: Page, name: string | RegExp) {
+  const button = page.getByRole('button').filter({ hasText: name })
+  await button.focus()
+  await page.keyboard.press('Enter')
 }
 
 test('lineage workspace renders expandable tables and direction filters', async ({ page }) => {

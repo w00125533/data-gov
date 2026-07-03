@@ -312,7 +312,7 @@ export default function LineageWorkspaceGraph({
         />
       </Tooltip>
       {isEmpty ? (
-        <Empty className="lineage-x6-empty" description="鏆傛棤琛€缂樺伐浣滃尯鏁版嵁" />
+        <Empty className="lineage-x6-empty" description="暂无血缘工作区数据" />
       ) : null}
       {payload ? (
         <div className="lineage-x6-accessible" aria-label="lineage graph controls">
