@@ -284,7 +284,7 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 - 单 Neo4j 事务内同时写元数据节点/边 + 创建对应 `Change` 节点；失败原子回滚
 - 审计 `Change` 节点为孤立节点，不与 Table/Field 建关系：删除操作的目标节点已不存在，关系会丢，字符串属性 `table_name`/`field_name` 独立保存即可。审计为只读追加日志，不参与图遍历
 - 血缘图编辑动作即时写入 `DERIVES_FROM`；写入成功后前端重新拉取规范化图数据并刷新 SQL 预览
-- SQL 逻辑预览不自动覆盖 `Table.sql_logic`；只有用户点击“同步到表定义”时才写入 Table 节点并追加 `Change`
+- SQL 逻辑预览不自动覆盖 `Table.sql_logic`；第一版通过 SQL 导入抽屉的“确认应用”写入 Table 节点并追加 `Change`，右侧 SQL 预览区的“同步到表定义”按钮先保留为后续直接写回入口
 
 #### 派生查询
 
@@ -1557,8 +1557,8 @@ class SandboxController:
 | 边 click | 点击字段级边 | 右侧显示计算类型、参数和表达式编辑器 |
 | 锚点拖动 | 拖动字段级边的源/目标锚点到其他字段 | 即时调用后端保存新端点；成功后刷新图和 SQL 预览，失败则回滚 |
 | 图编辑联动 SQL | 新建/删除/改边、改计算类型、拖动端点 | 自动重新生成当前目标表 SQL 预览 |
-| SQL 写回 | 点击“同步到表定义” | 将当前 SQL 预览写入 `Table.sql_logic` 并追加 `Change` |
-| 导入 SQL | 点击“导入 SQL”并粘贴 `SELECT ... FROM ...` | 解析后展示字段/血缘变更预览，确认后应用 |
+| SQL 写回（第一版） | 在“导入 SQL”抽屉确认应用 | 将导入 SQL 写入 `Table.sql_logic` 并追加 `Change`；右侧“同步到表定义”按钮作为后续直接写回入口 |
+| 导入 SQL | 点击“导入 SQL”并粘贴 `SELECT ... FROM ...` | 解析后展示字段/血缘变更预览；确认后第一版写入 `Table.sql_logic` 和 `Change`，字段/血缘变更应用为后续扩展 |
 | 画布导航 | 拖拽、缩放、全屏、Mini-map | 支持大图定位和局部查看 |
 
 ### 6.5 血缘维护、SQL 联动与 /chat
@@ -1608,14 +1608,14 @@ class SandboxController:
 - 推断出的 `calc_type/calc_params`。
 - 无法识别的表达式、缺失 JOIN key、源表/字段不存在等风险。
 
-用户确认后，`sql/apply` 在同一事务内更新字段、血缘边、`Table.sql_logic` 和 `Change`。如果用户取消，Neo4j 不发生变更。
+用户确认后，第一版 `sql/apply` 写入 `Table.sql_logic/sql_dialect/sql_source/sql_updated_at` 并追加 `Change`；字段变更、血缘边变更和基于 `expected_graph_version` 的并发冲突校验作为后续扩展。如果用户取消，Neo4j 不发生变更。
 
 #### 错误处理
 
 - 循环血缘：后端返回成环路径，前端高亮相关字段和边。
 - SQL 解析失败：保留原 SQL 文本，展示失败位置或无法识别片段。
-- SQL 预览不完整：允许继续编辑图；“同步到表定义”需要用户显式确认。
-- 并发冲突：通过图版本或 `updated_at` 检测，提示刷新后重试。
+- SQL 预览不完整：允许继续编辑图；第一版写入 `Table.sql_logic` 需通过“导入 SQL”确认应用，右侧“同步到表定义”直接写回为后续扩展。
+- 并发冲突：前端随应用请求携带预览时的图版本；后端版本冲突校验作为后续扩展，落地后提示刷新重试。
 - 图编辑导致 SQL 改变：右侧 SQL 区展示“生成 SQL”和“表上已保存 SQL”的差异提示。
 
 #### 跳转 /chat 联动的上下文注入
@@ -1721,7 +1721,7 @@ context_prompt = """
 | DELETE | `/api/lineage/edges/:edge_id` | 删除血缘边 |
 | POST | `/api/lineage/sql/preview` | 根据当前或传入的血缘配置生成目标表 Spark/Hive SELECT SQL 预览 |
 | POST | `/api/lineage/sql/import/preview` | 解析用户粘贴的 `SELECT ... FROM ...`，返回字段和血缘变更预览 |
-| POST | `/api/lineage/sql/apply` | 用户确认 SQL 解析预览后，事务性应用字段、血缘和 `Table.sql_logic` 变更 |
+| POST | `/api/lineage/sql/apply` | 用户确认 SQL 解析预览后，第一版写入 `Table.sql_logic` 并追加 `Change`；字段/血缘应用和图版本冲突校验为后续扩展 |
 | GET | `/api/metadata/impact` | 删除/变更前下游影响预检查 (?table= ?field=) |
 | POST | `/api/chat/start` | 新建对话 |
 | POST | `/api/chat/message` | 发送消息 → SSE stream |
@@ -2085,8 +2085,8 @@ Phase 1 ⇒ Phase 2 ⇒ Phase 3
 | P3-8 | 字段展开与字段级血缘 | 点击 `dws_cell_hourly` 表节点展开按钮 | 节点内分行显示字段；展开相关表后出现淡色虚线字段级边，hover 显示源字段、目标字段、计算类型和表达式 |
 | P3-9 | 血缘边结构化编辑 | 点击字段级边 → 修改计算类型为 `AGGREGATE` 并填写参数 → 保存 | `DERIVES_FROM` 更新 `calc_type/calc_params/transform_expr`，图刷新，右侧 SQL 预览同步变化 |
 | P3-10 | 拖动锚点改血缘端点 | 拖动字段级边源锚点到另一个上游字段 | 后端即时保存新端点并做循环校验；成功后图与 SQL 预览刷新，失败时连线回滚 |
-| P3-10a | 基于血缘生成 SQL | 选中目标表 → 点击「生成 SQL」或完成一次血缘编辑 | 右侧展示当前目标表直接上游 Spark/Hive SELECT SQL；用户点击「同步到表定义」后写入 `Table.sql_logic` |
-| P3-10b | SQL 导入预览应用 | 选择目标表 → 粘贴 `SELECT ... FROM ...` → 点击解析 | UI 展示字段变更、血缘变更、计算类型推断和风险；确认后更新字段、血缘、`Table.sql_logic` 和 Change |
+| P3-10a | 基于血缘生成 SQL | 选中目标表 → 点击「生成 SQL」或完成一次血缘编辑 | 右侧展示当前目标表直接上游 Spark/Hive SELECT SQL；第一版“同步到表定义”按钮展示占位提示，直接写回为后续扩展 |
+| P3-10b | SQL 导入预览应用 | 选择目标表 → 粘贴 `SELECT ... FROM ...` → 点击解析 | UI 展示字段变更、血缘变更、计算类型推断和风险；确认后第一版写入 `Table.sql_logic` 和 Change，字段/血缘应用为后续扩展 |
 | P3-10c | 血缘图→/chat 联动 | 右键 `dws_cell_hourly.drop_rate` → [用 NL 修改] | 路由跳转 `/chat?context=lineage&table=dws_cell_hourly&field=drop_rate`，Agent State 注入当前表达式、计算类型、上游信息和当前表 SQL |
 | P3-11 | 对话面板: 流式输出 + Badge | 打开 `/chat` → 新建对话 → 输入 "计算每小区小时平均覆盖强度" | SSE 逐字流式输出，classifier badge 显示「正向ETL」，右侧展示血缘 mini 图推荐方案 |
 | P3-12 | 对话面板: 代码卡片 + DryRun 预览 | 对话完成 → 代码卡片显示 Spark SQL (Monaco 高亮) → 点击 [▶ 沙箱试跑] | 右侧代码面板可编辑，DryRun 结果卡片显示 ✅ 成功 + 1 行 Ant Table |
