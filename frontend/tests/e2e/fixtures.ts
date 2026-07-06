@@ -1,5 +1,136 @@
 import type { Page, Route } from '@playwright/test'
 
+export const categoryTree = [
+  {
+    id: 'category:network',
+    code: 'network',
+    name: 'Network',
+    level: 1,
+    sort_order: 10,
+    protected: true,
+    active: true,
+    table_count: 2,
+    children: [
+      {
+        id: 'category:network.coverage',
+        code: 'network.coverage',
+        name: 'Coverage',
+        level: 2,
+        sort_order: 10,
+        protected: false,
+        active: true,
+        table_count: 1,
+        children: [],
+      },
+      {
+        id: 'category:network.quality',
+        code: 'network.quality',
+        name: 'Quality',
+        level: 2,
+        sort_order: 20,
+        protected: false,
+        active: true,
+        table_count: 1,
+        children: [],
+      },
+    ],
+  },
+  {
+    id: 'category:source-data',
+    code: 'source-data',
+    name: 'Source Data',
+    level: 1,
+    sort_order: 20,
+    protected: true,
+    active: true,
+    table_count: 1,
+    children: [
+      {
+        id: 'category:source-data.chr',
+        code: 'source-data.chr',
+        name: 'CHR',
+        level: 2,
+        sort_order: 10,
+        protected: false,
+        active: true,
+        table_count: 1,
+        children: [],
+      },
+    ],
+  },
+]
+
+export const tagGroups = [
+  {
+    id: 'tag-group:network-domain',
+    code: 'network-domain',
+    name: 'Network Domain',
+    sort_order: 10,
+    active: true,
+    tags: [
+      {
+        id: 'tag:network.coverage',
+        code: 'network.coverage',
+        name: 'Coverage',
+        sort_order: 10,
+        active: true,
+      },
+      {
+        id: 'tag:network.quality',
+        code: 'network.quality',
+        name: 'Quality',
+        sort_order: 20,
+        active: true,
+      },
+    ],
+  },
+]
+
+const coverageCategory = {
+  id: 'category:network.coverage',
+  code: 'network.coverage',
+  name: 'Coverage',
+  path: ['Network', 'Coverage'],
+  active: true,
+}
+
+const qualityCategory = {
+  id: 'category:network.quality',
+  code: 'network.quality',
+  name: 'Quality',
+  path: ['Network', 'Quality'],
+  active: true,
+}
+
+const chrCategory = {
+  id: 'category:source-data.chr',
+  code: 'source-data.chr',
+  name: 'CHR',
+  path: ['Source Data', 'CHR'],
+  active: true,
+}
+
+const coverageTag = {
+  id: 'tag:network.coverage',
+  code: 'network.coverage',
+  name: 'Coverage',
+  group_id: 'tag-group:network-domain',
+  group_name: 'Network Domain',
+  active: true,
+}
+
+const qualityTag = {
+  id: 'tag:network.quality',
+  code: 'network.quality',
+  name: 'Quality',
+  group_id: 'tag-group:network-domain',
+  group_name: 'Network Domain',
+  active: true,
+}
+
+const categoryRefs = [coverageCategory, qualityCategory, chrCategory]
+const tagRefs = [coverageTag, qualityTag]
+
 export const tables = [
   {
     id: 't1',
@@ -9,6 +140,8 @@ export const tables = [
     storage_type: 'HIVE',
     description: '小区小时粒度汇总',
     field_count: 2,
+    category: coverageCategory,
+    tags: [coverageTag, qualityTag],
   },
   {
     id: 't2',
@@ -18,6 +151,8 @@ export const tables = [
     storage_type: 'HIVE',
     description: '会话 QoS 明细',
     field_count: 2,
+    category: qualityCategory,
+    tags: [qualityTag],
   },
 ]
 
@@ -134,13 +269,40 @@ export async function json(route: Route, body: unknown) {
 }
 
 export async function mockCommonApis(page: Page) {
+  await page.route('**/api/metadata/categories/tree', (route) => json(route, categoryTree))
+  await page.route('**/api/metadata/tags', (route) => json(route, tagGroups))
+  await page.route('**/api/tables/t1/classification', async (route) => {
+    const payload = route.request().postDataJSON() as { category_id: string; tag_ids?: string[] }
+    const category = categoryRefs.find((item) => item.id === payload.category_id) ?? null
+    const tags = tagRefs.filter((item) => (payload.tag_ids ?? []).includes(item.id))
+    await json(route, { ...tableDetail, category, tags })
+  })
   await page.route('**/api/tables?*', (route) => json(route, tables))
   await page.route('**/api/tables', (route) => json(route, tables))
   await page.route('**/api/tables/t1', (route) => json(route, tableDetail))
   await page.route('**/api/tables/t2', (route) => json(route, { ...tables[1], fields: tableDetail.fields }))
-  await page.route('**/api/yaml/export**', (route) => json(route, { table: null, files: [{ table: 'dws_cell_hourly', path: 'metadata-yaml/L3-DWS/dws_cell_hourly.yaml', content: 'table_name: dws_cell_hourly' }] }))
-  await page.route('**/api/yaml/preview/dws_cell_hourly', (route) => json(route, { table: 'dws_cell_hourly', path: 'metadata-yaml/L3-DWS/dws_cell_hourly.yaml', content: 'table_name: dws_cell_hourly' }))
-  await page.route('**/api/metadata/impact**', (route) => json(route, { table: 'dws_cell_hourly', field: null, has_downstream: false, affected_tables: [], downstream: [] }))
+  await page.route('**/api/yaml/export**', (route) =>
+    json(route, {
+      table: null,
+      files: [
+        {
+          table: 'dws_cell_hourly',
+          path: 'metadata-yaml/L3-DWS/dws_cell_hourly.yaml',
+          content: 'table_name: dws_cell_hourly',
+        },
+      ],
+    }),
+  )
+  await page.route('**/api/yaml/preview/dws_cell_hourly', (route) =>
+    json(route, {
+      table: 'dws_cell_hourly',
+      path: 'metadata-yaml/L3-DWS/dws_cell_hourly.yaml',
+      content: 'table_name: dws_cell_hourly',
+    }),
+  )
+  await page.route('**/api/metadata/impact**', (route) =>
+    json(route, { table: 'dws_cell_hourly', field: null, has_downstream: false, affected_tables: [], downstream: [] }),
+  )
   await page.route('**/api/lineage/graph**', (route) => json(route, lineageGraph))
   await page.route('**/api/lineage/sql/preview', (route) => json(route, lineageSqlPreview))
   await page.route('**/api/lineage/sql/import/preview', (route) => json(route, lineageSqlImportPreview))

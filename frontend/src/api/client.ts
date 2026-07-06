@@ -8,6 +8,8 @@ export type TableSummary = {
   storage_type: string
   description: string
   field_count: number
+  category?: CategoryRef | null
+  tags?: TagRef[]
 }
 
 export type UpstreamRef = {
@@ -39,6 +41,103 @@ export type CreateTablePayload = {
 }
 
 export type UpdateTablePayload = Partial<Pick<CreateTablePayload, 'layer' | 'storage_type' | 'description'>>
+
+export type CategoryRef = {
+  id: string
+  code: string
+  name: string
+  path: string[]
+  active: boolean
+}
+
+export type TagRef = {
+  id: string
+  code: string
+  name: string
+  group_id?: string
+  group_name?: string
+  active: boolean
+}
+
+export type CategoryNode = {
+  id: string
+  code: string
+  name: string
+  level: number
+  sort_order: number
+  protected: boolean
+  active: boolean
+  table_count: number
+  children: CategoryNode[]
+}
+
+export type TagItem = {
+  id: string
+  code: string
+  name: string
+  sort_order: number
+  active: boolean
+}
+
+export type TagGroup = {
+  id: string
+  code: string
+  name: string
+  sort_order: number
+  active: boolean
+  tags: TagItem[]
+}
+
+export type TableClassificationPayload = {
+  category_id: string
+  tag_ids: string[]
+}
+
+export type CreateCategoryPayload = {
+  code: string
+  name: string
+  parent_id?: string | null
+  sort_order?: number
+  active?: boolean
+}
+
+export type UpdateCategoryPayload = {
+  name?: string
+  sort_order?: number
+}
+
+export type MoveCategoryPayload = {
+  parent_id: string
+}
+
+export type StatusPayload = {
+  active: boolean
+}
+
+export type CreateTagGroupPayload = {
+  code: string
+  name: string
+  sort_order?: number
+  active?: boolean
+}
+
+export type UpdateTagGroupPayload = {
+  name?: string
+  sort_order?: number
+}
+
+export type CreateTagPayload = {
+  group_id: string
+  code: string
+  name: string
+  sort_order?: number
+  active?: boolean
+}
+
+export type UpdateTagPayload = {
+  name?: string
+  sort_order?: number
+}
 
 export type CreateFieldPayload = {
   table_id: string
@@ -215,9 +314,17 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-function qs(params: Record<string, string | number | boolean | undefined | null>) {
+type QueryValue = string | number | boolean | string[] | undefined | null
+
+function qs(params: Record<string, QueryValue>) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== '') search.append(key, item)
+      })
+      return
+    }
     if (value !== undefined && value !== null && value !== '') search.set(key, String(value))
   })
   const out = search.toString()
@@ -225,7 +332,17 @@ function qs(params: Record<string, string | number | boolean | undefined | null>
 }
 
 export const api = {
-  tables: (params: { layer?: string; search?: string } = {}) =>
+  tables: (
+    params: {
+      layer?: string
+      search?: string
+      category_id?: string
+      include_children?: boolean
+      tag_ids?: string[]
+      tag_match?: 'any' | 'all'
+      uncategorized?: boolean
+    } = {},
+  ) =>
     fetchJson<TableSummary[]>(`/api/tables${qs(params)}`),
   table: (id: string) => fetchJson<TableResponse>(`/api/tables/${id}`),
   createTable: (payload: CreateTablePayload) =>
@@ -238,9 +355,61 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  updateTableClassification: (id: string, payload: TableClassificationPayload) =>
+    fetchJson<TableResponse>(`/api/tables/${id}/classification`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   deleteTable: (id: string) =>
     fetch(`${API_BASE}/api/tables/${id}`, { method: 'DELETE' }).then((res) => {
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+    }),
+  categoriesTree: () => fetchJson<CategoryNode[]>('/api/metadata/categories/tree'),
+  createCategory: (payload: CreateCategoryPayload) =>
+    fetchJson<CategoryNode>('/api/metadata/categories', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateCategory: (id: string, payload: UpdateCategoryPayload) =>
+    fetchJson<CategoryNode>(`/api/metadata/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  moveCategory: (id: string, payload: MoveCategoryPayload) =>
+    fetchJson<CategoryNode>(`/api/metadata/categories/${id}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  updateCategoryStatus: (id: string, payload: StatusPayload) =>
+    fetchJson<CategoryNode>(`/api/metadata/categories/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  tags: () => fetchJson<TagGroup[]>('/api/metadata/tags'),
+  createTagGroup: (payload: CreateTagGroupPayload) =>
+    fetchJson<TagGroup>('/api/metadata/tag-groups', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateTagGroup: (id: string, payload: UpdateTagGroupPayload) =>
+    fetchJson<TagGroup>(`/api/metadata/tag-groups/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  createTag: (payload: CreateTagPayload) =>
+    fetchJson<TagItem>('/api/metadata/tags', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateTag: (id: string, payload: UpdateTagPayload) =>
+    fetchJson<TagItem>(`/api/metadata/tags/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  updateTagStatus: (id: string, payload: StatusPayload) =>
+    fetchJson<TagItem>(`/api/metadata/tags/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     }),
   createField: (payload: CreateFieldPayload) =>
     fetchJson<FieldResponse>('/api/fields', {
