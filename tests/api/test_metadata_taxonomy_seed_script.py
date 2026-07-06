@@ -33,10 +33,14 @@ def test_table_classification_matches_taxonomy_by_code():
     source = _seed_script_source()
     assert 'classification["category_code"]' in source
     assert 'classification["tag_codes"]' in source
+    assert 'code=tag["code"]' in source
+    assert 'id=_tag_id(tag["code"])' in source
     assert "MetaCategory {code: $category_code}" in source
     assert "MetaTag {code: $tag_code}" in source
     assert "_category_path_code_map" not in source
     assert "_tag_name_code_map" not in source
+    assert '_tag_code(tag["name"])' not in source
+    assert 'replace(" ", "-")' not in source
     assert "MetaCategory {name: $root_name}" not in source
     assert "MetaCategory {name: $child_name}" not in source
     assert "MetaTag {name: $tag_name}" not in source

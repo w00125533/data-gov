@@ -34,12 +34,8 @@ def _tag_group_id(code: str) -> str:
     return f"tag-group:{code}"
 
 
-def _tag_code(name: str) -> str:
-    return "tag:" + name.strip().lower().replace(" ", "-")
-
-
-def _tag_id(name: str) -> str:
-    return _tag_code(name)
+def _tag_id(code: str) -> str:
+    return f"tag:{code}"
 
 
 def seed_taxonomy() -> tuple[int, int, int]:
@@ -112,7 +108,6 @@ def seed_taxonomy() -> tuple[int, int, int]:
         group_count += 1
 
         for tag_index, tag in enumerate(group["tags"], start=1):
-            tag_code = _tag_code(tag["name"])
             run_query(
                 """
                 MATCH (g:MetaTagGroup {code: $group_code})
@@ -126,8 +121,8 @@ def seed_taxonomy() -> tuple[int, int, int]:
                 MERGE (g)-[:HAS_TAG]->(tag)
                 """,
                 group_code=group["code"],
-                id=_tag_id(tag["name"]),
-                code=tag_code,
+                id=_tag_id(tag["code"]),
+                code=tag["code"],
                 name=tag["name"],
                 sort_order=tag_index,
             )
