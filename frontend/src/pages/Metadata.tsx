@@ -27,10 +27,11 @@ import {
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   api,
+  type CategoryNode,
   type CategoryRef,
   type CreateFieldPayload,
   type CreateTablePayload,
@@ -38,12 +39,14 @@ import {
   type Layer,
   type TableResponse,
   type TableSummary,
+  type TagGroup,
   type TagRef,
   type UpdateFieldPayload,
   type UpstreamRef,
 } from '../api/client'
 import FieldUpstreamEditor from '../components/FieldUpstreamEditor'
 import MetadataTaxonomyPanel from '../components/MetadataTaxonomyPanel'
+import MetadataTaxonomyDrawer from '../components/MetadataTaxonomyDrawer'
 
 const layers: Array<Layer | 'ALL'> = ['ALL', 'ODS', 'DWD', 'DWS', 'ADS', 'EVAL']
 const fieldTypes = ['STRING', 'INT', 'BIGINT', 'DOUBLE', 'TIMESTAMP', 'DATE']
@@ -55,6 +58,7 @@ const taxonomyLabels: Record<string, string> = {
   'network.quality': '质量',
   'source-data': '源数据',
   'source-data.chr': 'CHR',
+  'network-domain': '网络域',
 }
 
 function taxonomyLabel(item: { code: string; name: string }) {
@@ -76,7 +80,31 @@ function tagLabel(tag: TagRef) {
   return taxonomyLabel(tag)
 }
 
+function categoryLeafOptions(categories: CategoryNode[]) {
+  return categories.flatMap((root) =>
+    root.children
+      .filter((child) => child.active)
+      .map((child) => ({
+        value: child.id,
+        label: `${taxonomyLabel(root)} / ${taxonomyLabel(child)}`,
+      })),
+  )
+}
+
+function activeTagOptions(tagGroups: TagGroup[]) {
+  return tagGroups.flatMap((group) =>
+    group.tags
+      .filter((tag) => group.active && tag.active)
+      .map((tag) => ({
+        value: tag.id,
+        label: `${taxonomyLabel(tag)} · ${taxonomyLabel(group)}`,
+      })),
+  )
+}
+
 type TableFormValues = CreateTablePayload & {
+  category_id?: string
+  tag_ids?: string[]
   fields?: Array<{
     name?: string
     data_type?: string
@@ -131,6 +159,9 @@ export default function Metadata() {
     queryFn: api.tags,
   })
 
+  const categoryOptions = useMemo(() => categoryLeafOptions(categoriesQuery.data ?? []), [categoriesQuery.data])
+  const tagOptions = useMemo(() => activeTagOptions(tagsQuery.data ?? []), [tagsQuery.data])
+
   const tableQuery = useQuery({
     queryKey: ['tables', appliedLayer, appliedSearch, appliedCategoryId, appliedIncludeChildren, appliedTagIds, appliedTagMatch],
     queryFn: () => api.tables({
@@ -163,6 +194,7 @@ export default function Metadata() {
     queryClient.invalidateQueries({ queryKey: ['tables'] })
     if (table?.id) {
       setSelected(table)
+      queryClient.setQueryData(['table', table.id], table)
       queryClient.invalidateQueries({ queryKey: ['table', table.id] })
     } else if (selectedTable?.id) {
       queryClient.invalidateQueries({ queryKey: ['table', selectedTable.id] })
@@ -262,12 +294,14 @@ export default function Metadata() {
       storage_type: values.storage_type,
       description: values.description,
     }),
-    onSuccess: (table) => {
-      apiMessage.success('表信息已更新')
-      setTableModal(undefined)
-      refreshMetadata(table)
-    },
-    onError: (error) => apiMessage.error(`更新失败: ${(error as Error).message}`),
+  })
+
+  const updateClassificationMutation = useMutation({
+    mutationFn: (values: TableFormValues) =>
+      api.updateTableClassification(detailQuery.data!.id, {
+        category_id: values.category_id!,
+        tag_ids: values.tag_ids ?? [],
+      }),
   })
 
   const schemaApplyMutation = useMutation({
@@ -404,6 +438,8 @@ export default function Metadata() {
       layer: detailQuery.data.layer,
       storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
       description: detailQuery.data.description,
+      category_id: detailQuery.data.category?.id,
+      tag_ids: detailQuery.data.tags?.map((tag) => tag.id) ?? [],
     })
     setTableModal('edit')
   }
@@ -411,7 +447,21 @@ export default function Metadata() {
   function submitTable(saveAndExport: boolean) {
     tableForm.validateFields().then((values) => {
       if (tableModal === 'edit') {
-        updateTableMutation.mutate(values)
+        const saveBase = updateTableMutation.mutateAsync(values)
+        const saveClassification = values.category_id
+          ? updateClassificationMutation.mutateAsync(values)
+          : Promise.resolve(undefined)
+
+        Promise.all([saveBase, saveClassification])
+          .then(([table, classifiedTable]) => {
+            apiMessage.success('表信息已更新')
+            setTableModal(undefined)
+            refreshMetadata(classifiedTable ?? table)
+            queryClient.invalidateQueries({ queryKey: ['metadata-categories'] })
+            queryClient.invalidateQueries({ queryKey: ['metadata-categories-tree'] })
+            queryClient.invalidateQueries({ queryKey: ['metadata-tags'] })
+          })
+          .catch((error) => apiMessage.error(`更新失败: ${(error as Error).message}`))
         return
       }
       if (saveAndExport) {
@@ -598,6 +648,12 @@ export default function Metadata() {
               <Descriptions.Item label="优先级">{detailQuery.data.layer_priority}</Descriptions.Item>
               <Descriptions.Item label="存储">{detailQuery.data.storage_type}</Descriptions.Item>
               <Descriptions.Item label="字段数">{detailQuery.data.fields.length}</Descriptions.Item>
+              <Descriptions.Item label="主分类">{categoryPathLabel(selectedTable?.category ?? detailQuery.data.category)}</Descriptions.Item>
+              <Descriptions.Item label="标签">
+                {(selectedTable?.tags ?? detailQuery.data.tags ?? []).length
+                  ? (selectedTable?.tags ?? detailQuery.data.tags ?? []).map((tag) => tagLabel(tag)).join('、')
+                  : '无'}
+              </Descriptions.Item>
             </Descriptions>
             <Table
               style={{ marginTop: 16 }}
@@ -625,8 +681,13 @@ export default function Metadata() {
               保存并导出 YAML
             </Button>
           ) : null,
-          <Button key="save" type="primary" onClick={() => submitTable(false)} loading={createTableMutation.isPending || updateTableMutation.isPending}>
-            保存
+          <Button
+            key="save"
+            type="primary"
+            onClick={() => submitTable(false)}
+            loading={createTableMutation.isPending || updateTableMutation.isPending || updateClassificationMutation.isPending}
+          >
+            {tableModal === 'edit' ? '保存分类' : '保存'}
           </Button>,
         ]}
       >
@@ -637,6 +698,16 @@ export default function Metadata() {
             <Form.Item name="storage_type" label="存储" rules={[{ required: true }]}><Select options={storageTypes.map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
+          {tableModal === 'edit' ? (
+            <>
+              <Form.Item name="category_id" label="主分类">
+                <Select allowClear options={categoryOptions} />
+              </Form.Item>
+              <Form.Item name="tag_ids" label="标签">
+                <Select mode="multiple" allowClear options={tagOptions} />
+              </Form.Item>
+            </>
+          ) : null}
           {tableModal === 'create' ? (
             <Form.List name="fields">
               {(fields, { add, remove }) => (
@@ -660,14 +731,12 @@ export default function Metadata() {
         </Form>
       </Modal>
 
-      <Drawer
-        title="分类与标签管理"
+      <MetadataTaxonomyDrawer
         open={taxonomyDrawerOpen}
+        categories={categoriesQuery.data}
+        tagGroups={tagsQuery.data}
         onClose={() => setTaxonomyDrawerOpen(false)}
-        width={520}
-      >
-        <Typography.Text className="muted">分类与标签管理将在后续任务中提供。</Typography.Text>
-      </Drawer>
+      />
 
       <Drawer
         title={fieldDrawer?.mode === 'edit' ? '编辑字段' : '新建字段'}
