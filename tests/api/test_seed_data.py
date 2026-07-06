@@ -61,6 +61,13 @@ def test_table_classification_covers_all_seed_tables():
         assert classification["category_path"]
         assert len(classification["category_path"]) == 2, table_name
         assert classification["tags"], table_name
+        assert classification["category_code"], table_name
+        assert classification["tag_codes"], table_name
+        assert len(classification["tags"]) == len(classification["tag_codes"]), table_name
+        assert classification["tag_codes"] == [
+            "tag:" + tag_name.strip().lower().replace(" ", "-")
+            for tag_name in classification["tags"]
+        ], table_name
 
 
 def test_table_classification_references_known_categories_and_tags():
@@ -69,7 +76,19 @@ def test_table_classification_references_known_categories_and_tags():
         for root in DEFAULT_CATEGORY_TREE
         for child in root["children"]
     }
+    category_codes = {
+        child["code"]
+        for root in DEFAULT_CATEGORY_TREE
+        for child in root["children"]
+    }
     tag_names = {tag["name"] for group in DEFAULT_TAG_GROUPS for tag in group["tags"]}
+    tag_codes = {
+        "tag:" + tag["name"].strip().lower().replace(" ", "-")
+        for group in DEFAULT_TAG_GROUPS
+        for tag in group["tags"]
+    }
     for classification in TABLE_CLASSIFICATION.values():
         assert tuple(classification["category_path"]) in category_paths
         assert set(classification["tags"]).issubset(tag_names)
+        assert classification["category_code"] in category_codes
+        assert set(classification["tag_codes"]).issubset(tag_codes)

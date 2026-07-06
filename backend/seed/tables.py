@@ -174,43 +174,63 @@ DEFAULT_TAG_GROUPS: list[dict] = [
 TABLE_CLASSIFICATION: dict[str, dict] = {
     "ods_ue_signal": {
         "category_path": ["源数据", "CHR"],
+        "category_code": "source-data.chr",
         "tags": ["覆盖", "质量", "射频", "标识信息"],
+        "tag_codes": ["tag:覆盖", "tag:质量", "tag:射频", "tag:标识信息"],
     },
     "ods_gnb_alarm": {
         "category_path": ["源数据", "配置"],
+        "category_code": "source-data.config",
         "tags": ["BBU", "电源", "机房", "质量"],
+        "tag_codes": ["tag:bbu", "tag:电源", "tag:机房", "tag:质量"],
     },
     "dwd_session_qos": {
         "category_path": ["网络", "质量"],
+        "category_code": "network.quality",
         "tags": ["速率", "时延", "丢包", "保持", "标识信息"],
+        "tag_codes": ["tag:速率", "tag:时延", "tag:丢包", "tag:保持", "tag:标识信息"],
     },
     "dwd_ho_event": {
         "category_path": ["网络", "移动"],
+        "category_code": "network.mobility",
         "tags": ["保持", "接入", "质量", "标识信息"],
+        "tag_codes": ["tag:保持", "tag:接入", "tag:质量", "tag:标识信息"],
     },
     "dws_cell_hourly": {
         "category_path": ["网络", "覆盖"],
+        "category_code": "network.coverage",
         "tags": ["话务", "速率", "保持", "质量"],
+        "tag_codes": ["tag:话务", "tag:速率", "tag:保持", "tag:质量"],
     },
     "dws_area_traffic": {
         "category_path": ["网络", "话务"],
+        "category_code": "network.traffic",
         "tags": ["容量", "速率", "时延", "活动信息"],
+        "tag_codes": ["tag:容量", "tag:速率", "tag:时延", "tag:活动信息"],
     },
     "ads_cell_profile": {
         "category_path": ["网络", "覆盖"],
+        "category_code": "network.coverage",
         "tags": ["容量", "质量", "射频"],
+        "tag_codes": ["tag:容量", "tag:质量", "tag:射频"],
     },
     "ads_neighbor_pair": {
         "category_path": ["网络", "移动"],
+        "category_code": "network.mobility",
         "tags": ["保持", "质量", "工参"],
+        "tag_codes": ["tag:保持", "tag:质量", "tag:工参"],
     },
     "eval_user_score": {
         "category_path": ["用户", "业务信息"],
+        "category_code": "user.service",
         "tags": ["覆盖", "移动", "业务信息", "活动信息"],
+        "tag_codes": ["tag:覆盖", "tag:移动", "tag:业务信息", "tag:活动信息"],
     },
     "eval_net_health": {
         "category_path": ["网络", "质量"],
+        "category_code": "network.quality",
         "tags": ["覆盖", "话务", "机房", "业务信息"],
+        "tag_codes": ["tag:覆盖", "tag:话务", "tag:机房", "tag:业务信息"],
     },
 }
 

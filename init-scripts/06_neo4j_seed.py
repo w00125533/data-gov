@@ -34,28 +34,12 @@ def _tag_group_id(code: str) -> str:
     return f"tag-group:{code}"
 
 
-def _tag_code(code: str) -> str:
-    return code
+def _tag_code(name: str) -> str:
+    return "tag:" + name.strip().lower().replace(" ", "-")
 
 
-def _tag_id(code: str) -> str:
-    return f"tag:{_tag_code(code)}"
-
-
-def _category_path_code_map() -> dict[tuple[str, str], str]:
-    return {
-        (root["name"], child["name"]): child["code"]
-        for root in DEFAULT_CATEGORY_TREE
-        for child in root["children"]
-    }
-
-
-def _tag_name_code_map() -> dict[str, str]:
-    return {
-        tag["name"]: _tag_code(tag["code"])
-        for group in DEFAULT_TAG_GROUPS
-        for tag in group["tags"]
-    }
+def _tag_id(name: str) -> str:
+    return _tag_code(name)
 
 
 def seed_taxonomy() -> tuple[int, int, int]:
@@ -128,7 +112,7 @@ def seed_taxonomy() -> tuple[int, int, int]:
         group_count += 1
 
         for tag_index, tag in enumerate(group["tags"], start=1):
-            tag_code = _tag_code(tag["code"])
+            tag_code = _tag_code(tag["name"])
             run_query(
                 """
                 MATCH (g:MetaTagGroup {code: $group_code})
@@ -142,7 +126,7 @@ def seed_taxonomy() -> tuple[int, int, int]:
                 MERGE (g)-[:HAS_TAG]->(tag)
                 """,
                 group_code=group["code"],
-                id=_tag_id(tag["code"]),
+                id=_tag_id(tag["name"]),
                 code=tag_code,
                 name=tag["name"],
                 sort_order=tag_index,
@@ -223,11 +207,9 @@ def seed_lineage() -> int:
 
 def seed_table_classification() -> int:
     classified_count = 0
-    category_codes_by_path = _category_path_code_map()
-    tag_codes_by_name = _tag_name_code_map()
     for table_name, classification in TABLE_CLASSIFICATION.items():
-        category_code = category_codes_by_path[tuple(classification["category_path"])]
-        tag_codes = [tag_codes_by_name[tag_name] for tag_name in classification["tags"]]
+        category_code = classification["category_code"]
+        tag_codes = classification["tag_codes"]
         run_query(
             """
             MATCH (t:Table {name: $table})
