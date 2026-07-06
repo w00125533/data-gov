@@ -288,20 +288,28 @@ export default function Metadata() {
     onError: (error) => apiMessage.error(`创建失败: ${(error as Error).message}`),
   })
 
-  const updateTableMutation = useMutation({
-    mutationFn: (values: TableFormValues) => api.updateTable(detailQuery.data!.id, {
-      layer: values.layer,
-      storage_type: values.storage_type,
-      description: values.description,
-    }),
-  })
-
-  const updateClassificationMutation = useMutation({
-    mutationFn: (values: TableFormValues) =>
-      api.updateTableClassification(detailQuery.data!.id, {
+  const editTableMutation = useMutation({
+    mutationFn: async ({ tableId, values }: { tableId: string; values: TableFormValues }) => {
+      await api.updateTable(tableId, {
+        layer: values.layer,
+        storage_type: values.storage_type,
+        description: values.description,
+      })
+      await api.updateTableClassification(tableId, {
         category_id: values.category_id!,
         tag_ids: values.tag_ids ?? [],
-      }),
+      })
+      return api.table(tableId)
+    },
+    onSuccess: (table) => {
+      apiMessage.success('表信息已更新')
+      setTableModal(undefined)
+      refreshMetadata(table)
+      queryClient.invalidateQueries({ queryKey: ['metadata-categories'] })
+      queryClient.invalidateQueries({ queryKey: ['metadata-categories-tree'] })
+      queryClient.invalidateQueries({ queryKey: ['metadata-tags'] })
+    },
+    onError: (error) => apiMessage.error(`更新失败: ${(error as Error).message}`),
   })
 
   const schemaApplyMutation = useMutation({
@@ -447,21 +455,8 @@ export default function Metadata() {
   function submitTable(saveAndExport: boolean) {
     tableForm.validateFields().then((values) => {
       if (tableModal === 'edit') {
-        const saveBase = updateTableMutation.mutateAsync(values)
-        const saveClassification = values.category_id
-          ? updateClassificationMutation.mutateAsync(values)
-          : Promise.resolve(undefined)
-
-        Promise.all([saveBase, saveClassification])
-          .then(([table, classifiedTable]) => {
-            apiMessage.success('表信息已更新')
-            setTableModal(undefined)
-            refreshMetadata(classifiedTable ?? table)
-            queryClient.invalidateQueries({ queryKey: ['metadata-categories'] })
-            queryClient.invalidateQueries({ queryKey: ['metadata-categories-tree'] })
-            queryClient.invalidateQueries({ queryKey: ['metadata-tags'] })
-          })
-          .catch((error) => apiMessage.error(`更新失败: ${(error as Error).message}`))
+        if (!detailQuery.data) return
+        editTableMutation.mutate({ tableId: detailQuery.data.id, values })
         return
       }
       if (saveAndExport) {
@@ -685,7 +680,7 @@ export default function Metadata() {
             key="save"
             type="primary"
             onClick={() => submitTable(false)}
-            loading={createTableMutation.isPending || updateTableMutation.isPending || updateClassificationMutation.isPending}
+            loading={createTableMutation.isPending || editTableMutation.isPending}
           >
             {tableModal === 'edit' ? '保存分类' : '保存'}
           </Button>,
@@ -700,8 +695,8 @@ export default function Metadata() {
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
           {tableModal === 'edit' ? (
             <>
-              <Form.Item name="category_id" label="主分类">
-                <Select allowClear options={categoryOptions} />
+              <Form.Item name="category_id" label="主分类" rules={[{ required: true, message: '请选择主分类' }]}>
+                <Select options={categoryOptions} />
               </Form.Item>
               <Form.Item name="tag_ids" label="标签">
                 <Select mode="multiple" allowClear options={tagOptions} />

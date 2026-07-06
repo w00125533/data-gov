@@ -1,7 +1,7 @@
 import { PlusOutlined } from '@ant-design/icons'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button, Drawer, Form, Input, InputNumber, Select, Space, Switch, Tabs, Typography, message } from 'antd'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { api, type CategoryNode, type TagGroup } from '../api/client'
 
 type MetadataTaxonomyDrawerProps = {
@@ -72,6 +72,20 @@ export default function MetadataTaxonomyDrawer({
     [tagGroups],
   )
 
+  useEffect(() => {
+    if (!open) return
+    if (!categoryForm.getFieldValue('parent_id') && rootOptions[0]) {
+      categoryForm.setFieldValue('parent_id', rootOptions[0].value)
+    }
+  }, [categoryForm, open, rootOptions])
+
+  useEffect(() => {
+    if (!open) return
+    if (!tagForm.getFieldValue('group_id') && groupOptions[0]) {
+      tagForm.setFieldValue('group_id', groupOptions[0].value)
+    }
+  }, [groupOptions, open, tagForm])
+
   function invalidateTaxonomy() {
     return Promise.all([
       queryClient.invalidateQueries({ queryKey: ['metadata-categories'] }),
@@ -95,6 +109,7 @@ export default function MetadataTaxonomyDrawer({
     onSuccess: async () => {
       apiMessage.success('小分类已新增')
       categoryForm.resetFields()
+      categoryForm.setFieldsValue({ parent_id: rootOptions[0]?.value, sort_order: 10 })
       await invalidateTaxonomy()
     },
     onError: (error) => apiMessage.error(`新增小分类失败: ${(error as Error).message}`),
@@ -117,6 +132,7 @@ export default function MetadataTaxonomyDrawer({
     onSuccess: async () => {
       apiMessage.success('标签组已新增')
       tagGroupForm.resetFields()
+      tagGroupForm.setFieldsValue({ sort_order: 10 })
       await invalidateTaxonomy()
     },
     onError: (error) => apiMessage.error(`新增标签组失败: ${(error as Error).message}`),
@@ -136,6 +152,7 @@ export default function MetadataTaxonomyDrawer({
     onSuccess: async () => {
       apiMessage.success('标签已新增')
       tagForm.resetFields()
+      tagForm.setFieldsValue({ group_id: groupOptions[0]?.value, sort_order: 10 })
       await invalidateTaxonomy()
     },
     onError: (error) => apiMessage.error(`新增标签失败: ${(error as Error).message}`),
@@ -145,6 +162,13 @@ export default function MetadataTaxonomyDrawer({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => api.updateTagStatus(id, { active }),
     onSuccess: () => invalidateTaxonomy(),
     onError: (error) => apiMessage.error(`更新标签状态失败: ${(error as Error).message}`),
+  })
+
+  const updateTagGroupStatusMutation = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      api.updateTagGroup(id, { active } as Parameters<typeof api.updateTagGroup>[1]),
+    onSuccess: () => invalidateTaxonomy(),
+    onError: (error) => apiMessage.error(`更新标签组状态失败: ${(error as Error).message}`),
   })
 
   return (
@@ -161,6 +185,7 @@ export default function MetadataTaxonomyDrawer({
           {
             key: 'categories',
             label: '分类',
+            forceRender: true,
             children: (
               <Space orientation="vertical" size={16} style={{ width: '100%' }}>
                 <Space orientation="vertical" size={10} style={{ width: '100%' }}>
@@ -169,6 +194,7 @@ export default function MetadataTaxonomyDrawer({
                       <Space style={{ justifyContent: 'space-between', width: '100%' }}>
                         <Typography.Text strong>{taxonomyLabel(root)}</Typography.Text>
                         <Switch
+                          aria-label={`${taxonomyLabel(root)} 状态`}
                           checked={root.active}
                           checkedChildren="启用"
                           unCheckedChildren="停用"
@@ -180,6 +206,7 @@ export default function MetadataTaxonomyDrawer({
                           <Space key={child.id} style={{ justifyContent: 'space-between', width: '100%' }}>
                             <span>{taxonomyLabel(child)}</span>
                             <Switch
+                              aria-label={`${taxonomyLabel(child)} 状态`}
                               checked={child.active}
                               size="small"
                               checkedChildren="启用"
@@ -228,17 +255,28 @@ export default function MetadataTaxonomyDrawer({
           {
             key: 'tags',
             label: '标签',
+            forceRender: true,
             children: (
               <Space orientation="vertical" size={16} style={{ width: '100%' }}>
                 <Space orientation="vertical" size={10} style={{ width: '100%' }}>
                   {tagGroups.map((group) => (
                     <div key={group.id}>
-                      <Typography.Text strong>{taxonomyLabel(group)}</Typography.Text>
+                      <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+                        <Typography.Text strong>{taxonomyLabel(group)}</Typography.Text>
+                        <Switch
+                          aria-label={`${taxonomyLabel(group)} 状态`}
+                          checked={group.active}
+                          checkedChildren="启用"
+                          unCheckedChildren="停用"
+                          onChange={(active) => updateTagGroupStatusMutation.mutate({ id: group.id, active })}
+                        />
+                      </Space>
                       <Space orientation="vertical" size={6} style={{ width: '100%', marginTop: 8, paddingLeft: 16 }}>
                         {group.tags.map((tag) => (
                           <Space key={tag.id} style={{ justifyContent: 'space-between', width: '100%' }}>
                             <span>{taxonomyLabel(tag)}</span>
                             <Switch
+                              aria-label={`${taxonomyLabel(tag)} 状态`}
                               checked={tag.active}
                               size="small"
                               checkedChildren="启用"
