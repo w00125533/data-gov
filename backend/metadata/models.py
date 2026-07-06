@@ -31,6 +31,99 @@ class UpdateTableRequest(BaseModel):
     description: Optional[str] = None
 
 
+class CategoryRef(BaseModel):
+    id: str
+    code: str
+    name: str
+    path: list[str] = Field(default_factory=list)
+
+
+class TagRef(BaseModel):
+    id: str
+    code: str
+    name: str
+
+
+class CategoryNodeResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    level: int
+    sort_order: int = 0
+    active: bool = True
+    protected: bool = False
+    table_count: int = 0
+    children: list["CategoryNodeResponse"] = Field(default_factory=list)
+
+
+class TagResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    sort_order: int = 0
+    active: bool = True
+
+
+class TagGroupResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    sort_order: int = 0
+    active: bool = True
+    tags: list[TagResponse] = Field(default_factory=list)
+
+
+class CreateCategoryRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    parent_id: Optional[str] = None
+    sort_order: int = 0
+    active: bool = True
+
+
+class UpdateCategoryRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    sort_order: Optional[int] = None
+
+
+class MoveCategoryRequest(BaseModel):
+    parent_id: str
+
+
+class StatusUpdateRequest(BaseModel):
+    active: bool
+
+
+class CreateTagGroupRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    sort_order: int = 0
+    active: bool = True
+
+
+class UpdateTagGroupRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    sort_order: Optional[int] = None
+
+
+class CreateTagRequest(BaseModel):
+    group_id: str
+    code: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    sort_order: int = 0
+    active: bool = True
+
+
+class UpdateTagRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    sort_order: Optional[int] = None
+
+
+class TableClassificationUpdateRequest(BaseModel):
+    category_id: str
+    tag_ids: list[str] = Field(default_factory=list)
+
+
 class CreateFieldRequest(BaseModel):
     table_id: str
     name: str = Field(min_length=1, max_length=128)
@@ -75,6 +168,8 @@ class TableResponse(BaseModel):
     sql_dialect: Optional[str] = None
     sql_source: Optional[SqlSource] = None
     sql_updated_at: str = ""
+    category: Optional[CategoryRef] = None
+    tags: list[TagRef] = Field(default_factory=list)
 
 
 class TableSummary(BaseModel):
@@ -85,6 +180,8 @@ class TableSummary(BaseModel):
     storage_type: StorageType
     description: str
     field_count: int
+    category: Optional[CategoryRef] = None
+    tags: list[TagRef] = Field(default_factory=list)
 
 
 class LineageEdge(BaseModel):

@@ -13,7 +13,12 @@ from typing import Optional
 from backend.metadata.graph import run_query
 from backend.metadata.lineage_sql import generate_select_sql, parse_select_preview
 from backend.metadata.models import (
+    CategoryNodeResponse,
+    CategoryRef,
+    CreateCategoryRequest,
     CreateFieldRequest,
+    CreateTagGroupRequest,
+    CreateTagRequest,
     CreateTableRequest,
     FieldResponse,
     ImpactResponse,
@@ -27,9 +32,18 @@ from backend.metadata.models import (
     LineageTableEdge,
     LineageTableNode,
     LineageEdgeUpdateRequest,
+    MoveCategoryRequest,
+    StatusUpdateRequest,
+    TableClassificationUpdateRequest,
     TableResponse,
     TableSummary,
+    TagGroupResponse,
+    TagRef,
+    TagResponse,
+    UpdateCategoryRequest,
     UpdateFieldRequest,
+    UpdateTagGroupRequest,
+    UpdateTagRequest,
     UpstreamRef,
 )
 
@@ -38,6 +52,22 @@ LAYER_PRIORITY = {"ODS": 1, "DWD": 2, "DWS": 3, "ADS": 4, "EVAL": 5}
 
 
 class TableNotFound(Exception):
+    pass
+
+
+class CategoryNotFound(Exception):
+    pass
+
+
+class TagNotFound(Exception):
+    pass
+
+
+class TagGroupNotFound(Exception):
+    pass
+
+
+class ProtectedCategoryOperation(Exception):
     pass
 
 
@@ -69,15 +99,131 @@ class CycleDetected(Exception):
 
 # ----------------------- Tables -----------------------
 
-def list_tables(layer: Optional[str] = None, search: Optional[str] = None) -> list[TableSummary]:
+def _category_id(code: str) -> str:
+    return f"category:{code}"
+
+
+def _tag_group_id(code: str) -> str:
+    return f"tag-group:{code}"
+
+
+def _tag_id(code: str) -> str:
+    return f"tag:{code}"
+
+
+def _clean_optional_map(value: Optional[dict]) -> Optional[dict]:
+    if not value or value.get("id") is None:
+        return None
+    return value
+
+
+def _load_table_taxonomy(table_id: str) -> tuple[Optional[CategoryRef], list[TagRef]]:
+    rows = run_query(
+        """
+        MATCH (t:Table {id: $table_id})
+        OPTIONAL MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
+        OPTIONAL MATCH (parent:MetaCategory)-[:HAS_CHILD]->(category)
+        WITH t, category, parent
+        OPTIONAL MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
+        WITH category, parent, tag
+        ORDER BY tag.sort_order, tag.name
+        WITH category, parent,
+             collect(CASE WHEN tag IS NULL THEN null ELSE {
+                 id: tag.id,
+                 code: tag.code,
+                 name: tag.name
+             } END) AS raw_tags
+        RETURN CASE WHEN category IS NULL THEN null ELSE {
+                   id: category.id,
+                   code: category.code,
+                   name: category.name,
+                   path: CASE
+                       WHEN parent IS NULL THEN [category.name]
+                       ELSE [parent.name, category.name]
+                   END
+               } END AS category,
+               [tag IN raw_tags WHERE tag IS NOT NULL AND tag.id IS NOT NULL] AS tags
+        """,
+        table_id=table_id,
+    )
+    if not rows:
+        return None, []
+    category = _clean_optional_map(rows[0].get("category"))
+    tags = [tag for tag in rows[0].get("tags", []) if tag.get("id") is not None]
+    return (
+        CategoryRef(**category) if category is not None else None,
+        [TagRef(**tag) for tag in tags],
+    )
+
+
+def list_tables(
+    layer: Optional[str] = None,
+    search: Optional[str] = None,
+    category_id: Optional[str] = None,
+    include_children: bool = True,
+    tag_ids: Optional[list[str]] = None,
+    tag_match: str = "any",
+    uncategorized: bool = False,
+) -> list[TableSummary]:
+    if tag_match not in ("any", "all"):
+        raise ValueError(f"tag_match must be 'any' or 'all', got {tag_match!r}")
+
     cypher_filters = []
     params: dict = {}
     if layer:
         cypher_filters.append("t.layer = $layer")
         params["layer"] = layer
     if search:
-        cypher_filters.append("toLower(t.name) CONTAINS toLower($search) OR toLower(t.description) CONTAINS toLower($search)")
+        cypher_filters.append("(toLower(t.name) CONTAINS toLower($search) OR toLower(t.description) CONTAINS toLower($search))")
         params["search"] = search
+    if category_id:
+        cypher_filters.append(
+            """
+            EXISTS {
+                MATCH (selected:MetaCategory {id: $category_id})
+                MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
+                WHERE category.id = selected.id
+                   OR ($include_children = true AND EXISTS {
+                       MATCH (selected)-[:HAS_CHILD]->(category)
+                   })
+            }
+            """
+        )
+        params["category_id"] = category_id
+        params["include_children"] = include_children
+    if uncategorized:
+        cypher_filters.append("NOT EXISTS { MATCH (t)-[:IN_CATEGORY]->(:MetaCategory) }")
+    normalized_tag_ids = tag_ids or []
+    if normalized_tag_ids:
+        params["tag_ids"] = normalized_tag_ids
+        params["tag_category_ids"] = [
+            f"category:{tag_id.removeprefix('tag:')}"
+            for tag_id in normalized_tag_ids
+        ]
+        if tag_match == "any":
+            cypher_filters.append(
+                """
+                (EXISTS {
+                    MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
+                    WHERE tag.id IN $tag_ids
+                } OR EXISTS {
+                    MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
+                    WHERE category.id IN $tag_category_ids
+                })
+                """
+            )
+        else:
+            cypher_filters.append(
+                """
+                all(idx IN range(0, size($tag_ids) - 1) WHERE EXISTS {
+                    MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
+                    WHERE tag.id = $tag_ids[idx]
+                } OR EXISTS {
+                    MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
+                    WHERE category.id = $tag_category_ids[idx]
+                })
+                """
+            )
     where = ("WHERE " + " AND ".join(cypher_filters)) if cypher_filters else ""
     rows = run_query(
         f"""
@@ -90,7 +236,11 @@ def list_tables(layer: Optional[str] = None, search: Optional[str] = None) -> li
         """,
         **params,
     )
-    return [TableSummary(**r) for r in rows]
+    summaries: list[TableSummary] = []
+    for row in rows:
+        category, tags = _load_table_taxonomy(row["id"])
+        summaries.append(TableSummary(**row, category=category, tags=tags))
+    return summaries
 
 
 def get_table_by_name(name: str, optional: bool = False) -> Optional[TableResponse]:
@@ -128,6 +278,7 @@ def get_table_by_name(name: str, optional: bool = False) -> Optional[TableRespon
             expression=f["expression"] or None, description=f["description"] or "",
             version=f["version"], upstream=upstream,
         ))
+    category, tags = _load_table_taxonomy(row["id"])
     return TableResponse(
         id=row["id"], name=row["name"], layer=row["layer"], layer_priority=row["layer_priority"],
         storage_type=row["storage_type"], description=row["description"], fields=fields,
@@ -135,6 +286,8 @@ def get_table_by_name(name: str, optional: bool = False) -> Optional[TableRespon
         sql_dialect=row.get("sql_dialect") or None,
         sql_source=row.get("sql_source") or None,
         sql_updated_at=_serialize_neo4j_datetime(row.get("sql_updated_at")),
+        category=category,
+        tags=tags,
     )
 
 
@@ -163,6 +316,500 @@ def create_table(req: CreateTableRequest) -> TableResponse:
 
 def delete_table(name: str) -> None:
     run_query("MATCH (t:Table {name: $name}) DETACH DELETE t", name=name)
+
+
+# ----------------------- Taxonomy -----------------------
+
+def _category_node_from_row(row: dict, children: Optional[list[CategoryNodeResponse]] = None) -> CategoryNodeResponse:
+    return CategoryNodeResponse(
+        id=row["id"],
+        code=row["code"],
+        name=row["name"],
+        level=row["level"],
+        sort_order=row.get("sort_order") or 0,
+        active=row.get("active", True),
+        protected=row.get("protected", False),
+        table_count=row.get("table_count") or 0,
+        children=children or [],
+    )
+
+
+def _load_category_node(category_id: str) -> CategoryNodeResponse:
+    rows = run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        OPTIONAL MATCH (category)<-[:IN_CATEGORY]-(table:Table)
+        RETURN category.id AS id,
+               category.code AS code,
+               category.name AS name,
+               category.level AS level,
+               coalesce(category.sort_order, 0) AS sort_order,
+               coalesce(category.active, true) AS active,
+               coalesce(category.protected, false) AS protected,
+               count(DISTINCT table) AS table_count
+        """,
+        category_id=category_id,
+    )
+    if not rows:
+        raise CategoryNotFound(category_id)
+    return _category_node_from_row(rows[0])
+
+
+def _load_tag_group(group_id: str) -> TagGroupResponse:
+    rows = run_query(
+        """
+        MATCH (group:MetaTagGroup {id: $group_id})
+        OPTIONAL MATCH (group)-[:HAS_TAG]->(tag:MetaTag)
+        WITH group, tag
+        ORDER BY tag.sort_order, tag.name
+        WITH group,
+             collect(CASE WHEN tag IS NULL THEN null ELSE {
+                 id: tag.id,
+                 code: tag.code,
+                 name: tag.name,
+                 sort_order: coalesce(tag.sort_order, 0),
+                 active: coalesce(tag.active, true)
+             } END) AS raw_tags
+        RETURN group.id AS id,
+               group.code AS code,
+               group.name AS name,
+               coalesce(group.sort_order, 0) AS sort_order,
+               coalesce(group.active, true) AS active,
+               [tag IN raw_tags WHERE tag IS NOT NULL AND tag.id IS NOT NULL] AS tags
+        """,
+        group_id=group_id,
+    )
+    if not rows:
+        raise TagGroupNotFound(group_id)
+    row = rows[0]
+    return TagGroupResponse(
+        id=row["id"],
+        code=row["code"],
+        name=row["name"],
+        sort_order=row["sort_order"],
+        active=row["active"],
+        tags=[TagResponse(**tag) for tag in row["tags"]],
+    )
+
+
+def _load_tag(tag_id: str) -> TagResponse:
+    rows = run_query(
+        """
+        MATCH (tag:MetaTag {id: $tag_id})
+        RETURN tag.id AS id,
+               tag.code AS code,
+               tag.name AS name,
+               coalesce(tag.sort_order, 0) AS sort_order,
+               coalesce(tag.active, true) AS active
+        """,
+        tag_id=tag_id,
+    )
+    if not rows:
+        raise TagNotFound(tag_id)
+    return TagResponse(**rows[0])
+
+
+def list_categories_tree() -> list[CategoryNodeResponse]:
+    rows = run_query(
+        """
+        MATCH (root:MetaCategory)
+        WHERE coalesce(root.level, 1) = 1
+        OPTIONAL MATCH (root)<-[:IN_CATEGORY]-(root_table:Table)
+        WITH root, count(DISTINCT root_table) AS root_table_count
+        OPTIONAL MATCH (root)-[:HAS_CHILD]->(child:MetaCategory)
+        OPTIONAL MATCH (child)<-[:IN_CATEGORY]-(child_table:Table)
+        WITH root, root_table_count, child, count(DISTINCT child_table) AS child_table_count
+        ORDER BY root.sort_order, root.name, child.sort_order, child.name
+        WITH root, root_table_count,
+             collect(CASE WHEN child IS NULL THEN null ELSE {
+                 id: child.id,
+                 code: child.code,
+                 name: child.name,
+                 level: child.level,
+                 sort_order: coalesce(child.sort_order, 0),
+                 active: coalesce(child.active, true),
+                 protected: coalesce(child.protected, false),
+                 table_count: child_table_count
+             } END) AS raw_children
+        RETURN root.id AS id,
+               root.code AS code,
+               root.name AS name,
+               root.level AS level,
+               coalesce(root.sort_order, 0) AS sort_order,
+               coalesce(root.active, true) AS active,
+               coalesce(root.protected, false) AS protected,
+               root_table_count AS table_count,
+               [child IN raw_children WHERE child IS NOT NULL AND child.id IS NOT NULL] AS children
+        ORDER BY sort_order, name
+        """
+    )
+    roots: list[CategoryNodeResponse] = []
+    for row in rows:
+        children = [_category_node_from_row(child) for child in row["children"]]
+        roots.append(_category_node_from_row(row, children=children))
+    return roots
+
+
+def list_tags() -> list[TagGroupResponse]:
+    rows = run_query(
+        """
+        MATCH (group:MetaTagGroup)
+        OPTIONAL MATCH (group)-[:HAS_TAG]->(tag:MetaTag)
+        WITH group, tag
+        ORDER BY group.sort_order, group.name, tag.sort_order, tag.name
+        WITH group,
+             collect(CASE WHEN tag IS NULL THEN null ELSE {
+                 id: tag.id,
+                 code: tag.code,
+                 name: tag.name,
+                 sort_order: coalesce(tag.sort_order, 0),
+                 active: coalesce(tag.active, true)
+             } END) AS raw_tags
+        RETURN group.id AS id,
+               group.code AS code,
+               group.name AS name,
+               coalesce(group.sort_order, 0) AS sort_order,
+               coalesce(group.active, true) AS active,
+               [tag IN raw_tags WHERE tag IS NOT NULL AND tag.id IS NOT NULL] AS tags
+        ORDER BY sort_order, name
+        """
+    )
+    return [
+        TagGroupResponse(
+            id=row["id"],
+            code=row["code"],
+            name=row["name"],
+            sort_order=row["sort_order"],
+            active=row["active"],
+            tags=[TagResponse(**tag) for tag in row["tags"]],
+        )
+        for row in rows
+    ]
+
+
+def _validate_active_level2_category(category_id: str) -> None:
+    rows = run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        WHERE coalesce(category.active, true) = true
+          AND category.level = 2
+        RETURN category.id AS id
+        """,
+        category_id=category_id,
+    )
+    if not rows:
+        raise CategoryNotFound(category_id)
+
+
+def _validate_active_tags(tag_ids: list[str]) -> None:
+    if not tag_ids:
+        return
+    unique_tag_ids = list(dict.fromkeys(tag_ids))
+    rows = run_query(
+        """
+        MATCH (tag:MetaTag)
+        WHERE tag.id IN $tag_ids
+          AND coalesce(tag.active, true) = true
+        RETURN collect(tag.id) AS found_ids
+        """,
+        tag_ids=unique_tag_ids,
+    )
+    found_ids = set(rows[0]["found_ids"] if rows else [])
+    missing = [tag_id for tag_id in unique_tag_ids if tag_id not in found_ids]
+    if missing:
+        raise TagNotFound(missing[0])
+
+
+def update_table_classification(table_id: str, req: TableClassificationUpdateRequest) -> TableResponse:
+    table_rows = run_query("MATCH (t:Table {id: $table_id}) RETURN t.name AS name", table_id=table_id)
+    if not table_rows:
+        raise TableNotFound(table_id)
+
+    _validate_active_level2_category(req.category_id)
+    _validate_active_tags(req.tag_ids)
+
+    unique_tag_ids = list(dict.fromkeys(req.tag_ids))
+    run_query(
+        """
+        MATCH (t:Table {id: $table_id})
+        MATCH (category:MetaCategory {id: $category_id})
+        OPTIONAL MATCH (t)-[old_category:IN_CATEGORY]->(:MetaCategory)
+        DELETE old_category
+        MERGE (t)-[:IN_CATEGORY]->(category)
+        WITH t
+        OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)
+        DELETE old_tag
+        """,
+        table_id=table_id,
+        category_id=req.category_id,
+    )
+    for tag_id in unique_tag_ids:
+        run_query(
+            """
+            MATCH (t:Table {id: $table_id})
+            MATCH (tag:MetaTag {id: $tag_id})
+            MERGE (t)-[:TAGGED_WITH]->(tag)
+            """,
+            table_id=table_id,
+            tag_id=tag_id,
+        )
+    run_query(
+        """
+        MATCH (t:Table {id: $table_id})
+        CREATE (:Change {
+            id: $change_id,
+            operation: $operation,
+            table_name: t.name,
+            target_type: $target_type,
+            target_id: t.id,
+            changed_at: datetime(),
+            commit_hash: $commit_hash
+        })
+        """,
+        table_id=table_id,
+        change_id=str(uuid.uuid4()),
+        operation="table_classification_update",
+        target_type="table",
+        commit_hash="",
+    )
+    return get_table_by_name(table_rows[0]["name"])
+
+
+def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
+    category_id = _category_id(req.code)
+    if req.parent_id is None:
+        level = 1
+        run_query(
+            """
+            MERGE (category:MetaCategory {code: $code})
+            ON CREATE SET category.id = $id,
+                          category.created_at = datetime()
+            SET category.name = $name,
+                category.level = $level,
+                category.sort_order = $sort_order,
+                category.active = $active,
+                category.protected = false,
+                category.updated_at = datetime()
+            """,
+            id=category_id,
+            code=req.code,
+            name=req.name,
+            level=level,
+            sort_order=req.sort_order,
+            active=req.active,
+        )
+        return _load_category_node(category_id)
+
+    parent_rows = run_query(
+        "MATCH (parent:MetaCategory {id: $parent_id}) RETURN parent.level AS level",
+        parent_id=req.parent_id,
+    )
+    if not parent_rows:
+        raise CategoryNotFound(req.parent_id)
+    level = int(parent_rows[0]["level"]) + 1
+    run_query(
+        """
+        MATCH (parent:MetaCategory {id: $parent_id})
+        MERGE (category:MetaCategory {code: $code})
+        ON CREATE SET category.id = $id,
+                      category.created_at = datetime()
+        SET category.name = $name,
+            category.level = $level,
+            category.sort_order = $sort_order,
+            category.active = $active,
+            category.protected = false,
+            category.updated_at = datetime()
+        MERGE (parent)-[:HAS_CHILD]->(category)
+        """,
+        parent_id=req.parent_id,
+        id=category_id,
+        code=req.code,
+        name=req.name,
+        level=level,
+        sort_order=req.sort_order,
+        active=req.active,
+    )
+    return _load_category_node(category_id)
+
+
+def update_category(category_id: str, req: UpdateCategoryRequest) -> CategoryNodeResponse:
+    if not run_query("MATCH (:MetaCategory {id: $category_id}) RETURN 1 AS found", category_id=category_id):
+        raise CategoryNotFound(category_id)
+    sets: list[str] = []
+    params: dict = {"category_id": category_id}
+    if req.name is not None:
+        sets.append("category.name = $name")
+        params["name"] = req.name
+    if req.sort_order is not None:
+        sets.append("category.sort_order = $sort_order")
+        params["sort_order"] = req.sort_order
+    if sets:
+        sets.append("category.updated_at = datetime()")
+        run_query(
+            f"MATCH (category:MetaCategory {{id: $category_id}}) SET {', '.join(sets)}",
+            **params,
+        )
+    return _load_category_node(category_id)
+
+
+def move_category(category_id: str, req: MoveCategoryRequest) -> CategoryNodeResponse:
+    category_rows = run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        RETURN coalesce(category.protected, false) AS protected
+        """,
+        category_id=category_id,
+    )
+    if not category_rows:
+        raise CategoryNotFound(category_id)
+    if category_rows[0]["protected"]:
+        raise ProtectedCategoryOperation(category_id)
+    parent_rows = run_query(
+        "MATCH (parent:MetaCategory {id: $parent_id}) RETURN parent.level AS level",
+        parent_id=req.parent_id,
+    )
+    if not parent_rows:
+        raise CategoryNotFound(req.parent_id)
+    run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        MATCH (parent:MetaCategory {id: $parent_id})
+        OPTIONAL MATCH (:MetaCategory)-[old_parent:HAS_CHILD]->(category)
+        DELETE old_parent
+        MERGE (parent)-[:HAS_CHILD]->(category)
+        SET category.level = parent.level + 1,
+            category.updated_at = datetime()
+        """,
+        category_id=category_id,
+        parent_id=req.parent_id,
+    )
+    return _load_category_node(category_id)
+
+
+def update_category_status(category_id: str, req: StatusUpdateRequest) -> CategoryNodeResponse:
+    rows = run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        RETURN coalesce(category.protected, false) AS protected
+        """,
+        category_id=category_id,
+    )
+    if not rows:
+        raise CategoryNotFound(category_id)
+    if rows[0]["protected"] and req.active is False:
+        raise ProtectedCategoryOperation(category_id)
+    run_query(
+        """
+        MATCH (category:MetaCategory {id: $category_id})
+        SET category.active = $active,
+            category.updated_at = datetime()
+        """,
+        category_id=category_id,
+        active=req.active,
+    )
+    return _load_category_node(category_id)
+
+
+def create_tag_group(req: CreateTagGroupRequest) -> TagGroupResponse:
+    group_id = _tag_group_id(req.code)
+    run_query(
+        """
+        MERGE (group:MetaTagGroup {code: $code})
+        ON CREATE SET group.id = $id,
+                      group.created_at = datetime()
+        SET group.name = $name,
+            group.sort_order = $sort_order,
+            group.active = $active,
+            group.updated_at = datetime()
+        """,
+        id=group_id,
+        code=req.code,
+        name=req.name,
+        sort_order=req.sort_order,
+        active=req.active,
+    )
+    return _load_tag_group(group_id)
+
+
+def update_tag_group(group_id: str, req: UpdateTagGroupRequest) -> TagGroupResponse:
+    if not run_query("MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found", group_id=group_id):
+        raise TagGroupNotFound(group_id)
+    sets: list[str] = []
+    params: dict = {"group_id": group_id}
+    if req.name is not None:
+        sets.append("group.name = $name")
+        params["name"] = req.name
+    if req.sort_order is not None:
+        sets.append("group.sort_order = $sort_order")
+        params["sort_order"] = req.sort_order
+    if sets:
+        sets.append("group.updated_at = datetime()")
+        run_query(
+            f"MATCH (group:MetaTagGroup {{id: $group_id}}) SET {', '.join(sets)}",
+            **params,
+        )
+    return _load_tag_group(group_id)
+
+
+def create_tag(req: CreateTagRequest) -> TagResponse:
+    if not run_query("MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found", group_id=req.group_id):
+        raise TagGroupNotFound(req.group_id)
+    tag_id = _tag_id(req.code)
+    run_query(
+        """
+        MATCH (group:MetaTagGroup {id: $group_id})
+        MERGE (tag:MetaTag {code: $code})
+        ON CREATE SET tag.id = $id,
+                      tag.created_at = datetime()
+        SET tag.name = $name,
+            tag.sort_order = $sort_order,
+            tag.active = $active,
+            tag.updated_at = datetime()
+        MERGE (group)-[:HAS_TAG]->(tag)
+        """,
+        group_id=req.group_id,
+        id=tag_id,
+        code=req.code,
+        name=req.name,
+        sort_order=req.sort_order,
+        active=req.active,
+    )
+    return _load_tag(tag_id)
+
+
+def update_tag(tag_id: str, req: UpdateTagRequest) -> TagResponse:
+    if not run_query("MATCH (:MetaTag {id: $tag_id}) RETURN 1 AS found", tag_id=tag_id):
+        raise TagNotFound(tag_id)
+    sets: list[str] = []
+    params: dict = {"tag_id": tag_id}
+    if req.name is not None:
+        sets.append("tag.name = $name")
+        params["name"] = req.name
+    if req.sort_order is not None:
+        sets.append("tag.sort_order = $sort_order")
+        params["sort_order"] = req.sort_order
+    if sets:
+        sets.append("tag.updated_at = datetime()")
+        run_query(
+            f"MATCH (tag:MetaTag {{id: $tag_id}}) SET {', '.join(sets)}",
+            **params,
+        )
+    return _load_tag(tag_id)
+
+
+def update_tag_status(tag_id: str, req: StatusUpdateRequest) -> TagResponse:
+    if not run_query("MATCH (:MetaTag {id: $tag_id}) RETURN 1 AS found", tag_id=tag_id):
+        raise TagNotFound(tag_id)
+    run_query(
+        """
+        MATCH (tag:MetaTag {id: $tag_id})
+        SET tag.active = $active,
+            tag.updated_at = datetime()
+        """,
+        tag_id=tag_id,
+        active=req.active,
+    )
+    return _load_tag(tag_id)
 
 
 # ----------------------- Fields -----------------------
