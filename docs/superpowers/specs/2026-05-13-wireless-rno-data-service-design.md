@@ -388,6 +388,7 @@ CREATE INDEX tag_name_idx FOR (t:MetaTag) ON (t.name);
 - 分类树：`MATCH p=(root:MetaCategory {level:1})-[:HAS_CHILD*0..]->(c:MetaCategory) RETURN p ORDER BY root.sort_order, c.sort_order`
 - 分类过滤表：`MATCH (t:Table)-[:IN_CATEGORY]->(c:MetaCategory)`；勾选“含子类”时先展开目标分类后代再过滤
 - 标签过滤表：`MATCH (t:Table)-[:TAGGED_WITH]->(tag:MetaTag)`；`tag_match=all` 时要求表拥有全部选中标签，`tag_match=any` 时拥有任一标签即可
+- 分类和标签 API 使用稳定 ID：分类为 `category:<MetaCategory.code>`，标签为 `tag:<MetaTag.code>`；展示名称可编辑但不作为关系写入和过滤依据。
 
 ### 2.4 元数据演进策略
 
@@ -1866,7 +1867,7 @@ context_prompt = """
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/tables` | 表列表 (支持 ?layer= ?storage= ?search= ?category_id= ?include_descendants=true ?tag_ids= ?tag_match=any/all) |
+| GET | `/api/tables` | 表列表 (支持 ?layer= ?storage= ?search= ?category_id= ?include_children=true ?tag_ids= ?tag_match=any/all) |
 | GET | `/api/tables/:id` | 表详情 + 字段列表 |
 | POST | `/api/tables` | 新建表 |
 | PUT | `/api/tables/:id` | 编辑表 |
