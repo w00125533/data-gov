@@ -9,6 +9,13 @@ def test_neo4j_init_contains_taxonomy_constraints():
     assert "MetaTag" in statements
     assert "category_code_unique" in statements
     assert "tag_code_unique" in statements
+    assert "category_name_idx" in statements
+    assert "category_level_idx" in statements
+    assert "category_sort_idx" in statements
+    assert "tag_name_idx" in statements
+    assert "tag_sort_idx" in statements
+    assert "change_target_type_idx" in statements
+    assert "change_target_id_idx" in statements
 
 
 def test_seed_script_has_taxonomy_seed_function():
