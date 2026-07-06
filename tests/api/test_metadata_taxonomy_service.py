@@ -1,14 +1,23 @@
 import pytest
 
-from backend.metadata.models import TableClassificationUpdateRequest
+from backend.metadata import service
+from backend.metadata.models import (
+    CreateCategoryRequest,
+    MoveCategoryRequest,
+    TableClassificationUpdateRequest,
+)
 from backend.metadata.service import (
+    CategoryAlreadyExists,
+    InvalidCategoryMove,
     CategoryNotFound,
     TableNotFound,
     TagNotFound,
+    create_category,
     get_table_by_name,
     list_categories_tree,
     list_tables,
     list_tags,
+    move_category,
     update_table_classification,
 )
 
@@ -66,13 +75,66 @@ def test_list_tables_filters_by_category_and_tag():
     assert {"dws_cell_hourly", "ads_cell_profile"}.issubset({table.name for table in coverage_tables})
 
     quality_tables = list_tables(tag_ids=["tag:network.quality"], tag_match="any")
-    assert {"dws_cell_hourly", "eval_net_health"}.issubset({table.name for table in quality_tables})
+    quality_names = {table.name for table in quality_tables}
+    assert {"dws_cell_hourly", "ads_neighbor_pair"}.issubset(quality_names)
+    assert "eval_net_health" not in quality_names
 
     quality_coverage_tables = list_tables(
         tag_ids=["tag:network.quality", "tag:network.coverage"],
         tag_match="all",
     )
-    assert "eval_net_health" in {table.name for table in quality_coverage_tables}
+    quality_coverage_names = {table.name for table in quality_coverage_tables}
+    assert "ods_ue_signal" in quality_coverage_names
+    assert "eval_net_health" not in quality_coverage_names
+
+
+def test_create_category_rejects_duplicate_code_without_writing(monkeypatch):
+    calls = []
+
+    def fake_run_query(cypher, **params):
+        calls.append((cypher, params))
+        if "RETURN category.id AS id" in cypher:
+            return [{"id": "category:network.coverage"}]
+        if "MERGE" in cypher or "CREATE" in cypher or "SET" in cypher:
+            raise AssertionError("duplicate category attempted to write")
+        return []
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+
+    with pytest.raises(CategoryAlreadyExists):
+        create_category(
+            CreateCategoryRequest(
+                code="network.coverage",
+                name="coverage duplicate",
+                parent_id="category:network",
+            )
+        )
+
+    assert not any("MERGE" in cypher or "CREATE" in cypher or "SET" in cypher for cypher, _ in calls[1:])
+
+
+def test_move_category_rejects_invalid_level_without_writing(monkeypatch):
+    calls = []
+
+    def fake_run_query(cypher, **params):
+        calls.append((cypher, params))
+        if "category:MetaCategory {id: $category_id}" in cypher:
+            return [{"level": 2, "protected": False}]
+        if "parent:MetaCategory {id: $parent_id}" in cypher:
+            return [{"level": 2}]
+        if "MERGE" in cypher or "DELETE" in cypher or "SET" in cypher:
+            raise AssertionError("invalid category move attempted to write")
+        return []
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+
+    with pytest.raises(InvalidCategoryMove):
+        move_category(
+            "category:network.coverage",
+            MoveCategoryRequest(parent_id="category:network.quality"),
+        )
+
+    assert not any("MERGE" in cypher or "DELETE" in cypher or "SET" in cypher for cypher, _ in calls[2:])
 
 
 @pytest.mark.infra

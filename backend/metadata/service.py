@@ -59,6 +59,14 @@ class CategoryNotFound(Exception):
     pass
 
 
+class CategoryAlreadyExists(Exception):
+    pass
+
+
+class InvalidCategoryMove(Exception):
+    pass
+
+
 class TagNotFound(Exception):
     pass
 
@@ -196,31 +204,21 @@ def list_tables(
     normalized_tag_ids = tag_ids or []
     if normalized_tag_ids:
         params["tag_ids"] = normalized_tag_ids
-        params["tag_category_ids"] = [
-            f"category:{tag_id.removeprefix('tag:')}"
-            for tag_id in normalized_tag_ids
-        ]
         if tag_match == "any":
             cypher_filters.append(
                 """
-                (EXISTS {
+                EXISTS {
                     MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
                     WHERE tag.id IN $tag_ids
-                } OR EXISTS {
-                    MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
-                    WHERE category.id IN $tag_category_ids
-                })
+                }
                 """
             )
         else:
             cypher_filters.append(
                 """
-                all(idx IN range(0, size($tag_ids) - 1) WHERE EXISTS {
+                all(tag_id IN $tag_ids WHERE EXISTS {
                     MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
-                    WHERE tag.id = $tag_ids[idx]
-                } OR EXISTS {
-                    MATCH (t)-[:IN_CATEGORY]->(category:MetaCategory)
-                    WHERE category.id = $tag_category_ids[idx]
+                    WHERE tag.id = tag_id
                 })
                 """
             )
@@ -577,19 +575,28 @@ def update_table_classification(table_id: str, req: TableClassificationUpdateReq
 
 def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
     category_id = _category_id(req.code)
+    existing = run_query(
+        "MATCH (category:MetaCategory {code: $code}) RETURN category.id AS id",
+        code=req.code,
+    )
+    if existing:
+        raise CategoryAlreadyExists(req.code)
+
     if req.parent_id is None:
         level = 1
         run_query(
             """
-            MERGE (category:MetaCategory {code: $code})
-            ON CREATE SET category.id = $id,
-                          category.created_at = datetime()
-            SET category.name = $name,
-                category.level = $level,
-                category.sort_order = $sort_order,
-                category.active = $active,
-                category.protected = false,
-                category.updated_at = datetime()
+            CREATE (category:MetaCategory {
+                id: $id,
+                code: $code,
+                name: $name,
+                level: $level,
+                sort_order: $sort_order,
+                active: $active,
+                protected: false,
+                created_at: datetime(),
+                updated_at: datetime()
+            })
             """,
             id=category_id,
             code=req.code,
@@ -606,19 +613,23 @@ def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
     )
     if not parent_rows:
         raise CategoryNotFound(req.parent_id)
+    if int(parent_rows[0]["level"]) != 1:
+        raise InvalidCategoryMove(req.parent_id)
     level = int(parent_rows[0]["level"]) + 1
     run_query(
         """
         MATCH (parent:MetaCategory {id: $parent_id})
-        MERGE (category:MetaCategory {code: $code})
-        ON CREATE SET category.id = $id,
-                      category.created_at = datetime()
-        SET category.name = $name,
-            category.level = $level,
-            category.sort_order = $sort_order,
-            category.active = $active,
-            category.protected = false,
-            category.updated_at = datetime()
+        CREATE (category:MetaCategory {
+            id: $id,
+            code: $code,
+            name: $name,
+            level: $level,
+            sort_order: $sort_order,
+            active: $active,
+            protected: false,
+            created_at: datetime(),
+            updated_at: datetime()
+        })
         MERGE (parent)-[:HAS_CHILD]->(category)
         """,
         parent_id=req.parent_id,
@@ -656,7 +667,8 @@ def move_category(category_id: str, req: MoveCategoryRequest) -> CategoryNodeRes
     category_rows = run_query(
         """
         MATCH (category:MetaCategory {id: $category_id})
-        RETURN coalesce(category.protected, false) AS protected
+        RETURN category.level AS level,
+               coalesce(category.protected, false) AS protected
         """,
         category_id=category_id,
     )
@@ -664,12 +676,18 @@ def move_category(category_id: str, req: MoveCategoryRequest) -> CategoryNodeRes
         raise CategoryNotFound(category_id)
     if category_rows[0]["protected"]:
         raise ProtectedCategoryOperation(category_id)
+    if category_id == req.parent_id:
+        raise InvalidCategoryMove(category_id)
+    if int(category_rows[0]["level"]) != 2:
+        raise InvalidCategoryMove(category_id)
     parent_rows = run_query(
         "MATCH (parent:MetaCategory {id: $parent_id}) RETURN parent.level AS level",
         parent_id=req.parent_id,
     )
     if not parent_rows:
         raise CategoryNotFound(req.parent_id)
+    if int(parent_rows[0]["level"]) != 1:
+        raise InvalidCategoryMove(req.parent_id)
     run_query(
         """
         MATCH (category:MetaCategory {id: $category_id})
