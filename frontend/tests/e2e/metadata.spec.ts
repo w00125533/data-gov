@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockCommonApis } from './fixtures'
+import { mockCommonApis, tables } from './fixtures'
 
 test('metadata page exposes taxonomy navigation and table chips', async ({ page }) => {
   await mockCommonApis(page)
@@ -15,4 +15,35 @@ test('metadata page exposes taxonomy navigation and table chips', async ({ page 
 
   await page.getByRole('treeitem', { name: /质量/ }).click()
   await expect(page).toHaveURL(/category_id=category%3Anetwork\.quality/)
+})
+
+test('metadata filters realign stale selected table', async ({ page }) => {
+  await mockCommonApis(page)
+  await page.route('**/api/tables?*', (route) => {
+    const url = new URL(route.request().url())
+    const search = url.searchParams.get('search')
+    const categoryId = url.searchParams.get('category_id')
+    const filtered = tables.filter((table) => {
+      if (search && !table.name.includes(search)) return false
+      if (categoryId && table.category?.id !== categoryId) return false
+      return true
+    })
+
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(filtered),
+    })
+  })
+  await page.goto('/metadata')
+
+  await page.getByRole('button', { name: /dwd_session_qos DWD/ }).click()
+  await expect(page.getByRole('heading', { name: 'dwd_session_qos' })).toBeVisible()
+
+  await page.getByPlaceholder('表名/字段/描述').fill('dws')
+  await page.getByPlaceholder('表名/字段/描述').press('Enter')
+
+  await expect(page.getByText('dws_cell_hourly').first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'dws_cell_hourly' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'dwd_session_qos' })).toHaveCount(0)
 })

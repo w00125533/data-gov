@@ -101,12 +101,17 @@ export default function Metadata() {
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [apiMessage, holder] = message.useMessage()
-  const [layer, setLayer] = useState<string>(params.get('layer') ?? 'ALL')
-  const [search, setSearch] = useState(params.get('search') ?? '')
-  const [categoryId, setCategoryId] = useState<string | undefined>(params.get('category_id') ?? undefined)
-  const [includeChildren, setIncludeChildren] = useState(params.get('include_children') !== 'false')
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(params.getAll('tag_ids'))
-  const [tagMatch, setTagMatch] = useState<'any' | 'all'>(params.get('tag_match') === 'all' ? 'all' : 'any')
+  const appliedLayer = params.get('layer') ?? 'ALL'
+  const appliedSearch = params.get('search') ?? ''
+  const appliedCategoryId = params.get('category_id') ?? undefined
+  const appliedIncludeChildren = params.get('include_children') !== 'false'
+  const appliedTagIds = params.getAll('tag_ids')
+  const appliedTagMatch = params.get('tag_match') === 'all' ? 'all' : 'any'
+  const [searchState, setSearchState] = useState(() => ({ applied: appliedSearch, draft: appliedSearch }))
+  const search = searchState.applied === appliedSearch ? searchState.draft : appliedSearch
+  if (searchState.applied !== appliedSearch) {
+    setSearchState({ applied: appliedSearch, draft: appliedSearch })
+  }
   const [taxonomyDrawerOpen, setTaxonomyDrawerOpen] = useState(false)
   const [selected, setSelected] = useState<TableSummary | undefined>()
   const [yamlTable, setYamlTable] = useState<string | undefined>()
@@ -127,18 +132,21 @@ export default function Metadata() {
   })
 
   const tableQuery = useQuery({
-    queryKey: ['tables', layer, search, categoryId, includeChildren, selectedTagIds, tagMatch],
+    queryKey: ['tables', appliedLayer, appliedSearch, appliedCategoryId, appliedIncludeChildren, appliedTagIds, appliedTagMatch],
     queryFn: () => api.tables({
-      layer: layer === 'ALL' ? undefined : layer,
-      search,
-      category_id: categoryId,
-      include_children: categoryId ? includeChildren : undefined,
-      tag_ids: selectedTagIds.length ? selectedTagIds : undefined,
-      tag_match: selectedTagIds.length ? tagMatch : undefined,
+      layer: appliedLayer === 'ALL' ? undefined : appliedLayer,
+      search: appliedSearch,
+      category_id: appliedCategoryId,
+      include_children: appliedCategoryId ? appliedIncludeChildren : undefined,
+      tag_ids: appliedTagIds.length ? appliedTagIds : undefined,
+      tag_match: appliedTagIds.length ? appliedTagMatch : undefined,
     }),
   })
 
-  const selectedTable = selected ?? tableQuery.data?.[0]
+  const selectedTable = selected && tableQuery.data?.some((table) => table.id === selected.id)
+    ? selected
+    : tableQuery.data?.[0]
+
   const detailQuery = useQuery({
     queryKey: ['table', selectedTable?.id],
     queryFn: () => api.table(selectedTable!.id),
@@ -183,35 +191,35 @@ export default function Metadata() {
   }
 
   function handleSearchSubmit(value: string) {
+    resetSelectedTable()
     updateUrl({ search: value || undefined })
   }
 
+  function handleSearchChange(value: string) {
+    setSearchState({ applied: appliedSearch, draft: value })
+  }
+
   function handleLayerChange(value: string) {
-    setLayer(value)
     resetSelectedTable()
     updateUrl({ layer: value === 'ALL' ? undefined : value })
   }
 
   function handleCategoryChange(value?: string) {
-    setCategoryId(value)
     resetSelectedTable()
     updateUrl({ category_id: value })
   }
 
   function handleIncludeChildrenChange(value: boolean) {
-    setIncludeChildren(value)
     resetSelectedTable()
     updateUrl({ include_children: value ? undefined : 'false' })
   }
 
   function handleTagsChange(value: string[]) {
-    setSelectedTagIds(value)
     resetSelectedTable()
     updateUrl({ tag_ids: value })
   }
 
   function handleTagMatchChange(value: 'any' | 'all') {
-    setTagMatch(value)
     resetSelectedTable()
     updateUrl({ tag_match: value === 'any' ? undefined : value })
   }
@@ -512,14 +520,14 @@ export default function Metadata() {
         <MetadataTaxonomyPanel
           categories={categoriesQuery.data}
           tagGroups={tagsQuery.data}
-          selectedCategoryId={categoryId}
-          includeChildren={includeChildren}
-          selectedTagIds={selectedTagIds}
-          tagMatch={tagMatch}
-          layer={layer}
+          selectedCategoryId={appliedCategoryId}
+          includeChildren={appliedIncludeChildren}
+          selectedTagIds={appliedTagIds}
+          tagMatch={appliedTagMatch}
+          layer={appliedLayer}
           search={search}
           layers={layers}
-          onSearchChange={setSearch}
+          onSearchChange={handleSearchChange}
           onSearchSubmit={handleSearchSubmit}
           onLayerChange={handleLayerChange}
           onCategoryChange={handleCategoryChange}
