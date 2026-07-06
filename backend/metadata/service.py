@@ -1429,7 +1429,8 @@ def assert_no_lineage_cycle(
         WITH nodes(p) AS path_nodes
         UNWIND path_nodes AS f
         MATCH (t:Table)-[:HAS_FIELD]->(f)
-        RETURN collect({table: t.name, field: f.name, field_id: f.id}) AS path
+        WITH path_nodes, collect({table: t.name, field: f.name, field_id: f.id}) AS path
+        RETURN path
         LIMIT 1
         """,
         source_field_id=source_field_id,

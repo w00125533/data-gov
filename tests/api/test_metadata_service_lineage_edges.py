@@ -257,6 +257,24 @@ def test_assert_no_lineage_cycle_filters_ignored_edge_from_path_query(monkeypatc
     assert "elementId" in captured["cypher"]
 
 
+def test_assert_no_lineage_cycle_groups_path_before_collecting_nodes(monkeypatch):
+    captured = {}
+
+    def fake_run_query(cypher: str, **params):
+        captured["cypher"] = cypher
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+
+    service.assert_no_lineage_cycle(
+        target_field_id="target-field",
+        source_field_id="source-field",
+    )
+
+    assert "WITH path_nodes, collect" in captured["cypher"]
+
+
 def test_update_lineage_edge_endpoints_does_not_write_stale_calc_metadata(monkeypatch):
     mutation = {}
     current_edge = LineageEdge(
