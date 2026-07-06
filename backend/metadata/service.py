@@ -412,23 +412,33 @@ def list_categories_tree() -> list[CategoryNodeResponse]:
         """
         MATCH (root:MetaCategory)
         WHERE coalesce(root.level, 1) = 1
-        OPTIONAL MATCH (root)<-[:IN_CATEGORY]-(root_table:Table)
-        WITH root, count(DISTINCT root_table) AS root_table_count
-        OPTIONAL MATCH (root)-[:HAS_CHILD]->(child:MetaCategory)
-        OPTIONAL MATCH (child)<-[:IN_CATEGORY]-(child_table:Table)
-        WITH root, root_table_count, child, count(DISTINCT child_table) AS child_table_count
-        ORDER BY root.sort_order, root.name, child.sort_order, child.name
-        WITH root, root_table_count,
-             collect(CASE WHEN child IS NULL THEN null ELSE {
-                 id: child.id,
-                 code: child.code,
-                 name: child.name,
-                 level: child.level,
-                 sort_order: coalesce(child.sort_order, 0),
-                 active: coalesce(child.active, true),
-                 protected: coalesce(child.protected, false),
-                 table_count: child_table_count
-             } END) AS raw_children
+        CALL {
+            WITH root
+            OPTIONAL MATCH (root)<-[:IN_CATEGORY]-(root_table:Table)
+            RETURN count(DISTINCT root_table) AS direct_table_count
+        }
+        CALL {
+            WITH root
+            OPTIONAL MATCH (root)-[:HAS_CHILD]->(:MetaCategory)<-[:IN_CATEGORY]-(child_table:Table)
+            RETURN count(DISTINCT child_table) AS child_table_count_total
+        }
+        CALL {
+            WITH root
+            OPTIONAL MATCH (root)-[:HAS_CHILD]->(child:MetaCategory)
+            OPTIONAL MATCH (child)<-[:IN_CATEGORY]-(child_table:Table)
+            WITH child, count(DISTINCT child_table) AS child_table_count
+            ORDER BY child.sort_order, child.name
+            RETURN collect(CASE WHEN child IS NULL THEN null ELSE {
+                id: child.id,
+                code: child.code,
+                name: child.name,
+                level: child.level,
+                sort_order: coalesce(child.sort_order, 0),
+                active: coalesce(child.active, true),
+                protected: coalesce(child.protected, false),
+                table_count: child_table_count
+            } END) AS raw_children
+        }
         RETURN root.id AS id,
                root.code AS code,
                root.name AS name,
@@ -436,7 +446,7 @@ def list_categories_tree() -> list[CategoryNodeResponse]:
                coalesce(root.sort_order, 0) AS sort_order,
                coalesce(root.active, true) AS active,
                coalesce(root.protected, false) AS protected,
-               root_table_count AS table_count,
+               direct_table_count + child_table_count_total AS table_count,
                [child IN raw_children WHERE child IS NOT NULL AND child.id IS NOT NULL] AS children
         ORDER BY sort_order, name
         """

@@ -44,6 +44,9 @@ def test_list_categories_tree_returns_network_children():
         "能耗",
     ]
     coverage = next(child for child in network.children if child.name == "覆盖")
+    child_table_total = sum(child.table_count for child in network.children)
+    assert network.table_count >= child_table_total
+    assert network.table_count >= 7
     assert coverage.table_count >= 2
 
 
