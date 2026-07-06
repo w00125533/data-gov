@@ -195,7 +195,6 @@ export default function Metadata() {
     if (table?.id) {
       setSelected(table)
       queryClient.setQueryData(['table', table.id], table)
-      queryClient.invalidateQueries({ queryKey: ['table', table.id] })
     } else if (selectedTable?.id) {
       queryClient.invalidateQueries({ queryKey: ['table', selectedTable.id] })
     }
