@@ -237,6 +237,38 @@ def test_create_duplicate_category_returns_409(monkeypatch):
     assert response.status_code == 409
 
 
+def test_create_duplicate_tag_group_returns_409(monkeypatch):
+    def fake_create_tag_group(_req):
+        raise metadata.service.TagGroupAlreadyExists("network-domain")
+
+    monkeypatch.setattr(metadata.service, "create_tag_group", fake_create_tag_group)
+
+    response = _client().post(
+        "/api/metadata/tag-groups",
+        json={"code": "network-domain", "name": "duplicate"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_create_duplicate_tag_returns_409(monkeypatch):
+    def fake_create_tag(_req):
+        raise metadata.service.TagAlreadyExists("network.coverage")
+
+    monkeypatch.setattr(metadata.service, "create_tag", fake_create_tag)
+
+    response = _client().post(
+        "/api/metadata/tags",
+        json={
+            "group_id": "tag-group:network-domain",
+            "code": "network.coverage",
+            "name": "duplicate",
+        },
+    )
+
+    assert response.status_code == 409
+
+
 def test_invalid_category_move_returns_409(monkeypatch):
     def fake_move_category(_category_id, _req):
         raise metadata.service.InvalidCategoryMove("invalid move")

@@ -211,6 +211,10 @@ def seed_table_classification() -> int:
             MATCH (category:MetaCategory {code: $category_code})
             OPTIONAL MATCH (t)-[old:IN_CATEGORY]->(:MetaCategory)
             DELETE old
+            WITH DISTINCT t, category
+            OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)
+            DELETE old_tag
+            WITH DISTINCT t, category
             MERGE (t)-[:IN_CATEGORY]->(category)
             """,
             table=table_name,

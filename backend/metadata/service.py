@@ -71,7 +71,15 @@ class TagNotFound(Exception):
     pass
 
 
+class TagAlreadyExists(Exception):
+    pass
+
+
 class TagGroupNotFound(Exception):
+    pass
+
+
+class TagGroupAlreadyExists(Exception):
     pass
 
 
@@ -117,6 +125,26 @@ def _tag_group_id(code: str) -> str:
 
 def _tag_id(code: str) -> str:
     return f"tag:{code}"
+
+
+def _record_change(operation: str, target_type: str, target_id: str) -> None:
+    run_query(
+        """
+        CREATE (:Change {
+            id: $change_id,
+            operation: $operation,
+            target_type: $target_type,
+            target_id: $target_id,
+            changed_at: datetime(),
+            commit_hash: $commit_hash
+        })
+        """,
+        change_id=str(uuid.uuid4()),
+        operation=operation,
+        target_type=target_type,
+        target_id=target_id,
+        commit_hash="",
+    )
 
 
 def _clean_optional_map(value: Optional[dict]) -> Optional[dict]:
@@ -615,6 +643,7 @@ def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
             sort_order=req.sort_order,
             active=req.active,
         )
+        _record_change("category_create", "MetaCategory", category_id)
         return _load_category_node(category_id)
 
     parent_rows = run_query(
@@ -650,6 +679,7 @@ def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
         sort_order=req.sort_order,
         active=req.active,
     )
+    _record_change("category_create", "MetaCategory", category_id)
     return _load_category_node(category_id)
 
 
@@ -670,6 +700,7 @@ def update_category(category_id: str, req: UpdateCategoryRequest) -> CategoryNod
             f"MATCH (category:MetaCategory {{id: $category_id}}) SET {', '.join(sets)}",
             **params,
         )
+        _record_change("category_update", "MetaCategory", category_id)
     return _load_category_node(category_id)
 
 
@@ -711,6 +742,7 @@ def move_category(category_id: str, req: MoveCategoryRequest) -> CategoryNodeRes
         category_id=category_id,
         parent_id=req.parent_id,
     )
+    _record_change("category_move", "MetaCategory", category_id)
     return _load_category_node(category_id)
 
 
@@ -735,20 +767,30 @@ def update_category_status(category_id: str, req: StatusUpdateRequest) -> Catego
         category_id=category_id,
         active=req.active,
     )
+    _record_change("category_status_update", "MetaCategory", category_id)
     return _load_category_node(category_id)
 
 
 def create_tag_group(req: CreateTagGroupRequest) -> TagGroupResponse:
     group_id = _tag_group_id(req.code)
+    existing = run_query(
+        "MATCH (group:MetaTagGroup {code: $code}) RETURN group.id AS id",
+        code=req.code,
+    )
+    if existing:
+        raise TagGroupAlreadyExists(req.code)
+
     run_query(
         """
-        MERGE (group:MetaTagGroup {code: $code})
-        ON CREATE SET group.id = $id,
-                      group.created_at = datetime()
-        SET group.name = $name,
-            group.sort_order = $sort_order,
-            group.active = $active,
-            group.updated_at = datetime()
+        CREATE (group:MetaTagGroup {
+            id: $id,
+            code: $code,
+            name: $name,
+            sort_order: $sort_order,
+            active: $active,
+            created_at: datetime(),
+            updated_at: datetime()
+        })
         """,
         id=group_id,
         code=req.code,
@@ -756,6 +798,7 @@ def create_tag_group(req: CreateTagGroupRequest) -> TagGroupResponse:
         sort_order=req.sort_order,
         active=req.active,
     )
+    _record_change("tag_group_create", "MetaTagGroup", group_id)
     return _load_tag_group(group_id)
 
 
@@ -779,6 +822,7 @@ def update_tag_group(group_id: str, req: UpdateTagGroupRequest) -> TagGroupRespo
             f"MATCH (group:MetaTagGroup {{id: $group_id}}) SET {', '.join(sets)}",
             **params,
         )
+        _record_change("tag_group_update", "MetaTagGroup", group_id)
     return _load_tag_group(group_id)
 
 
@@ -786,17 +830,25 @@ def create_tag(req: CreateTagRequest) -> TagResponse:
     if not run_query("MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found", group_id=req.group_id):
         raise TagGroupNotFound(req.group_id)
     tag_id = _tag_id(req.code)
+    existing = run_query(
+        "MATCH (tag:MetaTag {code: $code}) RETURN tag.id AS id",
+        code=req.code,
+    )
+    if existing:
+        raise TagAlreadyExists(req.code)
+
     run_query(
         """
         MATCH (group:MetaTagGroup {id: $group_id})
-        MERGE (tag:MetaTag {code: $code})
-        ON CREATE SET tag.id = $id,
-                      tag.created_at = datetime()
-        SET tag.name = $name,
-            tag.sort_order = $sort_order,
-            tag.active = $active,
-            tag.updated_at = datetime()
-        MERGE (group)-[:HAS_TAG]->(tag)
+        CREATE (group)-[:HAS_TAG]->(tag:MetaTag {
+            id: $id,
+            code: $code,
+            name: $name,
+            sort_order: $sort_order,
+            active: $active,
+            created_at: datetime(),
+            updated_at: datetime()
+        })
         """,
         group_id=req.group_id,
         id=tag_id,
@@ -805,6 +857,7 @@ def create_tag(req: CreateTagRequest) -> TagResponse:
         sort_order=req.sort_order,
         active=req.active,
     )
+    _record_change("tag_create", "MetaTag", tag_id)
     return _load_tag(tag_id)
 
 
@@ -825,6 +878,7 @@ def update_tag(tag_id: str, req: UpdateTagRequest) -> TagResponse:
             f"MATCH (tag:MetaTag {{id: $tag_id}}) SET {', '.join(sets)}",
             **params,
         )
+        _record_change("tag_update", "MetaTag", tag_id)
     return _load_tag(tag_id)
 
 
@@ -840,6 +894,7 @@ def update_tag_status(tag_id: str, req: StatusUpdateRequest) -> TagResponse:
         tag_id=tag_id,
         active=req.active,
     )
+    _record_change("tag_status_update", "MetaTag", tag_id)
     return _load_tag(tag_id)
 
 

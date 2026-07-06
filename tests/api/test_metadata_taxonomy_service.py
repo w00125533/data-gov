@@ -3,7 +3,10 @@ import pytest
 from backend.metadata import service
 from backend.metadata.models import (
     CreateCategoryRequest,
+    CreateTagGroupRequest,
+    CreateTagRequest,
     MoveCategoryRequest,
+    StatusUpdateRequest,
     TableClassificationUpdateRequest,
 )
 from backend.metadata.service import (
@@ -11,14 +14,19 @@ from backend.metadata.service import (
     InvalidCategoryMove,
     CategoryNotFound,
     TableNotFound,
+    TagAlreadyExists,
+    TagGroupAlreadyExists,
     TagNotFound,
     create_category,
+    create_tag,
+    create_tag_group,
     get_table_by_name,
     list_categories_tree,
     list_tables,
     list_tags,
     move_category,
     update_table_classification,
+    update_tag_status,
 )
 
 
@@ -116,6 +124,57 @@ def test_create_category_rejects_duplicate_code_without_writing(monkeypatch):
     assert not any("MERGE" in cypher or "CREATE" in cypher or "SET" in cypher for cypher, _ in calls[1:])
 
 
+def test_create_tag_group_rejects_duplicate_code_without_writing(monkeypatch):
+    calls = []
+
+    def fake_run_query(cypher, **params):
+        calls.append((cypher, params))
+        if "RETURN group.id AS id" in cypher:
+            return [{"id": "tag-group:network-domain"}]
+        if "MERGE" in cypher or "CREATE" in cypher or "SET" in cypher:
+            raise AssertionError("duplicate tag group attempted to write")
+        return []
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+
+    with pytest.raises(TagGroupAlreadyExists):
+        create_tag_group(
+            CreateTagGroupRequest(
+                code="network-domain",
+                name="duplicate",
+            )
+        )
+
+    assert not any("MERGE" in cypher or "CREATE" in cypher or "SET" in cypher for cypher, _ in calls[1:])
+
+
+def test_create_tag_rejects_duplicate_code_without_attaching_to_group(monkeypatch):
+    calls = []
+
+    def fake_run_query(cypher, **params):
+        calls.append((cypher, params))
+        if "MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found" in cypher:
+            return [{"found": 1}]
+        if "RETURN tag.id AS id" in cypher:
+            return [{"id": "tag:network.coverage"}]
+        if "MERGE" in cypher or "CREATE" in cypher or "SET" in cypher:
+            raise AssertionError("duplicate tag attempted to write")
+        return []
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+
+    with pytest.raises(TagAlreadyExists):
+        create_tag(
+            CreateTagRequest(
+                group_id="tag-group:network-domain",
+                code="network.coverage",
+                name="duplicate",
+            )
+        )
+
+    assert not any("MERGE" in cypher or "CREATE" in cypher or "SET" in cypher for cypher, _ in calls[2:])
+
+
 def test_move_category_rejects_invalid_level_without_writing(monkeypatch):
     calls = []
 
@@ -138,6 +197,69 @@ def test_move_category_rejects_invalid_level_without_writing(monkeypatch):
         )
 
     assert not any("MERGE" in cypher or "DELETE" in cypher or "SET" in cypher for cypher, _ in calls[2:])
+
+
+@pytest.mark.infra
+def test_taxonomy_mutation_records_change_node():
+    tag_id = "tag:network.coverage"
+    before_rows = service.run_query(
+        """
+        MATCH (tag:MetaTag {id: $tag_id})
+        OPTIONAL MATCH (change:Change {
+            operation: $operation,
+            target_type: $target_type,
+            target_id: $tag_id
+        })
+        RETURN coalesce(tag.active, true) AS active,
+               collect(change.id) AS change_ids
+        """,
+        tag_id=tag_id,
+        operation="tag_status_update",
+        target_type="MetaTag",
+    )
+    original_active = before_rows[0]["active"]
+    before_change_ids = set(before_rows[0]["change_ids"])
+    new_change_ids: set[str] = set()
+
+    try:
+        update_tag_status(tag_id, StatusUpdateRequest(active=not original_active))
+        update_tag_status(tag_id, StatusUpdateRequest(active=original_active))
+
+        after_rows = service.run_query(
+            """
+            MATCH (change:Change {
+                operation: $operation,
+                target_type: $target_type,
+                target_id: $tag_id
+            })
+            RETURN collect(change.id) AS change_ids
+            """,
+            tag_id=tag_id,
+            operation="tag_status_update",
+            target_type="MetaTag",
+        )
+        new_change_ids = set(after_rows[0]["change_ids"]) - before_change_ids
+
+        assert new_change_ids
+    finally:
+        service.run_query(
+            """
+            MATCH (tag:MetaTag {id: $tag_id})
+            SET tag.active = $active,
+                tag.updated_at = datetime()
+            """,
+            tag_id=tag_id,
+            active=original_active,
+        )
+        if new_change_ids:
+            service.run_query(
+                """
+                MATCH (change:Change)
+                WHERE change.id IN $change_ids
+                DETACH DELETE change
+                """,
+                change_ids=list(new_change_ids),
+            )
 
 
 @pytest.mark.infra

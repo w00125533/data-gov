@@ -44,3 +44,10 @@ def test_table_classification_matches_taxonomy_by_code():
     assert "MetaCategory {name: $root_name}" not in source
     assert "MetaCategory {name: $child_name}" not in source
     assert "MetaTag {name: $tag_name}" not in source
+
+
+def test_table_classification_seed_deletes_stale_tag_edges():
+    source = _seed_script_source()
+
+    assert "OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)" in source
+    assert "DELETE old_tag" in source

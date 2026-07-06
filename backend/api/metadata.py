@@ -180,7 +180,10 @@ def list_tags_endpoint():
 
 @router.post("/api/metadata/tag-groups", response_model=TagGroupResponse, status_code=201)
 def create_tag_group_endpoint(req: CreateTagGroupRequest):
-    return service.create_tag_group(req)
+    try:
+        return service.create_tag_group(req)
+    except service.TagGroupAlreadyExists:
+        _raise_conflict("tag group already exists")
 
 
 @router.put("/api/metadata/tag-groups/{group_id}", response_model=TagGroupResponse)
@@ -197,6 +200,8 @@ def create_tag_endpoint(req: CreateTagRequest):
         return service.create_tag(req)
     except service.TagGroupNotFound:
         _raise_not_found("tag group not found")
+    except service.TagAlreadyExists:
+        _raise_conflict("tag already exists")
 
 
 @router.put("/api/metadata/tags/{tag_id}", response_model=TagResponse)
