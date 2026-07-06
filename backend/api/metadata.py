@@ -7,7 +7,11 @@ from sqlglot.errors import ParseError
 from backend.metadata import service
 from backend.metadata.lineage_sql import UnsupportedSqlError
 from backend.metadata.models import (
+    CategoryNodeResponse,
+    CreateCategoryRequest,
     CreateFieldRequest,
+    CreateTagGroupRequest,
+    CreateTagRequest,
     CreateTableRequest,
     FieldResponse,
     ImpactResponse,
@@ -22,9 +26,17 @@ from backend.metadata.models import (
     LineageSqlPreviewResponse,
     LineageEdgeUpdateRequest,
     LineageResponse,
+    MoveCategoryRequest,
+    StatusUpdateRequest,
+    TableClassificationUpdateRequest,
     TableResponse,
     TableSummary,
+    TagGroupResponse,
+    TagResponse,
+    UpdateCategoryRequest,
     UpdateFieldRequest,
+    UpdateTagGroupRequest,
+    UpdateTagRequest,
     UpdateTableRequest,
 )
 
@@ -32,11 +44,35 @@ from backend.metadata.models import (
 router = APIRouter()
 
 
+def _raise_not_found(detail: str) -> None:
+    raise HTTPException(status_code=404, detail=detail)
+
+
+def _raise_conflict(detail: str) -> None:
+    raise HTTPException(status_code=409, detail=detail)
+
+
 # ---- tables ----
 
 @router.get("/api/tables", response_model=list[TableSummary])
-def list_tables_endpoint(layer: Optional[str] = None, search: Optional[str] = None):
-    return service.list_tables(layer=layer, search=search)
+def list_tables_endpoint(
+    layer: Optional[str] = None,
+    search: Optional[str] = None,
+    category_id: Optional[str] = None,
+    include_children: bool = True,
+    tag_ids: list[str] = Query(default=[]),
+    tag_match: str = Query("any", pattern="^(any|all)$"),
+    uncategorized: bool = False,
+):
+    return service.list_tables(
+        layer=layer,
+        search=search,
+        category_id=category_id,
+        include_children=include_children,
+        tag_ids=tag_ids,
+        tag_match=tag_match,
+        uncategorized=uncategorized,
+    )
 
 
 @router.get("/api/tables/{table_id}", response_model=TableResponse)
@@ -60,6 +96,18 @@ def update_table_endpoint(table_id: str, req: UpdateTableRequest):
     return service.get_table_by_id(table_id)
 
 
+@router.put("/api/tables/{table_id}/classification", response_model=TableResponse)
+def update_table_classification_endpoint(table_id: str, req: TableClassificationUpdateRequest):
+    try:
+        return service.update_table_classification(table_id, req)
+    except service.TableNotFound:
+        _raise_not_found("table not found")
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.TagNotFound:
+        _raise_not_found("tag not found")
+
+
 @router.delete("/api/tables/{table_id}", status_code=204)
 def delete_table_endpoint(table_id: str):
     table = service.get_table_by_id(table_id)
@@ -72,6 +120,99 @@ def delete_table_endpoint(table_id: str):
                 "downstream": [{"table": t, "field": f} for t, f in e.downstream],
             })
     service.delete_table(table.name)
+
+
+# ---- taxonomy ----
+
+@router.get("/api/metadata/categories/tree", response_model=list[CategoryNodeResponse])
+def list_categories_tree_endpoint():
+    return service.list_categories_tree()
+
+
+@router.post("/api/metadata/categories", response_model=CategoryNodeResponse, status_code=201)
+def create_category_endpoint(req: CreateCategoryRequest):
+    try:
+        return service.create_category(req)
+    except service.CategoryAlreadyExists:
+        _raise_conflict("category already exists")
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.InvalidCategoryMove:
+        _raise_conflict("invalid category move")
+
+
+@router.put("/api/metadata/categories/{category_id}", response_model=CategoryNodeResponse)
+def update_category_endpoint(category_id: str, req: UpdateCategoryRequest):
+    try:
+        return service.update_category(category_id, req)
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.ProtectedCategoryOperation:
+        _raise_conflict("protected category operation")
+
+
+@router.patch("/api/metadata/categories/{category_id}/move", response_model=CategoryNodeResponse)
+def move_category_endpoint(category_id: str, req: MoveCategoryRequest):
+    try:
+        return service.move_category(category_id, req)
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.InvalidCategoryMove:
+        _raise_conflict("invalid category move")
+    except service.ProtectedCategoryOperation:
+        _raise_conflict("protected category operation")
+
+
+@router.patch("/api/metadata/categories/{category_id}/status", response_model=CategoryNodeResponse)
+def update_category_status_endpoint(category_id: str, req: StatusUpdateRequest):
+    try:
+        return service.update_category_status(category_id, req)
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.ProtectedCategoryOperation:
+        _raise_conflict("protected category operation")
+
+
+@router.get("/api/metadata/tags", response_model=list[TagGroupResponse])
+def list_tags_endpoint():
+    return service.list_tags()
+
+
+@router.post("/api/metadata/tag-groups", response_model=TagGroupResponse, status_code=201)
+def create_tag_group_endpoint(req: CreateTagGroupRequest):
+    return service.create_tag_group(req)
+
+
+@router.put("/api/metadata/tag-groups/{group_id}", response_model=TagGroupResponse)
+def update_tag_group_endpoint(group_id: str, req: UpdateTagGroupRequest):
+    try:
+        return service.update_tag_group(group_id, req)
+    except service.TagGroupNotFound:
+        _raise_not_found("tag group not found")
+
+
+@router.post("/api/metadata/tags", response_model=TagResponse, status_code=201)
+def create_tag_endpoint(req: CreateTagRequest):
+    try:
+        return service.create_tag(req)
+    except service.TagGroupNotFound:
+        _raise_not_found("tag group not found")
+
+
+@router.put("/api/metadata/tags/{tag_id}", response_model=TagResponse)
+def update_tag_endpoint(tag_id: str, req: UpdateTagRequest):
+    try:
+        return service.update_tag(tag_id, req)
+    except service.TagNotFound:
+        _raise_not_found("tag not found")
+
+
+@router.patch("/api/metadata/tags/{tag_id}/status", response_model=TagResponse)
+def update_tag_status_endpoint(tag_id: str, req: StatusUpdateRequest):
+    try:
+        return service.update_tag_status(tag_id, req)
+    except service.TagNotFound:
+        _raise_not_found("tag not found")
 
 
 # ---- fields ----
