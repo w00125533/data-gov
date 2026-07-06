@@ -262,6 +262,8 @@ export default function Metadata() {
         layer: values.layer,
         storage_type: values.storage_type,
         description: values.description,
+        category_id: values.category_id!,
+        tag_ids: values.tag_ids ?? [],
       })
       const initialFields = (values.fields ?? []).filter((field) => field.name)
       for (const field of initialFields) {
@@ -433,6 +435,8 @@ export default function Metadata() {
       layer: 'ODS',
       storage_type: 'HIVE',
       description: '',
+      category_id: categoryOptions[0]?.value,
+      tag_ids: [],
       fields: [{ data_type: 'STRING', nullable: true, partition: false }],
     })
     setTableModal('create')
@@ -444,9 +448,9 @@ export default function Metadata() {
       name: detailQuery.data.name,
       layer: detailQuery.data.layer,
       storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
-      description: detailQuery.data.description,
-      category_id: detailQuery.data.category?.id,
+      category_id: detailQuery.data.category?.id ?? categoryOptions[0]?.value,
       tag_ids: detailQuery.data.tags?.map((tag) => tag.id) ?? [],
+      description: detailQuery.data.description,
     })
     setTableModal('edit')
   }
@@ -467,6 +471,8 @@ export default function Metadata() {
               layer: values.layer,
               storage_type: values.storage_type,
               description: values.description,
+              category_id: values.category_id,
+              tag_ids: values.tag_ids ?? [],
               fields: (values.fields ?? [])
                 .filter((field) => field.name)
                 .map((field) => ({
@@ -551,6 +557,8 @@ export default function Metadata() {
       name: `${detailQuery.data.name}_downstream`,
       layer: detailQuery.data.layer,
       storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
+      category_id: detailQuery.data.category?.id ?? categoryOptions[0]?.value,
+      tag_ids: detailQuery.data.tags?.map((tag) => tag.id) ?? [],
       description: `下游表，来源: ${detailQuery.data.name}`,
       fields: [{ data_type: 'STRING', nullable: true, partition: false, description: `来自 ${detailQuery.data.name}` }],
     })
@@ -692,16 +700,14 @@ export default function Metadata() {
             <Form.Item name="storage_type" label="存储" rules={[{ required: true }]}><Select options={storageTypes.map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-          {tableModal === 'edit' ? (
-            <>
+          <>
               <Form.Item name="category_id" label="主分类" rules={[{ required: true, message: '请选择主分类' }]}>
                 <Select options={categoryOptions} />
               </Form.Item>
               <Form.Item name="tag_ids" label="标签">
                 <Select mode="multiple" allowClear options={tagOptions} />
               </Form.Item>
-            </>
-          ) : null}
+          </>
           {tableModal === 'create' ? (
             <Form.List name="fields">
               {(fields, { add, remove }) => (

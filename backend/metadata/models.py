@@ -23,6 +23,8 @@ class CreateTableRequest(BaseModel):
     layer: Layer
     storage_type: StorageType
     description: str = ""
+    category_id: str
+    tag_ids: list[str] = Field(default_factory=list)
 
 
 class UpdateTableRequest(BaseModel):
@@ -118,6 +120,7 @@ class CreateTagRequest(BaseModel):
 class UpdateTagRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     sort_order: Optional[int] = None
+    group_id: Optional[str] = None
 
 
 class TableClassificationUpdateRequest(BaseModel):

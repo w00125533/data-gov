@@ -115,6 +115,8 @@ def validate_change(diff: list[dict]) -> dict:
             except metadata_service.TableNotFound:
                 errors.append(("TABLE_NOT_FOUND", op))
         elif kind == "ADD_TABLE":
+            if not op.get("category_id"):
+                errors.append(("MISSING_CATEGORY", op))
             try:
                 metadata_service.get_table_by_name(op["table"])
                 errors.append(("DUPLICATE_TABLE", op))
@@ -126,7 +128,14 @@ def validate_change(diff: list[dict]) -> dict:
 # ---------------- schema mutations ----------------
 
 def add_table(op: dict) -> dict:
-    req = CreateTableRequest(name=op["table"], layer=op["layer"], storage_type=op["storage_type"], description=op.get("description", ""))
+    req = CreateTableRequest(
+        name=op["table"],
+        layer=op["layer"],
+        storage_type=op["storage_type"],
+        description=op.get("description", ""),
+        category_id=op["category_id"],
+        tag_ids=op.get("tag_ids", []),
+    )
     t = metadata_service.create_table(req)
     field_ids = []
     for f in op.get("fields", []):

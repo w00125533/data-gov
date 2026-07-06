@@ -5,6 +5,7 @@ from backend.api import metadata
 from backend.metadata.models import (
     CategoryNodeResponse,
     CategoryRef,
+    CreateTableRequest,
     TableClassificationUpdateRequest,
     TableResponse,
     TagGroupResponse,
@@ -185,6 +186,44 @@ def test_list_tables_passes_taxonomy_filters(monkeypatch):
         "tag_match": "all",
         "uncategorized": True,
     }
+
+
+def test_create_table_requires_and_forwards_classification(monkeypatch):
+    captured = {}
+
+    def fake_create_table(req):
+        captured["req"] = req
+        return _table_response()
+
+    monkeypatch.setattr(metadata.service, "create_table", fake_create_table)
+
+    missing = _client().post(
+        "/api/tables",
+        json={
+            "name": "demo_table",
+            "layer": "ODS",
+            "storage_type": "HIVE",
+            "description": "",
+        },
+    )
+    assert missing.status_code == 422
+
+    response = _client().post(
+        "/api/tables",
+        json={
+            "name": "demo_table",
+            "layer": "ODS",
+            "storage_type": "HIVE",
+            "description": "",
+            "category_id": "category:source-data.chr",
+            "tag_ids": ["tag:source.chr"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert isinstance(captured["req"], CreateTableRequest)
+    assert captured["req"].category_id == "category:source-data.chr"
+    assert captured["req"].tag_ids == ["tag:source.chr"]
 
 
 def test_update_table_classification_category_not_found_returns_404(monkeypatch):

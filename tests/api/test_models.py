@@ -18,8 +18,20 @@ def test_create_table_request_rejects_unknown_layer():
 
 
 def test_create_table_request_accepts_valid_layer():
-    req = CreateTableRequest(name="my_table", layer="DWS", storage_type="HIVE", description="d")
+    req = CreateTableRequest(
+        name="my_table",
+        layer="DWS",
+        storage_type="HIVE",
+        description="d",
+        category_id="category:source-data.chr",
+        tag_ids=[],
+    )
     assert req.layer == "DWS"
+
+
+def test_create_table_request_requires_category():
+    with pytest.raises(ValidationError):
+        CreateTableRequest(name="my_table", layer="DWS", storage_type="HIVE", description="d")
 
 
 def test_create_field_request_requires_table_id():

@@ -38,6 +38,8 @@ export type CreateTablePayload = {
   layer: Layer
   storage_type: 'KAFKA' | 'HIVE' | 'STARROCKS'
   description: string
+  category_id: string
+  tag_ids: string[]
 }
 
 export type UpdateTablePayload = Partial<Pick<CreateTablePayload, 'layer' | 'storage_type' | 'description'>>
@@ -138,6 +140,7 @@ export type CreateTagPayload = {
 export type UpdateTagPayload = {
   name?: string
   sort_order?: number
+  group_id?: string
 }
 
 export type CreateFieldPayload = {
@@ -264,6 +267,8 @@ export type SchemaChange = {
   operation: string
   table_name?: string | null
   field_name?: string | null
+  target_type?: string | null
+  target_id?: string | null
   version?: number | null
   previous_version?: number | null
   old_value?: unknown

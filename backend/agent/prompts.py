@@ -50,6 +50,8 @@ SCHEMA_EVOLVE_PROMPT = """用户要求修改元数据 schema。请把自然语�
   "upstream": [{{"table": "...", "field": "..."}}],
   "layer": "ODS|DWD|DWS|ADS|EVAL",
   "storage_type": "KAFKA|HIVE|STARROCKS",
+  "category_id": "category:<code>",   // ADD_TABLE 必填，必须选择已有叶子分类
+  "tag_ids": ["tag:<code>", ...],     // ADD_TABLE 可选
   "fields": [...]}}
 """
 

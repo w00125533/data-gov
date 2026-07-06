@@ -1,5 +1,6 @@
 """Neo4j driver singleton + thin query helper."""
 from functools import lru_cache
+from collections.abc import Callable
 from typing import Any
 
 from neo4j import Driver, GraphDatabase
@@ -21,6 +22,13 @@ def run_query(cypher: str, **params: Any) -> list[dict]:
     with driver.session(database=get_settings().neo4j_database) as session:
         result = session.run(cypher, params)
         return [dict(record) for record in result]
+
+
+def run_write_transaction(work: Callable[[Any], Any]) -> Any:
+    """Execute a write callback in one Neo4j transaction."""
+    driver = get_driver()
+    with driver.session(database=get_settings().neo4j_database) as session:
+        return session.execute_write(lambda tx: work(tx))
 
 
 def close_driver() -> None:

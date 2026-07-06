@@ -121,6 +121,19 @@ export default function MetadataTaxonomyDrawer({
     onError: (error) => apiMessage.error(`更新分类状态失败: ${(error as Error).message}`),
   })
 
+  const updateCategoryMutation = useMutation({
+    mutationFn: ({ id, name, sort_order }: { id: string; name?: string; sort_order?: number }) =>
+      api.updateCategory(id, { name, sort_order }),
+    onSuccess: () => invalidateTaxonomy(),
+    onError: (error) => apiMessage.error(`update category failed: ${(error as Error).message}`),
+  })
+
+  const moveCategoryMutation = useMutation({
+    mutationFn: ({ id, parent_id }: { id: string; parent_id: string }) => api.moveCategory(id, { parent_id }),
+    onSuccess: () => invalidateTaxonomy(),
+    onError: (error) => apiMessage.error(`move category failed: ${(error as Error).message}`),
+  })
+
   const createTagGroupMutation = useMutation({
     mutationFn: (values: TagGroupFormValues) =>
       api.createTagGroup({
@@ -164,6 +177,20 @@ export default function MetadataTaxonomyDrawer({
     onError: (error) => apiMessage.error(`更新标签状态失败: ${(error as Error).message}`),
   })
 
+  const updateTagMutation = useMutation({
+    mutationFn: ({ id, name, sort_order, group_id }: { id: string; name?: string; sort_order?: number; group_id?: string }) =>
+      api.updateTag(id, { name, sort_order, group_id }),
+    onSuccess: () => invalidateTaxonomy(),
+    onError: (error) => apiMessage.error(`update tag failed: ${(error as Error).message}`),
+  })
+
+  const updateTagGroupMutation = useMutation({
+    mutationFn: ({ id, name, sort_order }: { id: string; name?: string; sort_order?: number }) =>
+      api.updateTagGroup(id, { name, sort_order }),
+    onSuccess: () => invalidateTaxonomy(),
+    onError: (error) => apiMessage.error(`update tag group failed: ${(error as Error).message}`),
+  })
+
   const updateTagGroupStatusMutation = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       api.updateTagGroup(id, { active }),
@@ -192,7 +219,24 @@ export default function MetadataTaxonomyDrawer({
                   {categories.map((root) => (
                     <div key={root.id}>
                       <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-                        <Typography.Text strong>{taxonomyLabel(root)}</Typography.Text>
+                        <Space>
+                          <Input
+                            aria-label={`${taxonomyLabel(root)} name`}
+                            defaultValue={taxonomyLabel(root)}
+                            style={{ width: 150 }}
+                            onBlur={(event) => {
+                              const name = event.target.value.trim()
+                              if (name && name !== root.name) updateCategoryMutation.mutate({ id: root.id, name })
+                            }}
+                          />
+                          <InputNumber
+                            aria-label={`${taxonomyLabel(root)} sort`}
+                            min={0}
+                            defaultValue={root.sort_order}
+                            style={{ width: 82 }}
+                            onChange={(value) => updateCategoryMutation.mutate({ id: root.id, sort_order: Number(value ?? 0) })}
+                          />
+                        </Space>
                         <Switch
                           aria-label={`${taxonomyLabel(root)} 状态`}
                           checked={root.active}
@@ -204,7 +248,31 @@ export default function MetadataTaxonomyDrawer({
                       <Space orientation="vertical" size={6} style={{ width: '100%', marginTop: 8, paddingLeft: 16 }}>
                         {root.children.map((child) => (
                           <Space key={child.id} style={{ justifyContent: 'space-between', width: '100%' }}>
-                            <span>{taxonomyLabel(child)}</span>
+                            <Space wrap>
+                              <Input
+                                aria-label={`${taxonomyLabel(child)} name`}
+                                defaultValue={taxonomyLabel(child)}
+                                style={{ width: 150 }}
+                                onBlur={(event) => {
+                                  const name = event.target.value.trim()
+                                  if (name && name !== child.name) updateCategoryMutation.mutate({ id: child.id, name })
+                                }}
+                              />
+                              <InputNumber
+                                aria-label={`${taxonomyLabel(child)} sort`}
+                                min={0}
+                                defaultValue={child.sort_order}
+                                style={{ width: 82 }}
+                                onChange={(value) => updateCategoryMutation.mutate({ id: child.id, sort_order: Number(value ?? 0) })}
+                              />
+                              <Select
+                                aria-label={`${taxonomyLabel(child)} parent`}
+                                value={root.id}
+                                options={rootOptions}
+                                style={{ width: 140 }}
+                                onChange={(parent_id) => moveCategoryMutation.mutate({ id: child.id, parent_id })}
+                              />
+                            </Space>
                             <Switch
                               aria-label={`${taxonomyLabel(child)} 状态`}
                               checked={child.active}
@@ -262,7 +330,24 @@ export default function MetadataTaxonomyDrawer({
                   {tagGroups.map((group) => (
                     <div key={group.id}>
                       <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-                        <Typography.Text strong>{taxonomyLabel(group)}</Typography.Text>
+                        <Space>
+                          <Input
+                            aria-label={`${taxonomyLabel(group)} name`}
+                            defaultValue={taxonomyLabel(group)}
+                            style={{ width: 150 }}
+                            onBlur={(event) => {
+                              const name = event.target.value.trim()
+                              if (name && name !== group.name) updateTagGroupMutation.mutate({ id: group.id, name })
+                            }}
+                          />
+                          <InputNumber
+                            aria-label={`${taxonomyLabel(group)} sort`}
+                            min={0}
+                            defaultValue={group.sort_order}
+                            style={{ width: 82 }}
+                            onChange={(value) => updateTagGroupMutation.mutate({ id: group.id, sort_order: Number(value ?? 0) })}
+                          />
+                        </Space>
                         <Switch
                           aria-label={`${taxonomyLabel(group)} 状态`}
                           checked={group.active}
@@ -274,7 +359,31 @@ export default function MetadataTaxonomyDrawer({
                       <Space orientation="vertical" size={6} style={{ width: '100%', marginTop: 8, paddingLeft: 16 }}>
                         {group.tags.map((tag) => (
                           <Space key={tag.id} style={{ justifyContent: 'space-between', width: '100%' }}>
-                            <span>{taxonomyLabel(tag)}</span>
+                            <Space wrap>
+                              <Input
+                                aria-label={`${taxonomyLabel(tag)} name`}
+                                defaultValue={taxonomyLabel(tag)}
+                                style={{ width: 150 }}
+                                onBlur={(event) => {
+                                  const name = event.target.value.trim()
+                                  if (name && name !== tag.name) updateTagMutation.mutate({ id: tag.id, name })
+                                }}
+                              />
+                              <InputNumber
+                                aria-label={`${taxonomyLabel(tag)} sort`}
+                                min={0}
+                                defaultValue={tag.sort_order}
+                                style={{ width: 82 }}
+                                onChange={(value) => updateTagMutation.mutate({ id: tag.id, sort_order: Number(value ?? 0) })}
+                              />
+                              <Select
+                                aria-label={`${taxonomyLabel(tag)} group`}
+                                value={group.id}
+                                options={groupOptions}
+                                style={{ width: 140 }}
+                                onChange={(group_id) => updateTagMutation.mutate({ id: tag.id, group_id })}
+                              />
+                            </Space>
                             <Switch
                               aria-label={`${taxonomyLabel(tag)} 状态`}
                               checked={tag.active}

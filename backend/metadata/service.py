@@ -10,7 +10,7 @@ import json
 import uuid
 from typing import Optional
 
-from backend.metadata.graph import run_query
+from backend.metadata.graph import run_query, run_write_transaction
 from backend.metadata.lineage_sql import generate_select_sql, parse_select_preview
 from backend.metadata.models import (
     CategoryNodeResponse,
@@ -127,24 +127,54 @@ def _tag_id(code: str) -> str:
     return f"tag:{code}"
 
 
-def _record_change(operation: str, target_type: str, target_id: str) -> None:
-    run_query(
+def _json_change_value(value: Optional[dict | list]) -> Optional[str]:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _record_change(
+    operation: str,
+    target_type: str,
+    target_id: str,
+    *,
+    tx=None,
+    table_name: Optional[str] = None,
+    field_name: Optional[str] = None,
+    old_value: Optional[dict | list] = None,
+    new_value: Optional[dict | list] = None,
+) -> None:
+    cypher = (
         """
         CREATE (:Change {
             id: $change_id,
             operation: $operation,
+            table_name: $table_name,
+            field_name: $field_name,
             target_type: $target_type,
             target_id: $target_id,
+            old_value: $old_value,
+            new_value: $new_value,
             changed_at: datetime(),
             commit_hash: $commit_hash
         })
-        """,
+        """
+    )
+    params = dict(
         change_id=str(uuid.uuid4()),
         operation=operation,
+        table_name=table_name,
+        field_name=field_name,
         target_type=target_type,
         target_id=target_id,
+        old_value=_json_change_value(old_value),
+        new_value=_json_change_value(new_value),
         commit_hash="",
     )
+    if tx is not None:
+        tx.run(cypher, params)
+        return
+    run_query(cypher, **params)
 
 
 def _clean_optional_map(value: Optional[dict]) -> Optional[dict]:
@@ -326,17 +356,69 @@ def get_table_by_id(table_id: str) -> TableResponse:
 
 def create_table(req: CreateTableRequest) -> TableResponse:
     table_id = str(uuid.uuid4())
-    run_query(
-        """
-        CREATE (t:Table {
-            id: $id, name: $name, layer: $layer, layer_priority: $layer_priority,
-            storage_type: $storage_type, description: $description
-        })
-        """,
-        id=table_id, name=req.name, layer=req.layer,
-        layer_priority=LAYER_PRIORITY[req.layer],
-        storage_type=req.storage_type, description=req.description,
-    )
+    _validate_active_level2_category(req.category_id)
+    unique_tag_ids = list(dict.fromkeys(req.tag_ids))
+    _validate_active_tags(unique_tag_ids)
+
+    def _create(tx):
+        tx.run(
+            """
+            CREATE (t:Table {
+                id: $id, name: $name, layer: $layer, layer_priority: $layer_priority,
+                storage_type: $storage_type, description: $description
+            })
+            """,
+            {
+                "id": table_id,
+                "name": req.name,
+                "layer": req.layer,
+                "layer_priority": LAYER_PRIORITY[req.layer],
+                "storage_type": req.storage_type,
+                "description": req.description,
+            },
+        )
+        tx.run(
+            """
+            MATCH (t:Table {id: $table_id})
+            MATCH (category:MetaCategory {id: $category_id})
+            MERGE (t)-[:IN_CATEGORY]->(category)
+            """,
+            {
+                "table_id": table_id,
+                "category_id": req.category_id,
+            },
+        )
+        if unique_tag_ids:
+            tx.run(
+                """
+                MATCH (t:Table {id: $table_id})
+                WITH t
+            MATCH (tag:MetaTag)
+            WHERE tag.id IN $tag_ids
+            MERGE (t)-[:TAGGED_WITH]->(tag)
+            """,
+                {
+                    "table_id": table_id,
+                    "tag_ids": unique_tag_ids,
+                },
+            )
+        _record_change(
+            "table_create",
+            "table",
+            table_id,
+            tx=tx,
+            table_name=req.name,
+            new_value={
+                "name": req.name,
+                "layer": req.layer,
+                "storage_type": req.storage_type,
+                "description": req.description,
+                "category_id": req.category_id,
+                "tag_ids": unique_tag_ids,
+            },
+        )
+
+    run_write_transaction(_create)
     return get_table_by_name(req.name)
 
 
@@ -565,49 +647,69 @@ def update_table_classification(table_id: str, req: TableClassificationUpdateReq
     _validate_active_tags(req.tag_ids)
 
     unique_tag_ids = list(dict.fromkeys(req.tag_ids))
-    run_query(
-        """
-        MATCH (t:Table {id: $table_id})
-        MATCH (category:MetaCategory {id: $category_id})
-        OPTIONAL MATCH (t)-[old_category:IN_CATEGORY]->(:MetaCategory)
-        DELETE old_category
-        MERGE (t)-[:IN_CATEGORY]->(category)
-        WITH t
-        OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)
-        DELETE old_tag
-        """,
-        table_id=table_id,
-        category_id=req.category_id,
-    )
-    for tag_id in unique_tag_ids:
-        run_query(
+
+    def _update(tx):
+        old_rows = list(tx.run(
             """
             MATCH (t:Table {id: $table_id})
-            MATCH (tag:MetaTag {id: $tag_id})
+            OPTIONAL MATCH (t)-[:IN_CATEGORY]->(old_category:MetaCategory)
+            OPTIONAL MATCH (t)-[:TAGGED_WITH]->(old_tag:MetaTag)
+            WITH old_category, old_tag
+            ORDER BY old_tag.id
+            RETURN CASE WHEN old_category IS NULL THEN null ELSE old_category.id END AS old_category,
+                   [tag_id IN collect(old_tag.id) WHERE tag_id IS NOT NULL] AS old_tags
+            """,
+            {"table_id": table_id},
+        ))
+        old_category = old_rows[0]["old_category"] if old_rows else None
+        old_tags = old_rows[0]["old_tags"] if old_rows else []
+        tx.run(
+            """
+            MATCH (t:Table {id: $table_id})
+            MATCH (category:MetaCategory {id: $category_id})
+            OPTIONAL MATCH (t)-[old_category_rel:IN_CATEGORY]->(:MetaCategory)
+            DELETE old_category_rel
+            MERGE (t)-[:IN_CATEGORY]->(category)
+            WITH t
+            OPTIONAL MATCH (t)-[old_tag_rel:TAGGED_WITH]->(:MetaTag)
+            DELETE old_tag_rel
+            """,
+            {
+                "table_id": table_id,
+                "category_id": req.category_id,
+            },
+        )
+        if unique_tag_ids:
+            tx.run(
+                """
+                MATCH (t:Table {id: $table_id})
+                WITH t
+            MATCH (tag:MetaTag)
+            WHERE tag.id IN $tag_ids
             MERGE (t)-[:TAGGED_WITH]->(tag)
             """,
-            table_id=table_id,
-            tag_id=tag_id,
+                {
+                    "table_id": table_id,
+                    "tag_ids": unique_tag_ids,
+                },
+            )
+        _record_change(
+            "table_classification_update",
+            "table",
+            table_id,
+            tx=tx,
+            table_name=table_rows[0]["name"],
+            old_value={
+                "category_id": old_category,
+                "tag_ids": old_tags,
+            },
+            new_value={
+                "category_id": req.category_id,
+                "tag_ids": unique_tag_ids,
+            },
         )
-    run_query(
-        """
-        MATCH (t:Table {id: $table_id})
-        CREATE (:Change {
-            id: $change_id,
-            operation: $operation,
-            table_name: t.name,
-            target_type: $target_type,
-            target_id: t.id,
-            changed_at: datetime(),
-            commit_hash: $commit_hash
-        })
-        """,
-        table_id=table_id,
-        change_id=str(uuid.uuid4()),
-        operation="table_classification_update",
-        target_type="table",
-        commit_hash="",
-    )
+
+    run_write_transaction(_update)
     return get_table_by_name(table_rows[0]["name"])
 
 
@@ -622,28 +724,39 @@ def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
 
     if req.parent_id is None:
         level = 1
-        run_query(
-            """
-            CREATE (category:MetaCategory {
-                id: $id,
-                code: $code,
-                name: $name,
-                level: $level,
-                sort_order: $sort_order,
-                active: $active,
-                protected: false,
-                created_at: datetime(),
-                updated_at: datetime()
-            })
-            """,
-            id=category_id,
-            code=req.code,
-            name=req.name,
-            level=level,
-            sort_order=req.sort_order,
-            active=req.active,
-        )
-        _record_change("category_create", "MetaCategory", category_id)
+        def _create_root(tx):
+            tx.run(
+                """
+                CREATE (category:MetaCategory {
+                    id: $id,
+                    code: $code,
+                    name: $name,
+                    level: $level,
+                    sort_order: $sort_order,
+                    active: $active,
+                    protected: false,
+                    created_at: datetime(),
+                    updated_at: datetime()
+                })
+                """,
+                {
+                    "id": category_id,
+                    "code": req.code,
+                    "name": req.name,
+                    "level": level,
+                    "sort_order": req.sort_order,
+                    "active": req.active,
+                },
+            )
+            _record_change(
+                "category_create",
+                "MetaCategory",
+                category_id,
+                tx=tx,
+                new_value=req.model_dump(),
+            )
+
+        run_write_transaction(_create_root)
         return _load_category_node(category_id)
 
     parent_rows = run_query(
@@ -655,31 +768,42 @@ def create_category(req: CreateCategoryRequest) -> CategoryNodeResponse:
     if int(parent_rows[0]["level"]) != 1:
         raise InvalidCategoryMove(req.parent_id)
     level = int(parent_rows[0]["level"]) + 1
-    run_query(
-        """
-        MATCH (parent:MetaCategory {id: $parent_id})
-        CREATE (category:MetaCategory {
-            id: $id,
-            code: $code,
-            name: $name,
-            level: $level,
-            sort_order: $sort_order,
-            active: $active,
-            protected: false,
-            created_at: datetime(),
-            updated_at: datetime()
-        })
-        MERGE (parent)-[:HAS_CHILD]->(category)
-        """,
-        parent_id=req.parent_id,
-        id=category_id,
-        code=req.code,
-        name=req.name,
-        level=level,
-        sort_order=req.sort_order,
-        active=req.active,
-    )
-    _record_change("category_create", "MetaCategory", category_id)
+    def _create_child(tx):
+        tx.run(
+            """
+            MATCH (parent:MetaCategory {id: $parent_id})
+            CREATE (category:MetaCategory {
+                id: $id,
+                code: $code,
+                name: $name,
+                level: $level,
+                sort_order: $sort_order,
+                active: $active,
+                protected: false,
+                created_at: datetime(),
+                updated_at: datetime()
+            })
+            MERGE (parent)-[:HAS_CHILD]->(category)
+            """,
+            {
+                "parent_id": req.parent_id,
+                "id": category_id,
+                "code": req.code,
+                "name": req.name,
+                "level": level,
+                "sort_order": req.sort_order,
+                "active": req.active,
+            },
+        )
+        _record_change(
+            "category_create",
+            "MetaCategory",
+            category_id,
+            tx=tx,
+            new_value=req.model_dump(),
+        )
+
+    run_write_transaction(_create_child)
     return _load_category_node(category_id)
 
 
@@ -696,11 +820,33 @@ def update_category(category_id: str, req: UpdateCategoryRequest) -> CategoryNod
         params["sort_order"] = req.sort_order
     if sets:
         sets.append("category.updated_at = datetime()")
-        run_query(
-            f"MATCH (category:MetaCategory {{id: $category_id}}) SET {', '.join(sets)}",
-            **params,
-        )
-        _record_change("category_update", "MetaCategory", category_id)
+        def _update(tx):
+            old_rows = list(tx.run(
+                """
+                MATCH (category:MetaCategory {id: $category_id})
+                RETURN category.name AS name,
+                       coalesce(category.sort_order, 0) AS sort_order
+                """,
+                {"category_id": category_id},
+            ))
+            old = dict(old_rows[0]) if old_rows else {}
+            tx.run(
+                f"MATCH (category:MetaCategory {{id: $category_id}}) SET {', '.join(sets)}",
+                params,
+            )
+            _record_change(
+                "category_update",
+                "MetaCategory",
+                category_id,
+                tx=tx,
+                old_value=old,
+                new_value={
+                    "name": req.name if req.name is not None else old.get("name"),
+                    "sort_order": req.sort_order if req.sort_order is not None else old.get("sort_order"),
+                },
+            )
+
+        run_write_transaction(_update)
     return _load_category_node(category_id)
 
 
@@ -729,20 +875,38 @@ def move_category(category_id: str, req: MoveCategoryRequest) -> CategoryNodeRes
         raise CategoryNotFound(req.parent_id)
     if int(parent_rows[0]["level"]) != 1:
         raise InvalidCategoryMove(req.parent_id)
-    run_query(
-        """
-        MATCH (category:MetaCategory {id: $category_id})
-        MATCH (parent:MetaCategory {id: $parent_id})
-        OPTIONAL MATCH (:MetaCategory)-[old_parent:HAS_CHILD]->(category)
-        DELETE old_parent
-        MERGE (parent)-[:HAS_CHILD]->(category)
-        SET category.level = parent.level + 1,
-            category.updated_at = datetime()
-        """,
-        category_id=category_id,
-        parent_id=req.parent_id,
-    )
-    _record_change("category_move", "MetaCategory", category_id)
+    def _move(tx):
+        old_rows = list(tx.run(
+            """
+            MATCH (category:MetaCategory {id: $category_id})
+            OPTIONAL MATCH (old_parent:MetaCategory)-[:HAS_CHILD]->(category)
+            RETURN old_parent.id AS parent_id
+            """,
+            {"category_id": category_id},
+        ))
+        old_parent_id = old_rows[0]["parent_id"] if old_rows else None
+        tx.run(
+            """
+            MATCH (category:MetaCategory {id: $category_id})
+            MATCH (parent:MetaCategory {id: $parent_id})
+            OPTIONAL MATCH (:MetaCategory)-[old_parent:HAS_CHILD]->(category)
+            DELETE old_parent
+            MERGE (parent)-[:HAS_CHILD]->(category)
+            SET category.level = parent.level + 1,
+                category.updated_at = datetime()
+            """,
+            {"category_id": category_id, "parent_id": req.parent_id},
+        )
+        _record_change(
+            "category_move",
+            "MetaCategory",
+            category_id,
+            tx=tx,
+            old_value={"parent_id": old_parent_id},
+            new_value={"parent_id": req.parent_id},
+        )
+
+    run_write_transaction(_move)
     return _load_category_node(category_id)
 
 
@@ -750,7 +914,8 @@ def update_category_status(category_id: str, req: StatusUpdateRequest) -> Catego
     rows = run_query(
         """
         MATCH (category:MetaCategory {id: $category_id})
-        RETURN coalesce(category.protected, false) AS protected
+        RETURN coalesce(category.protected, false) AS protected,
+               coalesce(category.active, true) AS active
         """,
         category_id=category_id,
     )
@@ -758,16 +923,33 @@ def update_category_status(category_id: str, req: StatusUpdateRequest) -> Catego
         raise CategoryNotFound(category_id)
     if rows[0]["protected"] and req.active is False:
         raise ProtectedCategoryOperation(category_id)
-    run_query(
-        """
-        MATCH (category:MetaCategory {id: $category_id})
-        SET category.active = $active,
-            category.updated_at = datetime()
-        """,
-        category_id=category_id,
-        active=req.active,
-    )
-    _record_change("category_status_update", "MetaCategory", category_id)
+    def _update_status(tx):
+        old_rows = list(tx.run(
+            """
+            MATCH (category:MetaCategory {id: $category_id})
+            RETURN coalesce(category.active, true) AS active
+            """,
+            {"category_id": category_id},
+        ))
+        old_active = old_rows[0]["active"] if old_rows else None
+        tx.run(
+            """
+            MATCH (category:MetaCategory {id: $category_id})
+            SET category.active = $active,
+                category.updated_at = datetime()
+            """,
+            {"category_id": category_id, "active": req.active},
+        )
+        _record_change(
+            "category_status_update",
+            "MetaCategory",
+            category_id,
+            tx=tx,
+            old_value={"active": old_active},
+            new_value={"active": req.active},
+        )
+
+    run_write_transaction(_update_status)
     return _load_category_node(category_id)
 
 
@@ -780,25 +962,36 @@ def create_tag_group(req: CreateTagGroupRequest) -> TagGroupResponse:
     if existing:
         raise TagGroupAlreadyExists(req.code)
 
-    run_query(
-        """
-        CREATE (group:MetaTagGroup {
-            id: $id,
-            code: $code,
-            name: $name,
-            sort_order: $sort_order,
-            active: $active,
-            created_at: datetime(),
-            updated_at: datetime()
-        })
-        """,
-        id=group_id,
-        code=req.code,
-        name=req.name,
-        sort_order=req.sort_order,
-        active=req.active,
-    )
-    _record_change("tag_group_create", "MetaTagGroup", group_id)
+    def _create_group(tx):
+        tx.run(
+            """
+            CREATE (group:MetaTagGroup {
+                id: $id,
+                code: $code,
+                name: $name,
+                sort_order: $sort_order,
+                active: $active,
+                created_at: datetime(),
+                updated_at: datetime()
+            })
+            """,
+            {
+                "id": group_id,
+                "code": req.code,
+                "name": req.name,
+                "sort_order": req.sort_order,
+                "active": req.active,
+            },
+        )
+        _record_change(
+            "tag_group_create",
+            "MetaTagGroup",
+            group_id,
+            tx=tx,
+            new_value=req.model_dump(),
+        )
+
+    run_write_transaction(_create_group)
     return _load_tag_group(group_id)
 
 
@@ -818,11 +1011,35 @@ def update_tag_group(group_id: str, req: UpdateTagGroupRequest) -> TagGroupRespo
         params["active"] = req.active
     if sets:
         sets.append("group.updated_at = datetime()")
-        run_query(
-            f"MATCH (group:MetaTagGroup {{id: $group_id}}) SET {', '.join(sets)}",
-            **params,
-        )
-        _record_change("tag_group_update", "MetaTagGroup", group_id)
+        def _update_group(tx):
+            old_rows = list(tx.run(
+                """
+                MATCH (group:MetaTagGroup {id: $group_id})
+                RETURN group.name AS name,
+                       coalesce(group.sort_order, 0) AS sort_order,
+                       coalesce(group.active, true) AS active
+                """,
+                {"group_id": group_id},
+            ))
+            old = dict(old_rows[0]) if old_rows else {}
+            tx.run(
+                f"MATCH (group:MetaTagGroup {{id: $group_id}}) SET {', '.join(sets)}",
+                params,
+            )
+            _record_change(
+                "tag_group_update",
+                "MetaTagGroup",
+                group_id,
+                tx=tx,
+                old_value=old,
+                new_value={
+                    "name": req.name if req.name is not None else old.get("name"),
+                    "sort_order": req.sort_order if req.sort_order is not None else old.get("sort_order"),
+                    "active": req.active if req.active is not None else old.get("active"),
+                },
+            )
+
+        run_write_transaction(_update_group)
     return _load_tag_group(group_id)
 
 
@@ -837,33 +1054,47 @@ def create_tag(req: CreateTagRequest) -> TagResponse:
     if existing:
         raise TagAlreadyExists(req.code)
 
-    run_query(
-        """
-        MATCH (group:MetaTagGroup {id: $group_id})
-        CREATE (group)-[:HAS_TAG]->(tag:MetaTag {
-            id: $id,
-            code: $code,
-            name: $name,
-            sort_order: $sort_order,
-            active: $active,
-            created_at: datetime(),
-            updated_at: datetime()
-        })
-        """,
-        group_id=req.group_id,
-        id=tag_id,
-        code=req.code,
-        name=req.name,
-        sort_order=req.sort_order,
-        active=req.active,
-    )
-    _record_change("tag_create", "MetaTag", tag_id)
+    def _create_tag(tx):
+        tx.run(
+            """
+            MATCH (group:MetaTagGroup {id: $group_id})
+            CREATE (group)-[:HAS_TAG]->(tag:MetaTag {
+                id: $id,
+                code: $code,
+                name: $name,
+                sort_order: $sort_order,
+                active: $active,
+                created_at: datetime(),
+                updated_at: datetime()
+            })
+            """,
+            {
+                "group_id": req.group_id,
+                "id": tag_id,
+                "code": req.code,
+                "name": req.name,
+                "sort_order": req.sort_order,
+                "active": req.active,
+            },
+        )
+        _record_change(
+            "tag_create",
+            "MetaTag",
+            tag_id,
+            tx=tx,
+            new_value=req.model_dump(),
+        )
+
+    run_write_transaction(_create_tag)
     return _load_tag(tag_id)
 
 
 def update_tag(tag_id: str, req: UpdateTagRequest) -> TagResponse:
     if not run_query("MATCH (:MetaTag {id: $tag_id}) RETURN 1 AS found", tag_id=tag_id):
         raise TagNotFound(tag_id)
+    if req.group_id is not None:
+        if not run_query("MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found", group_id=req.group_id):
+            raise TagGroupNotFound(req.group_id)
     sets: list[str] = []
     params: dict = {"tag_id": tag_id}
     if req.name is not None:
@@ -872,29 +1103,89 @@ def update_tag(tag_id: str, req: UpdateTagRequest) -> TagResponse:
     if req.sort_order is not None:
         sets.append("tag.sort_order = $sort_order")
         params["sort_order"] = req.sort_order
-    if sets:
+    if sets or req.group_id is not None:
         sets.append("tag.updated_at = datetime()")
-        run_query(
-            f"MATCH (tag:MetaTag {{id: $tag_id}}) SET {', '.join(sets)}",
-            **params,
-        )
-        _record_change("tag_update", "MetaTag", tag_id)
+
+        def _update(tx):
+            rows = list(tx.run(
+                """
+                MATCH (tag:MetaTag {id: $tag_id})
+                OPTIONAL MATCH (group:MetaTagGroup)-[:HAS_TAG]->(tag)
+                RETURN tag.name AS name,
+                       coalesce(tag.sort_order, 0) AS sort_order,
+                       group.id AS group_id
+                """,
+                {"tag_id": tag_id},
+            ))
+            old = dict(rows[0]) if rows else {}
+            if sets:
+                tx.run(
+                    f"MATCH (tag:MetaTag {{id: $tag_id}}) SET {', '.join(sets)}",
+                    params,
+                )
+            if req.group_id is not None:
+                tx.run(
+                    """
+                    MATCH (tag:MetaTag {id: $tag_id})
+                    MATCH (group:MetaTagGroup {id: $group_id})
+                    OPTIONAL MATCH (:MetaTagGroup)-[old_group_edge:HAS_TAG]->(tag)
+                    DELETE old_group_edge
+                    MERGE (group)-[:HAS_TAG]->(tag)
+                    SET tag.updated_at = datetime()
+                    """,
+                    {"tag_id": tag_id, "group_id": req.group_id},
+                )
+            _record_change(
+                "tag_update",
+                "MetaTag",
+                tag_id,
+                tx=tx,
+                old_value={
+                    "name": old.get("name"),
+                    "sort_order": old.get("sort_order"),
+                    "group_id": old.get("group_id"),
+                },
+                new_value={
+                    "name": req.name if req.name is not None else old.get("name"),
+                    "sort_order": req.sort_order if req.sort_order is not None else old.get("sort_order"),
+                    "group_id": req.group_id if req.group_id is not None else old.get("group_id"),
+                },
+            )
+
+        run_write_transaction(_update)
     return _load_tag(tag_id)
 
 
 def update_tag_status(tag_id: str, req: StatusUpdateRequest) -> TagResponse:
     if not run_query("MATCH (:MetaTag {id: $tag_id}) RETURN 1 AS found", tag_id=tag_id):
         raise TagNotFound(tag_id)
-    run_query(
-        """
-        MATCH (tag:MetaTag {id: $tag_id})
-        SET tag.active = $active,
-            tag.updated_at = datetime()
-        """,
-        tag_id=tag_id,
-        active=req.active,
-    )
-    _record_change("tag_status_update", "MetaTag", tag_id)
+    def _update_status(tx):
+        old_rows = list(tx.run(
+            """
+            MATCH (tag:MetaTag {id: $tag_id})
+            RETURN coalesce(tag.active, true) AS active
+            """,
+            {"tag_id": tag_id},
+        ))
+        old_active = old_rows[0]["active"] if old_rows else None
+        tx.run(
+            """
+            MATCH (tag:MetaTag {id: $tag_id})
+            SET tag.active = $active,
+                tag.updated_at = datetime()
+            """,
+            {"tag_id": tag_id, "active": req.active},
+        )
+        _record_change(
+            "tag_status_update",
+            "MetaTag",
+            tag_id,
+            tx=tx,
+            old_value={"active": old_active},
+            new_value={"active": req.active},
+        )
+
+    run_write_transaction(_update_status)
     return _load_tag(tag_id)
 
 
@@ -1499,7 +1790,7 @@ def preview_sql_import(table: str, sql: str) -> LineageSqlImportPreviewResponse:
 
 
 def apply_lineage_sql(req: LineageSqlApplyRequest) -> LineageSqlPreviewResponse:
-    get_table_by_name(req.table)
+    detail = get_table_by_name(req.table)
     run_query(
         """
         MATCH (t:Table {name: $table})
@@ -1512,6 +1803,10 @@ def apply_lineage_sql(req: LineageSqlApplyRequest) -> LineageSqlPreviewResponse:
             operation: $operation,
             table_name: $table,
             field_name: $field_name,
+            target_type: $target_type,
+            target_id: t.id,
+            old_value: $old_value,
+            new_value: $new_value,
             changed_at: datetime(),
             commit_hash: $commit_hash
         })
@@ -1523,6 +1818,17 @@ def apply_lineage_sql(req: LineageSqlApplyRequest) -> LineageSqlPreviewResponse:
         change_id=str(uuid.uuid4()),
         operation="lineage_sql_apply",
         field_name="",
+        target_type="table",
+        old_value=_json_change_value({
+            "sql_logic": detail.sql_logic,
+            "sql_dialect": detail.sql_dialect,
+            "sql_source": detail.sql_source,
+        }),
+        new_value=_json_change_value({
+            "sql_logic": req.sql,
+            "sql_dialect": "hive",
+            "sql_source": "imported",
+        }),
         commit_hash="",
     )
     return preview_lineage_sql(req.table)

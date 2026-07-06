@@ -85,7 +85,12 @@ def get_table(table_id: str):
 
 @router.post("/api/tables", response_model=TableResponse, status_code=201)
 def create_table_endpoint(req: CreateTableRequest):
-    return service.create_table(req)
+    try:
+        return service.create_table(req)
+    except service.CategoryNotFound:
+        _raise_not_found("category not found")
+    except service.TagNotFound:
+        _raise_not_found("tag not found")
 
 
 @router.put("/api/tables/{table_id}", response_model=TableResponse)

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from backend.metadata import service
@@ -5,10 +7,12 @@ from backend.metadata.models import (
     CreateCategoryRequest,
     CreateTagGroupRequest,
     CreateTagRequest,
+    CreateTableRequest,
     MoveCategoryRequest,
     StatusUpdateRequest,
     TableClassificationUpdateRequest,
-)
+    TableResponse,
+    )
 from backend.metadata.service import (
     CategoryAlreadyExists,
     InvalidCategoryMove,
@@ -18,6 +22,7 @@ from backend.metadata.service import (
     TagGroupAlreadyExists,
     TagNotFound,
     create_category,
+    create_table,
     create_tag,
     create_tag_group,
     get_table_by_name,
@@ -26,6 +31,7 @@ from backend.metadata.service import (
     list_tags,
     move_category,
     update_table_classification,
+    update_tag,
     update_tag_status,
 )
 
@@ -197,6 +203,210 @@ def test_move_category_rejects_invalid_level_without_writing(monkeypatch):
         )
 
     assert not any("MERGE" in cypher or "DELETE" in cypher or "SET" in cypher for cypher, _ in calls[2:])
+
+
+def test_update_table_classification_writes_relationships_and_audit_in_one_transaction(monkeypatch):
+    transaction_statements = []
+
+    def fake_run_query(cypher, **params):
+        if "MATCH (t:Table {id: $table_id}) RETURN t.name AS name" in cypher:
+            return [{"name": "demo_table"}]
+        if "MATCH (category:MetaCategory {id: $category_id})" in cypher and "RETURN category.id AS id" in cypher:
+            return [{"id": params["category_id"]}]
+        if "RETURN collect(tag.id) AS found_ids" in cypher:
+            return [{"found_ids": params["tag_ids"]}]
+        if "DELETE" in cypher or "MERGE" in cypher or "CREATE" in cypher or "SET" in cypher:
+            raise AssertionError("classification mutation escaped transaction")
+        return []
+
+    class FakeResult:
+        def __init__(self, rows=None):
+            self.rows = rows or []
+
+        def __iter__(self):
+            return iter(self.rows)
+
+    class FakeTx:
+        def run(self, cypher, params=None, **kwargs):
+            merged = dict(params or {})
+            merged.update(kwargs)
+            transaction_statements.append((cypher, merged))
+            if "AS old_category" in cypher:
+                return FakeResult([
+                    {
+                        "old_category": "category:network.coverage",
+                        "old_tags": ["tag:network.coverage"],
+                    }
+                ])
+            return FakeResult([])
+
+    def fake_run_write_transaction(callback):
+        return callback(FakeTx())
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+    monkeypatch.setattr(service, "run_write_transaction", fake_run_write_transaction, raising=False)
+    monkeypatch.setattr(
+        service,
+        "get_table_by_name",
+        lambda name: TableResponse(
+            id="t1",
+            name=name,
+            layer="DWD",
+            layer_priority=2,
+            storage_type="HIVE",
+            description="",
+            fields=[],
+        ),
+    )
+
+    update_table_classification(
+        "t1",
+        TableClassificationUpdateRequest(
+            category_id="category:network.quality",
+            tag_ids=["tag:network.quality", "tag:network.quality"],
+        ),
+    )
+
+    assert transaction_statements
+    change_statement = next(
+        params for cypher, params in transaction_statements if "operation: $operation" in cypher
+    )
+    assert change_statement["operation"] == "table_classification_update"
+    assert json.loads(change_statement["old_value"]) == {
+        "category_id": "category:network.coverage",
+        "tag_ids": ["tag:network.coverage"],
+    }
+    assert json.loads(change_statement["new_value"]) == {
+        "category_id": "category:network.quality",
+        "tag_ids": ["tag:network.quality"],
+    }
+
+
+def test_create_table_requires_classification_and_writes_it_in_transaction(monkeypatch):
+    transaction_statements = []
+
+    def fake_run_query(cypher, **params):
+        if "MATCH (category:MetaCategory {id: $category_id})" in cypher and "RETURN category.id AS id" in cypher:
+            return [{"id": params["category_id"]}]
+        if "RETURN collect(tag.id) AS found_ids" in cypher:
+            return [{"found_ids": params["tag_ids"]}]
+        if "MATCH (t:Table {name: $name})" in cypher:
+            return [{"name": params.get("name", "demo_table")}]
+        if "CREATE" in cypher or "MERGE" in cypher or "SET" in cypher:
+            raise AssertionError("table create mutation escaped transaction")
+        return []
+
+    class FakeTx:
+        def run(self, cypher, params=None, **kwargs):
+            merged = dict(params or {})
+            merged.update(kwargs)
+            transaction_statements.append((cypher, merged))
+            return []
+
+    def fake_run_write_transaction(callback):
+        return callback(FakeTx())
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+    monkeypatch.setattr(service, "run_write_transaction", fake_run_write_transaction, raising=False)
+    monkeypatch.setattr(
+        service,
+        "get_table_by_name",
+        lambda name: TableResponse(
+            id="t-created",
+            name=name,
+            layer="ODS",
+            layer_priority=1,
+            storage_type="HIVE",
+            description="",
+            fields=[],
+        ),
+    )
+
+    created = create_table(
+        CreateTableRequest(
+            name="demo_table",
+            layer="ODS",
+            storage_type="HIVE",
+            description="",
+            category_id="category:source-data.chr",
+            tag_ids=["tag:source.chr", "tag:source.chr"],
+        )
+    )
+
+    assert created.name == "demo_table"
+    assert any("CREATE (t:Table" in cypher for cypher, _ in transaction_statements)
+    assert any("MERGE (t)-[:IN_CATEGORY]->(category)" in cypher for cypher, _ in transaction_statements)
+    tag_write = next(params for cypher, params in transaction_statements if "tag.id IN $tag_ids" in cypher)
+    assert tag_write["tag_ids"] == ["tag:source.chr"]
+
+
+def test_update_tag_can_move_tag_to_another_group_and_audit(monkeypatch):
+    transaction_statements = []
+
+    def fake_run_query(cypher, **params):
+        if "MATCH (:MetaTag {id: $tag_id}) RETURN 1 AS found" in cypher:
+            return [{"found": 1}]
+        if "MATCH (:MetaTagGroup {id: $group_id}) RETURN 1 AS found" in cypher:
+            return [{"found": 1}]
+        if "CREATE" in cypher or "MERGE" in cypher or "SET" in cypher or "DELETE" in cypher:
+            raise AssertionError("tag mutation escaped transaction")
+        return []
+
+    class FakeResult:
+        def __init__(self, rows=None):
+            self.rows = rows or []
+
+        def __iter__(self):
+            return iter(self.rows)
+
+    class FakeTx:
+        def run(self, cypher, params=None, **kwargs):
+            merged = dict(params or {})
+            merged.update(kwargs)
+            transaction_statements.append((cypher, merged))
+            if "RETURN tag.name AS name" in cypher:
+                return FakeResult([
+                    {
+                        "name": "Coverage",
+                        "sort_order": 1,
+                        "group_id": "tag-group:old",
+                    }
+                ])
+            return FakeResult([])
+
+    def fake_run_write_transaction(callback):
+        return callback(FakeTx())
+
+    monkeypatch.setattr(service, "run_query", fake_run_query)
+    monkeypatch.setattr(service, "run_write_transaction", fake_run_write_transaction, raising=False)
+    monkeypatch.setattr(
+        service,
+        "_load_tag",
+        lambda tag_id: service.TagResponse(
+            id=tag_id,
+            code="network.coverage",
+            name="Coverage Updated",
+            sort_order=2,
+            active=True,
+        ),
+    )
+
+    update_tag(
+        "tag:network.coverage",
+        service.UpdateTagRequest(
+            name="Coverage Updated",
+            sort_order=2,
+            group_id="tag-group:new",
+        ),
+    )
+
+    assert any("DELETE old_group_edge" in cypher for cypher, _ in transaction_statements)
+    assert any("MERGE (group)-[:HAS_TAG]->(tag)" in cypher for cypher, _ in transaction_statements)
+    change_statement = next(
+        params for cypher, params in transaction_statements if "operation: $operation" in cypher
+    )
+    assert json.loads(change_statement["old_value"])["group_id"] == "tag-group:old"
+    assert json.loads(change_statement["new_value"])["group_id"] == "tag-group:new"
 
 
 @pytest.mark.infra

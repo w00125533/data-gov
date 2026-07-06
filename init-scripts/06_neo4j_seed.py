@@ -49,13 +49,13 @@ def seed_taxonomy() -> tuple[int, int, int]:
             """
             MERGE (root:MetaCategory {code: $code})
             ON CREATE SET root.id = $id,
-                          root.created_at = datetime()
-            SET root.name = $name,
-                root.level = 1,
-                root.sort_order = $sort_order,
-                root.protected = true,
-                root.active = true,
-                root.updated_at = datetime()
+                          root.name = $name,
+                          root.level = 1,
+                          root.sort_order = $sort_order,
+                          root.protected = true,
+                          root.active = true,
+                          root.created_at = datetime(),
+                          root.updated_at = datetime()
             """,
             id=root_id,
             code=root["code"],
@@ -71,13 +71,15 @@ def seed_taxonomy() -> tuple[int, int, int]:
                 MATCH (root:MetaCategory {code: $root_code})
                 MERGE (child:MetaCategory {code: $code})
                 ON CREATE SET child.id = $id,
-                              child.created_at = datetime()
-                SET child.name = $name,
-                    child.level = 2,
-                    child.sort_order = $sort_order,
-                    child.protected = false,
-                    child.active = true,
-                    child.updated_at = datetime()
+                              child.name = $name,
+                              child.level = 2,
+                              child.sort_order = $sort_order,
+                              child.protected = false,
+                              child.active = true,
+                              child.created_at = datetime(),
+                              child.updated_at = datetime()
+                WITH root, child
+                WHERE NOT EXISTS { MATCH (:MetaCategory)-[:HAS_CHILD]->(child) }
                 MERGE (root)-[:HAS_CHILD]->(child)
                 """,
                 root_code=root["code"],
@@ -94,11 +96,11 @@ def seed_taxonomy() -> tuple[int, int, int]:
             """
             MERGE (g:MetaTagGroup {code: $code})
             ON CREATE SET g.id = $id,
-                          g.created_at = datetime()
-            SET g.name = $name,
-                g.sort_order = $sort_order,
-                g.active = true,
-                g.updated_at = datetime()
+                          g.name = $name,
+                          g.sort_order = $sort_order,
+                          g.active = true,
+                          g.created_at = datetime(),
+                          g.updated_at = datetime()
             """,
             id=group_id,
             code=group["code"],
@@ -113,11 +115,13 @@ def seed_taxonomy() -> tuple[int, int, int]:
                 MATCH (g:MetaTagGroup {code: $group_code})
                 MERGE (tag:MetaTag {code: $code})
                 ON CREATE SET tag.id = $id,
-                              tag.created_at = datetime()
-                SET tag.name = $name,
-                    tag.sort_order = $sort_order,
-                    tag.active = true,
-                    tag.updated_at = datetime()
+                              tag.name = $name,
+                              tag.sort_order = $sort_order,
+                              tag.active = true,
+                              tag.created_at = datetime(),
+                              tag.updated_at = datetime()
+                WITH g, tag
+                WHERE NOT EXISTS { MATCH (:MetaTagGroup)-[:HAS_TAG]->(tag) }
                 MERGE (g)-[:HAS_TAG]->(tag)
                 """,
                 group_code=group["code"],
@@ -209,28 +213,29 @@ def seed_table_classification() -> int:
             """
             MATCH (t:Table {name: $table})
             MATCH (category:MetaCategory {code: $category_code})
-            OPTIONAL MATCH (t)-[old:IN_CATEGORY]->(:MetaCategory)
-            DELETE old
-            WITH DISTINCT t, category
-            OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)
-            DELETE old_tag
-            WITH DISTINCT t, category
+            OPTIONAL MATCH (t)-[:IN_CATEGORY]->(existing_category:MetaCategory)
+            WITH t, category, existing_category
+            WHERE existing_category IS NULL
             MERGE (t)-[:IN_CATEGORY]->(category)
+            WITH t
+            MATCH (tag:MetaTag)
+            WHERE tag.code IN $tag_codes
+            MERGE (t)-[:TAGGED_WITH]->(tag)
+            RETURN count(DISTINCT t) AS classified
+            """,
+            table=table_name,
+            category_code=category_code,
+            tag_codes=tag_codes,
+        )
+        rows = run_query(
+            """
+            MATCH (t:Table {name: $table})-[:IN_CATEGORY]->(:MetaCategory {code: $category_code})
+            RETURN count(DISTINCT t) AS classified
             """,
             table=table_name,
             category_code=category_code,
         )
-        for tag_code in tag_codes:
-            run_query(
-                """
-                MATCH (t:Table {name: $table})
-                MATCH (tag:MetaTag {code: $tag_code})
-                MERGE (t)-[:TAGGED_WITH]->(tag)
-                """,
-                table=table_name,
-                tag_code=tag_code,
-            )
-        classified_count += 1
+        classified_count += int(rows[0]["classified"]) if rows else 0
     return classified_count
 
 

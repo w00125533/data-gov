@@ -22,6 +22,8 @@ def test_p1_6_metadata_crud_roundtrip():
             "layer": "DWS",
             "storage_type": "HIVE",
             "description": "temporary CRUD acceptance",
+            "category_id": "category:source-data.chr",
+            "tag_ids": ["tag:source.chr"],
         })
         assert r.status_code == 201, r.text
         new_table = r.json()

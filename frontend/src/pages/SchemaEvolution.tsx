@@ -6,7 +6,24 @@ import { api, type SchemaChange } from '../api/client'
 import DiffPanel from '../components/DiffPanel'
 import EvolutionTimeline from '../components/EvolutionTimeline'
 
-const operations = ['ALL', 'ADD_TABLE', 'ADD_FIELD', 'UPDATE_FIELD', 'DELETE_FIELD']
+const operations = [
+  'ALL',
+  'ADD_TABLE',
+  'ADD_FIELD',
+  'UPDATE_FIELD',
+  'DELETE_FIELD',
+  'table_create',
+  'table_classification_update',
+  'category_create',
+  'category_update',
+  'category_move',
+  'category_status_update',
+  'tag_group_create',
+  'tag_group_update',
+  'tag_create',
+  'tag_update',
+  'tag_status_update',
+]
 
 export default function SchemaEvolution() {
   const [params, setParams] = useSearchParams()

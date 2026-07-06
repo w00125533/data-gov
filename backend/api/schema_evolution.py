@@ -78,6 +78,8 @@ def _change_from_row(row: dict) -> dict:
         "operation": row["operation"],
         "table_name": row.get("table_name"),
         "field_name": row.get("field_name"),
+        "target_type": row.get("target_type"),
+        "target_id": row.get("target_id"),
         "version": version,
         "previous_version": version - 1 if version and version > 1 else None,
         "old_value": _parse_json_value(row.get("old_value")),
@@ -151,6 +153,7 @@ def schema_evolution_list(
         MATCH (c:Change)
         {where}
         RETURN c.id AS id, c.operation AS operation, c.table_name AS table_name, c.field_name AS field_name,
+               c.target_type AS target_type, c.target_id AS target_id,
                c.version AS version, c.field_version AS field_version,
                c.old_value AS old_value, c.new_value AS new_value, c.downstream AS downstream,
                c.changed_at AS changed_at, c.commit_hash AS commit_hash
@@ -171,6 +174,7 @@ def schema_evolution(table: str) -> dict:
         """
         MATCH (c:Change {table_name: $table})
         RETURN c.id AS id, c.operation AS operation, c.table_name AS table_name, c.field_name AS field_name,
+               c.target_type AS target_type, c.target_id AS target_id,
                c.version AS version, c.field_version AS field_version,
                c.old_value AS old_value, c.new_value AS new_value, c.downstream AS downstream,
                c.changed_at AS changed_at, c.commit_hash AS commit_hash

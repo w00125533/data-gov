@@ -45,7 +45,14 @@ def test_lineage_downstream_from_dwd_session_qos():
 
 @pytest.mark.infra
 def test_create_and_delete_table_roundtrip():
-    req = CreateTableRequest(name="tmp_test_table", layer="DWS", storage_type="HIVE", description="t")
+    req = CreateTableRequest(
+        name="tmp_test_table",
+        layer="DWS",
+        storage_type="HIVE",
+        description="t",
+        category_id="category:source-data.chr",
+        tag_ids=["tag:source.chr"],
+    )
     created = create_table(req)
     assert created.name == "tmp_test_table"
     delete_table("tmp_test_table")

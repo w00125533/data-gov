@@ -36,7 +36,7 @@ def test_table_classification_matches_taxonomy_by_code():
     assert 'code=tag["code"]' in source
     assert 'id=_tag_id(tag["code"])' in source
     assert "MetaCategory {code: $category_code}" in source
-    assert "MetaTag {code: $tag_code}" in source
+    assert "tag.code IN $tag_codes" in source
     assert "_category_path_code_map" not in source
     assert "_tag_name_code_map" not in source
     assert '_tag_code(tag["name"])' not in source
@@ -46,8 +46,32 @@ def test_table_classification_matches_taxonomy_by_code():
     assert "MetaTag {name: $tag_name}" not in source
 
 
-def test_table_classification_seed_deletes_stale_tag_edges():
+def test_taxonomy_seed_preserves_runtime_edits_on_rerun():
     source = _seed_script_source()
 
-    assert "OPTIONAL MATCH (t)-[old_tag:TAGGED_WITH]->(:MetaTag)" in source
-    assert "DELETE old_tag" in source
+    assert "ON CREATE SET root.id = $id" in source
+    assert "ON CREATE SET child.id = $id" in source
+    assert "ON CREATE SET g.id = $id" in source
+    assert "ON CREATE SET tag.id = $id" in source
+    assert "SET root.name = $name" not in source
+    assert "SET child.name = $name" not in source
+    assert "SET g.name = $name" not in source
+    assert "SET tag.name = $name" not in source
+
+
+def test_table_classification_seed_only_fills_unclassified_tables():
+    source = _seed_script_source()
+
+    assert "OPTIONAL MATCH (t)-[:IN_CATEGORY]->(existing_category:MetaCategory)" in source
+    assert "WHERE existing_category IS NULL" in source
+    assert "DELETE old_tag" not in source
+    assert "DELETE old" not in source
+
+
+def test_taxonomy_seed_does_not_restore_default_runtime_moves():
+    source = _seed_script_source()
+
+    assert "WHERE NOT EXISTS { MATCH (:MetaCategory)-[:HAS_CHILD]->(child) }" in source
+    assert "WHERE NOT EXISTS { MATCH (:MetaTagGroup)-[:HAS_TAG]->(tag) }" in source
+    assert source.index("WHERE NOT EXISTS { MATCH (:MetaCategory)-[:HAS_CHILD]->(child) }") < source.index("MERGE (root)-[:HAS_CHILD]->(child)")
+    assert source.index("WHERE NOT EXISTS { MATCH (:MetaTagGroup)-[:HAS_TAG]->(tag) }") < source.index("MERGE (g)-[:HAS_TAG]->(tag)")

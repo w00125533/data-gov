@@ -15,7 +15,9 @@ function compactValue(value: unknown) {
 }
 
 export default function SchemaChangeCard({ change, onYamlDiff }: Props) {
-  const target = change.table_name ? `${change.table_name}${change.field_name ? `.${change.field_name}` : ''}` : change.field_name || 'table'
+  const target = change.table_name
+    ? `${change.table_name}${change.field_name ? `.${change.field_name}` : ''}`
+    : change.target_id || change.field_name || change.target_type || 'change'
   return (
     <Card size="small" className="schema-change-card">
       <Space direction="vertical" style={{ width: '100%' }} size={8}>

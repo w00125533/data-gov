@@ -94,6 +94,25 @@ def test_validate_change_add_table_duplicate():
         assert any(e[0] == "DUPLICATE_TABLE" for e in result["errors"])
 
 
+def test_validate_change_add_table_requires_explicit_category():
+    with patch("backend.agent.tools.metadata_service.get_table_by_name") as gt:
+        from backend.metadata.service import TableNotFound
+        gt.side_effect = TableNotFound("new_table")
+
+        result = tools.validate_change([
+            {
+                "operation": "ADD_TABLE",
+                "table": "new_table",
+                "layer": "ODS",
+                "storage_type": "HIVE",
+                "fields": [],
+            }
+        ])
+
+    assert result["passed"] is False
+    assert any(e[0] == "MISSING_CATEGORY" for e in result["errors"])
+
+
 def test_check_gaps_returns_suggestions():
     fake_searcher = MagicMock()
     fake_searcher.search.side_effect = [

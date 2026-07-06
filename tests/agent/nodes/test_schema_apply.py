@@ -1,5 +1,8 @@
 """tests/agent/nodes/test_schema_apply.py"""
 from unittest.mock import patch, ANY
+import json
+
+from backend.agent.nodes import schema_apply as schema_apply_module
 from backend.agent.nodes.schema_apply import schema_apply
 
 
@@ -100,3 +103,33 @@ def test_schema_apply_returns_empty_when_diff_empty():
     mock_add_table.assert_not_called()
     mock_sync.assert_not_called()
     mock_git.assert_not_called()
+
+
+def test_schema_apply_change_audit_includes_target_and_values(monkeypatch):
+    captured = {}
+
+    def fake_run_query(cypher, **params):
+        captured["cypher"] = cypher
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(schema_apply_module, "run_query", fake_run_query)
+
+    result = schema_apply_module._record_change(
+        {
+            "operation": "ADD_FIELD",
+            "table": "dwd_session_qos",
+            "field": "jitter",
+            "data_type": "DOUBLE",
+        }
+    )
+
+    assert "target_type" in captured["cypher"]
+    assert "target_id" in captured["cypher"]
+    assert "old_value" in captured["cypher"]
+    assert "new_value" in captured["cypher"]
+    assert captured["params"]["target_type"] == "field"
+    assert captured["params"]["target_id"] == "dwd_session_qos.jitter"
+    assert captured["params"]["old_value"] is None
+    assert json.loads(captured["params"]["new_value"])["data_type"] == "DOUBLE"
+    assert result["target_id"] == "dwd_session_qos.jitter"

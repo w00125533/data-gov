@@ -375,6 +375,8 @@ CREATE INDEX tag_name_idx FOR (t:MetaTag) ON (t.name);
 - SQL 逻辑预览不自动覆盖 `Table.sql_logic`；第一版通过 SQL 导入抽屉的“确认应用”写入 Table 节点并追加 `Change`，右侧 SQL 预览区的“同步到表定义”按钮先保留为后续直接写回入口
 - 分类、标签、标签分组的新增、改名、移动、排序、停用均写入 `Change`
 - 表主分类变更和表标签集合变更写入 `Change`；第一版只提供审计查看，不提供版本回滚
+- `Change.old_value/new_value` 以 JSON 字符串写入 Neo4j 节点属性，`/api/schema/evolution` 读取时解析为对象返回；taxonomy 变更同时返回 `target_type/target_id`，便于跨表查看审计。
+- `06_neo4j_seed.py` 只负责内置 taxonomy 的首次创建和未分类示例表的默认纳管。脚本重跑不得覆盖运行期改名、排序、启停、标签换组或表分类调整，也不得删除已有 `IN_CATEGORY/TAGGED_WITH` 治理结果。
 
 #### 派生查询
 
@@ -1570,6 +1572,7 @@ class SandboxController:
 - 主分类路径使用树选择器，只能选择启用状态的叶子分类。
 - 标签使用多选器，可选择已有标签；新建标签走管理抽屉，避免表编辑时产生无治理的临时标签。
 - 保存后调用 `PUT /api/tables/:id/classification`，成功后刷新左侧计数、表列表和表详情。
+- 新建表同样必须选择主分类；`POST /api/tables` 入参包含 `category_id/tag_ids`，服务端在单个 Neo4j 写事务内创建 `Table`、`IN_CATEGORY/TAGGED_WITH` 和 `Change`。
 
 #### 新建/编辑表弹窗
 
@@ -1869,7 +1872,7 @@ context_prompt = """
 |------|------|------|
 | GET | `/api/tables` | 表列表 (支持 ?layer= ?storage= ?search= ?category_id= ?include_children=true ?tag_ids= ?tag_match=any/all) |
 | GET | `/api/tables/:id` | 表详情 + 字段列表 |
-| POST | `/api/tables` | 新建表 |
+| POST | `/api/tables` | 新建表；入参必须包含 `category_id`，可选 `tag_ids`，写入表节点、主分类、标签和 `Change` |
 | PUT | `/api/tables/:id` | 编辑表 |
 | PUT | `/api/tables/:id/classification` | 更新表主分类和标签集合，写入 `IN_CATEGORY` / `TAGGED_WITH` 并追加 `Change` |
 | DELETE | `/api/tables/:id` | 删除表 (含下游校验) |
