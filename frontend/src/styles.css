@@ -160,6 +160,37 @@ body {
   background: #eff6ff;
 }
 
+.metadata-taxonomy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.metadata-left-actions {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.metadata-filter-block {
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.metadata-filter-block-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.metadata-taxonomy-all {
+  height: auto;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
 .muted {
   color: #64748b;
 }

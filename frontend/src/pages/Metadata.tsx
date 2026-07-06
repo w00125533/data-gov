@@ -31,20 +31,50 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   api,
+  type CategoryRef,
   type CreateFieldPayload,
   type CreateTablePayload,
   type FieldResponse,
   type Layer,
   type TableResponse,
   type TableSummary,
+  type TagRef,
   type UpdateFieldPayload,
   type UpstreamRef,
 } from '../api/client'
 import FieldUpstreamEditor from '../components/FieldUpstreamEditor'
+import MetadataTaxonomyPanel from '../components/MetadataTaxonomyPanel'
 
 const layers: Array<Layer | 'ALL'> = ['ALL', 'ODS', 'DWD', 'DWS', 'ADS', 'EVAL']
 const fieldTypes = ['STRING', 'INT', 'BIGINT', 'DOUBLE', 'TIMESTAMP', 'DATE']
 const storageTypes = ['KAFKA', 'HIVE', 'STARROCKS']
+
+const taxonomyLabels: Record<string, string> = {
+  network: '网络',
+  'network.coverage': '覆盖',
+  'network.quality': '质量',
+  'source-data': '源数据',
+  'source-data.chr': 'CHR',
+}
+
+function taxonomyLabel(item: { code: string; name: string }) {
+  return taxonomyLabels[item.code] ?? item.name
+}
+
+function categoryPathLabel(category?: CategoryRef | null) {
+  if (!category) return '未归类'
+  return category.path.map((part, index) => {
+    if (index === 0 && part === 'Network') return '网络'
+    if (index === 0 && part === 'Source Data') return '源数据'
+    const codePart = category.code.split('.')[index]
+    const codePrefix = category.code.split('.').slice(0, index + 1).join('.')
+    return taxonomyLabels[codePrefix] ?? taxonomyLabels[codePart] ?? part
+  }).join(' / ')
+}
+
+function tagLabel(tag: TagRef) {
+  return taxonomyLabel(tag)
+}
 
 type TableFormValues = CreateTablePayload & {
   fields?: Array<{
@@ -73,6 +103,11 @@ export default function Metadata() {
   const [apiMessage, holder] = message.useMessage()
   const [layer, setLayer] = useState<string>(params.get('layer') ?? 'ALL')
   const [search, setSearch] = useState(params.get('search') ?? '')
+  const [categoryId, setCategoryId] = useState<string | undefined>(params.get('category_id') ?? undefined)
+  const [includeChildren, setIncludeChildren] = useState(params.get('include_children') !== 'false')
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(params.getAll('tag_ids'))
+  const [tagMatch, setTagMatch] = useState<'any' | 'all'>(params.get('tag_match') === 'all' ? 'all' : 'any')
+  const [taxonomyDrawerOpen, setTaxonomyDrawerOpen] = useState(false)
   const [selected, setSelected] = useState<TableSummary | undefined>()
   const [yamlTable, setYamlTable] = useState<string | undefined>()
   const [tableModal, setTableModal] = useState<'create' | 'edit' | undefined>()
@@ -81,9 +116,26 @@ export default function Metadata() {
   const [fieldForm] = Form.useForm<FieldFormValues>()
   const expressionValue = Form.useWatch('expression', fieldForm)
 
+  const categoriesQuery = useQuery({
+    queryKey: ['metadata-categories-tree'],
+    queryFn: api.categoriesTree,
+  })
+
+  const tagsQuery = useQuery({
+    queryKey: ['metadata-tags'],
+    queryFn: api.tags,
+  })
+
   const tableQuery = useQuery({
-    queryKey: ['tables', layer, search],
-    queryFn: () => api.tables({ layer: layer === 'ALL' ? undefined : layer, search }),
+    queryKey: ['tables', layer, search, categoryId, includeChildren, selectedTagIds, tagMatch],
+    queryFn: () => api.tables({
+      layer: layer === 'ALL' ? undefined : layer,
+      search,
+      category_id: categoryId,
+      include_children: categoryId ? includeChildren : undefined,
+      tag_ids: selectedTagIds.length ? selectedTagIds : undefined,
+      tag_match: selectedTagIds.length ? tagMatch : undefined,
+    }),
   })
 
   const selectedTable = selected ?? tableQuery.data?.[0]
@@ -107,6 +159,61 @@ export default function Metadata() {
     } else if (selectedTable?.id) {
       queryClient.invalidateQueries({ queryKey: ['table', selectedTable.id] })
     }
+  }
+
+  function updateUrl(updates: Record<string, string | string[] | boolean | undefined>) {
+    const nextParams = new URLSearchParams(params)
+    Object.entries(updates).forEach(([key, value]) => {
+      nextParams.delete(key)
+      if (Array.isArray(value)) {
+        value.forEach((item) => {
+          if (item) nextParams.append(key, item)
+        })
+        return
+      }
+      if (value !== undefined && value !== '') {
+        nextParams.set(key, String(value))
+      }
+    })
+    setParams(nextParams)
+  }
+
+  function resetSelectedTable() {
+    setSelected(undefined)
+  }
+
+  function handleSearchSubmit(value: string) {
+    updateUrl({ search: value || undefined })
+  }
+
+  function handleLayerChange(value: string) {
+    setLayer(value)
+    resetSelectedTable()
+    updateUrl({ layer: value === 'ALL' ? undefined : value })
+  }
+
+  function handleCategoryChange(value?: string) {
+    setCategoryId(value)
+    resetSelectedTable()
+    updateUrl({ category_id: value })
+  }
+
+  function handleIncludeChildrenChange(value: boolean) {
+    setIncludeChildren(value)
+    resetSelectedTable()
+    updateUrl({ include_children: value ? undefined : 'false' })
+  }
+
+  function handleTagsChange(value: string[]) {
+    setSelectedTagIds(value)
+    resetSelectedTable()
+    updateUrl({ tag_ids: value })
+  }
+
+  function handleTagMatchChange(value: 'any' | 'all') {
+    setTagMatch(value)
+    resetSelectedTable()
+    updateUrl({ tag_match: value === 'any' ? undefined : value })
   }
 
   const createTableMutation = useMutation({
@@ -402,36 +509,28 @@ export default function Metadata() {
     <div className="page-grid">
       {holder}
       <section className="panel panel-pad">
-        <div className="toolbar">
-          <Typography.Title level={4} style={{ margin: 0 }}>元数据管理</Typography.Title>
-          <Space>
-            <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(undefined)} loading={yamlExportMutation.isPending}>导出 YAML</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateTable}>新建表</Button>
-          </Space>
-        </div>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Input.Search
-            value={search}
-            placeholder="表名/字段/描述"
-            allowClear
-            onChange={(event) => setSearch(event.target.value)}
-            onSearch={(value) => {
-              if (value) params.set('search', value)
-              else params.delete('search')
-              setParams(params)
-            }}
-          />
-          <Select
-            value={layer}
-            onChange={(value) => {
-              setLayer(value)
-              if (value === 'ALL') params.delete('layer')
-              else params.set('layer', value)
-              setParams(params)
-            }}
-            options={layers.map((value) => ({ value, label: value === 'ALL' ? '全部层级' : value }))}
-            style={{ width: '100%' }}
-          />
+        <MetadataTaxonomyPanel
+          categories={categoriesQuery.data}
+          tagGroups={tagsQuery.data}
+          selectedCategoryId={categoryId}
+          includeChildren={includeChildren}
+          selectedTagIds={selectedTagIds}
+          tagMatch={tagMatch}
+          layer={layer}
+          search={search}
+          layers={layers}
+          onSearchChange={setSearch}
+          onSearchSubmit={handleSearchSubmit}
+          onLayerChange={handleLayerChange}
+          onCategoryChange={handleCategoryChange}
+          onIncludeChildrenChange={handleIncludeChildrenChange}
+          onTagsChange={handleTagsChange}
+          onTagMatchChange={handleTagMatchChange}
+          onOpenManager={() => setTaxonomyDrawerOpen(true)}
+        />
+        <Space className="metadata-left-actions" wrap>
+          <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(undefined)} loading={yamlExportMutation.isPending}>导出 YAML</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateTable}>新建表</Button>
         </Space>
         <div className="table-list" style={{ marginTop: 14 }}>
           {tableQuery.data?.map((table) => (
@@ -448,6 +547,12 @@ export default function Metadata() {
               <Typography.Paragraph className="muted" ellipsis={{ rows: 2 }} style={{ margin: '6px 0 0' }}>
                 {table.description || '无描述'} · {table.field_count} fields
               </Typography.Paragraph>
+              <Space size={[4, 4]} wrap style={{ marginTop: 8 }}>
+                <Tag color={table.category ? 'blue' : 'default'}>{categoryPathLabel(table.category)}</Tag>
+                {(table.tags ?? []).slice(0, 3).map((tag) => (
+                  <Tag key={tag.id} color="geekblue">{tagLabel(tag)}</Tag>
+                ))}
+              </Space>
             </button>
           ))}
         </div>
@@ -546,6 +651,15 @@ export default function Metadata() {
           ) : null}
         </Form>
       </Modal>
+
+      <Drawer
+        title="分类与标签管理"
+        open={taxonomyDrawerOpen}
+        onClose={() => setTaxonomyDrawerOpen(false)}
+        width={520}
+      >
+        <Typography.Text className="muted">分类与标签管理将在后续任务中提供。</Typography.Text>
+      </Drawer>
 
       <Drawer
         title={fieldDrawer?.mode === 'edit' ? '编辑字段' : '新建字段'}
