@@ -22,7 +22,7 @@ const FIELD_TOP = 58
 const CENTER_X = 520
 const CENTER_Y = 260
 const COLUMN_GAP = 320
-const ROW_GAP = 190
+const NODE_VERTICAL_GAP = 48
 
 type TablePosition = {
   x: number
@@ -99,7 +99,31 @@ function tableLevel(payload: LineageGraphResponse, tableName: string, side: 'ups
   return 1
 }
 
-function buildPositions(payload: LineageGraphResponse) {
+function stackTableColumn(
+  tables: LineageTableNode[],
+  side: 'upstream' | 'downstream',
+  level: number,
+  centerY: number,
+  expandedTables: Set<string>,
+  positions: Map<string, TablePosition>,
+) {
+  const totalHeight = tables.reduce((sum, table) => sum + nodeHeight(table, expandedTables.has(table.name)), 0)
+    + Math.max(tables.length - 1, 0) * NODE_VERTICAL_GAP
+  let y = centerY - totalHeight / 2
+
+  tables.forEach((table) => {
+    const height = nodeHeight(table, expandedTables.has(table.name))
+    positions.set(table.name, {
+      x: CENTER_X + (side === 'upstream' ? -level : level) * COLUMN_GAP,
+      y,
+      side,
+      level,
+    })
+    y += height + NODE_VERTICAL_GAP
+  })
+}
+
+function buildPositions(payload: LineageGraphResponse, expandedTables: Set<string>) {
   const connected = connectedTableNames(payload)
   const upstream = payload.tables
     .filter((table) => table.name !== payload.root_table && connected.has(table.name))
@@ -110,28 +134,29 @@ function buildPositions(payload: LineageGraphResponse) {
     .filter((table) => payload.table_edges.some((edge) => edge.target === table.name && edge.direction === 'downstream'))
     .sort((a, b) => a.layer_priority - b.layer_priority || a.name.localeCompare(b.name))
   const positions = new Map<string, TablePosition>()
+  const rootTable = payload.tables.find((table) => table.name === payload.root_table)
+  const rootHeight = rootTable ? nodeHeight(rootTable, expandedTables.has(rootTable.name)) : COLLAPSED_HEIGHT
+  const rootCenterY = CENTER_Y + rootHeight / 2
 
   positions.set(payload.root_table, { x: CENTER_X, y: CENTER_Y, side: 'root', level: 0 })
 
-  upstream.forEach((table, index) => {
+  const upstreamLevels = new Map<number, LineageTableNode[]>()
+  upstream.forEach((table) => {
     const level = tableLevel(payload, table.name, 'upstream')
-    positions.set(table.name, {
-      x: CENTER_X - level * COLUMN_GAP,
-      y: CENTER_Y + (index - (upstream.length - 1) / 2) * ROW_GAP,
-      side: 'upstream',
-      level,
-    })
+    upstreamLevels.set(level, [...(upstreamLevels.get(level) ?? []), table])
   })
+  Array.from(upstreamLevels.entries())
+    .sort(([left], [right]) => left - right)
+    .forEach(([level, tables]) => stackTableColumn(tables, 'upstream', level, rootCenterY, expandedTables, positions))
 
-  downstream.forEach((table, index) => {
+  const downstreamLevels = new Map<number, LineageTableNode[]>()
+  downstream.forEach((table) => {
     const level = tableLevel(payload, table.name, 'downstream')
-    positions.set(table.name, {
-      x: CENTER_X + level * COLUMN_GAP,
-      y: CENTER_Y + (index - (downstream.length - 1) / 2) * ROW_GAP,
-      side: 'downstream',
-      level,
-    })
+    downstreamLevels.set(level, [...(downstreamLevels.get(level) ?? []), table])
   })
+  Array.from(downstreamLevels.entries())
+    .sort(([left], [right]) => left - right)
+    .forEach(([level, tables]) => stackTableColumn(tables, 'downstream', level, rootCenterY, expandedTables, positions))
 
   return positions
 }
@@ -173,17 +198,25 @@ function buildTableNode(
       strokeWidth: 1,
     },
     title: {
+      refX: null,
+      refY: null,
       x: 14,
       y: 22,
       text: table.name,
+      textAnchor: 'start',
+      textVerticalAnchor: 'middle',
       fontSize: 13,
       fontWeight: 700,
       fill: '#172033',
     },
     meta: {
+      refX: null,
+      refY: null,
       x: 14,
       y: 40,
       text: `${table.layer} / ${table.storage_type} / ${table.field_count} fields`,
+      textAnchor: 'start',
+      textVerticalAnchor: 'middle',
       fontSize: 10,
       fill: '#64748b',
     },
@@ -200,10 +233,13 @@ function buildTableNode(
       event: 'lineage:toggle-table',
     },
     toggleLabel: {
+      refX: null,
+      refY: null,
       x: NODE_WIDTH - 23,
-      y: 28,
+      y: 23,
       text: expanded ? '-' : '+',
       textAnchor: 'middle',
+      textVerticalAnchor: 'middle',
       fontSize: 16,
       fontWeight: 700,
       fill: '#334155',
@@ -233,16 +269,24 @@ function buildTableNode(
         stroke: '#e2e8f0',
       }
       attrs[nameSelector] = {
+        refX: null,
+        refY: null,
         x: 30,
-        y: y + 15,
+        y: y + (FIELD_ROW_HEIGHT - 6) / 2,
         text: field.name,
+        textAnchor: 'start',
+        textVerticalAnchor: 'middle',
         fontSize: 11,
         fill: '#172033',
       }
       attrs[typeSelector] = {
-        x: NODE_WIDTH - 82,
-        y: y + 15,
+        refX: null,
+        refY: null,
+        x: NODE_WIDTH - 20,
+        y: y + (FIELD_ROW_HEIGHT - 6) / 2,
         text: field.field_type,
+        textAnchor: 'end',
+        textVerticalAnchor: 'middle',
         fontSize: 10,
         fill: '#64748b',
       }
@@ -353,7 +397,7 @@ export function buildLineageX6GraphData({
 }: LineageX6GraphInput): LineageX6GraphData {
   if (!payload) return { nodes: [], edges: [], fieldEdgeByCellId: new Map() }
 
-  const positions = buildPositions(payload)
+  const positions = buildPositions(payload, expandedTables)
   const nodes = payload.tables
     .filter((table) => positions.has(table.name))
     .map((table) =>

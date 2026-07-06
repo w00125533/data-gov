@@ -172,7 +172,7 @@ export default function LineageWorkspaceGraph({
         },
       },
       interacting: {
-        nodeMovable: false,
+        nodeMovable: true,
         edgeMovable: false,
         vertexMovable: false,
         arrowheadMovable: true,

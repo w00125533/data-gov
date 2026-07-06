@@ -167,6 +167,24 @@ function portIds(node?: Node.Metadata) {
   return Array.isArray(ports) ? ports.map((port) => port.id) : ports.items?.map((port) => port.id)
 }
 
+function field(index: number) {
+  return {
+    id: `f-extra-${index}`,
+    name: `metric_${index}`,
+    field_type: 'DOUBLE',
+    is_nullable: true,
+    is_partition: false,
+    expression: null,
+    description: `metric ${index}`,
+    version: 1,
+    upstream: [],
+  }
+}
+
+function tableBottom(node?: Node.Metadata) {
+  return (node?.y ?? 0) + (node?.height ?? 0)
+}
+
 describe('lineageX6Adapter', () => {
   test('builds deterministic table nodes around the root table', () => {
     const graph = buildLineageX6GraphData({
@@ -247,6 +265,77 @@ describe('lineageX6Adapter', () => {
 
     expect(collapsed.edges.some((item) => item.id === fieldEdgeCellId(payload.field_edges[0]))).toBe(false)
     expect(expanded.edges.some((item) => item.id === fieldEdgeCellId(payload.field_edges[0]))).toBe(true)
+  })
+
+  test('custom SVG text selectors do not inherit rect label positioning', () => {
+    const graph = buildLineageX6GraphData({
+      payload,
+      expandedTables: new Set(['dws_cell_hourly']),
+      selectedEdgeKey: undefined,
+    })
+
+    const root = graph.nodes.find((node) => node.id === 'dws_cell_hourly')
+
+    expect(root?.attrs?.title?.refX).toBeNull()
+    expect(root?.attrs?.title?.refY).toBeNull()
+    expect(root?.attrs?.title?.textAnchor).toBe('start')
+    expect(root?.attrs?.toggleLabel?.refX).toBeNull()
+    expect(root?.attrs?.toggleLabel?.refY).toBeNull()
+    expect(root?.attrs?.toggleLabel?.textVerticalAnchor).toBe('middle')
+    expect(root?.attrs?.fieldName0?.refX).toBeNull()
+    expect(root?.attrs?.fieldName0?.textAnchor).toBe('start')
+    expect(root?.attrs?.fieldType0?.textAnchor).toBe('end')
+  })
+
+  test('expanded stacked upstream tables are spaced by rendered node height', () => {
+    const stackedPayload: LineageGraphResponse = {
+      ...payload,
+      tables: [
+        payload.tables[0],
+        {
+          ...payload.tables[1],
+          field_count: 9,
+          fields: Array.from({ length: 9 }, (_, index) => field(index)),
+        },
+        {
+          id: 't-up-2',
+          name: 'ods_cell_signal',
+          layer: 'ODS',
+          layer_priority: 2,
+          storage_type: 'HIVE',
+          description: 'signal',
+          field_count: 1,
+          sql_logic: null,
+          sql_dialect: null,
+          sql_source: null,
+          sql_updated_at: '',
+          fields: [field(99)],
+        },
+      ],
+      table_edges: [
+        payload.table_edges[0],
+        {
+          source: 'ods_cell_signal',
+          target: 'dws_cell_hourly',
+          direction: 'upstream',
+          field_edge_count: 1,
+          calc_type_counts: { DIRECT: 1 },
+          fields: ['metric_99'],
+        },
+      ],
+      field_edges: [],
+    }
+
+    const graph = buildLineageX6GraphData({
+      payload: stackedPayload,
+      expandedTables: new Set(['dwd_session_qos']),
+      selectedEdgeKey: undefined,
+    })
+
+    const expandedUpstream = graph.nodes.find((node) => node.id === 'dwd_session_qos')
+    const nextUpstream = graph.nodes.find((node) => node.id === 'ods_cell_signal')
+
+    expect(nextUpstream?.y ?? 0).toBeGreaterThanOrEqual(tableBottom(expandedUpstream) + 48)
   })
 
   test('encodes cell ids without punctuation collisions', () => {

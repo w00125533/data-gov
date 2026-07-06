@@ -1542,7 +1542,7 @@ class SandboxController:
 
 | 图层 | 节点/边 | 展示规则 | 交互 |
 |------|---------|----------|------|
-| 表节点 | X6 node + `Table` data | 默认展示目标表、直接上游表、直接下游表；按层级和方向扩展 | 点击选中；节点内 `+/-` 展开或折叠字段 |
+| 表节点 | X6 node + `Table` data | 默认展示目标表、直接上游表、直接下游表；按层级和方向扩展；展开后同列节点按实际高度重新避让 | 点击选中；拖动节点调整当前位置；节点内 `+/-` 展开或折叠字段 |
 | 表级边 | X6 edge + 字段边实时聚合 | 实线曲线；前向/后向由左侧 checkbox 控制显示 | hover 显示字段边数量、涉及字段、计算类型分布 |
 | 字段行 | node 内字段分行 + X6 port | 仅在表节点展开后显示；字段在一个节点内分行排列 | 字段行左右两侧提供 `in:<field>` / `out:<field>` 端口 |
 | 字段级边 | X6 edge + `DERIVES_FROM` data | 淡色虚线曲线；仅当源表或目标表展开后显示 | hover 显示血缘关系；click 打开右侧编辑面板；端点可重连到其它字段 port |
@@ -1553,7 +1553,7 @@ class SandboxController:
 |------|------|------|
 | 定位中心表 | URL param `?table=` 或左侧搜索 | 目标表高亮并自动居中 |
 | 控制方向 | 勾选/取消 `前向`、`后向` checkbox | 隐藏或显示目标表的下游/上游表节点和表级边 |
-| 展开字段 | 点击表节点 `+` 小按钮 | 表节点变高，在节点内分行显示所有字段和字段锚点 |
+| 展开字段 | 点击表节点 `+` 小按钮 | 表节点变高，在节点内分行显示所有字段和字段锚点；同列上游/下游节点按展开后的节点高度重排，避免字段列表覆盖相邻表 |
 | 字段级血缘显示 | 展开相关表节点 | 在字段锚点之间显示淡色虚线曲线 |
 | 边 hover | 鼠标移动到表级边或字段级边 | tooltip 展示源/目标、计算类型、表达式和参数摘要 |
 | 边 click | 点击字段级边 | 右侧显示计算类型、参数和表达式编辑器 |
@@ -1572,7 +1572,7 @@ class SandboxController:
 | `tables[]` | table nodes | node id 使用表名；node data 保存原始 `LineageTableNode` |
 | `table_edges[]` | table edges | 表级边连接表节点主连接点或节点中心，不绑定具体字段 |
 | `field_edges[]` | field edges | 字段级边连接 `source table out:<field>` 到 `target table in:<field>` |
-| `expandedTables` | node height + ports | 折叠态固定高度；展开态按字段数计算高度并生成字段 port |
+| `expandedTables` | node height + ports | 折叠态固定高度；展开态按字段数计算高度并生成字段 port，同时参与同列节点纵向间距计算 |
 | `includeUpstream/includeDownstream` | visible cells | 决定哪些节点、表级边、字段级边进入画布 |
 | `selectedEdge` | selected X6 edge | 选中字段边高亮，并与右侧边编辑器同步 |
 
@@ -1581,6 +1581,7 @@ class SandboxController:
 - 中心目标表位于画布中间列。
 - 上游表位于左侧，按距离目标表的层级向左扩展，同层多表纵向分布。
 - 下游表位于右侧，按距离目标表的层级向右扩展，同层多表纵向分布。
+- 同层多表纵向分布时使用节点实际高度加固定间距，展开字段列表后不会覆盖下一个表节点。
 - 深度大于 1 时继续向左右扩展列；第一版不引入复杂自动布局，后续可接入 Dagre/ELK 优化。
 
 #### X6 事件流

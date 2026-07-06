@@ -50,6 +50,12 @@ async function locatorDistance(a: Locator, b: Locator) {
   return Math.hypot(left.x - right.x, left.y - right.y)
 }
 
+async function tableNodeBox(page: Page, table: string) {
+  const box = await x6MainHost(page).locator(`g[data-cell-id="${table}"]`).boundingBox()
+  expect(box).not.toBeNull()
+  return box!
+}
+
 async function clickVisibleTableToggle(page: Page, table: string) {
   const toggle = x6TableToggle(page, table)
   await expect(toggle).toBeAttached()
@@ -110,6 +116,27 @@ test('lineage workspace renders expandable tables and direction filters', async 
 
   await page.getByRole('checkbox', { name: '后向' }).uncheck()
   await expect(x6Canvas(page)).not.toContainText('dwd_session_qos')
+})
+
+test('lineage workspace drags a table node without panning sibling nodes', async ({ page }) => {
+  await mockCommonApis(page)
+
+  await page.goto('/metadata/lineage?table=dws_cell_hourly')
+  await expect(x6Canvas(page)).toContainText('dws_cell_hourly')
+
+  const rootBefore = await tableNodeBox(page, 'dws_cell_hourly')
+  const upstreamBefore = await tableNodeBox(page, 'dwd_session_qos')
+  await page.mouse.move(rootBefore.x + 80, rootBefore.y + 24)
+  await page.mouse.down()
+  await page.mouse.move(rootBefore.x + 160, rootBefore.y + 64, { steps: 8 })
+  await page.mouse.up()
+
+  const rootAfter = await tableNodeBox(page, 'dws_cell_hourly')
+  const upstreamAfter = await tableNodeBox(page, 'dwd_session_qos')
+
+  expect(rootAfter.x - rootBefore.x).toBeGreaterThan(40)
+  expect(Math.abs(upstreamAfter.x - upstreamBefore.x)).toBeLessThan(8)
+  expect(Math.abs(upstreamAfter.y - upstreamBefore.y)).toBeLessThan(8)
 })
 
 test('lineage workspace previews imported select sql before applying', async ({ page }) => {
