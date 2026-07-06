@@ -166,7 +166,7 @@ export default function MetadataTaxonomyDrawer({
 
   const updateTagGroupStatusMutation = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
-      api.updateTagGroup(id, { active } as Parameters<typeof api.updateTagGroup>[1]),
+      api.updateTagGroup(id, { active }),
     onSuccess: () => invalidateTaxonomy(),
     onError: (error) => apiMessage.error(`更新标签组状态失败: ${(error as Error).message}`),
   })

@@ -104,6 +104,7 @@ class CreateTagGroupRequest(BaseModel):
 class UpdateTagGroupRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     sort_order: Optional[int] = None
+    active: Optional[bool] = None
 
 
 class CreateTagRequest(BaseModel):

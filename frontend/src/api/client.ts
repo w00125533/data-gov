@@ -124,6 +124,7 @@ export type CreateTagGroupPayload = {
 export type UpdateTagGroupPayload = {
   name?: string
   sort_order?: number
+  active?: boolean
 }
 
 export type CreateTagPayload = {

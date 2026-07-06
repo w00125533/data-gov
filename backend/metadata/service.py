@@ -770,6 +770,9 @@ def update_tag_group(group_id: str, req: UpdateTagGroupRequest) -> TagGroupRespo
     if req.sort_order is not None:
         sets.append("group.sort_order = $sort_order")
         params["sort_order"] = req.sort_order
+    if req.active is not None:
+        sets.append("group.active = $active")
+        params["active"] = req.active
     if sets:
         sets.append("group.updated_at = datetime()")
         run_query(

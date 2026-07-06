@@ -9,6 +9,7 @@ from backend.metadata.models import (
     TableResponse,
     TagGroupResponse,
     TagResponse,
+    UpdateTagGroupRequest,
 )
 
 
@@ -91,6 +92,34 @@ def test_tags_returns_mocked_tag_group(monkeypatch):
     assert tag["id"] == "tag:network.coverage"
     assert tag["code"] == "network.coverage"
     assert tag["name"] == "覆盖"
+
+
+def test_update_tag_group_forwards_active_status(monkeypatch):
+    captured = {}
+
+    def fake_update_tag_group(group_id, req):
+        captured["group_id"] = group_id
+        captured["req"] = req
+        return TagGroupResponse(
+            id=group_id,
+            code="network-domain",
+            name="网络域",
+            active=req.active,
+            tags=[],
+        )
+
+    monkeypatch.setattr(metadata.service, "update_tag_group", fake_update_tag_group)
+
+    response = _client().put(
+        "/api/metadata/tag-groups/tag-group:network-domain",
+        json={"active": False},
+    )
+
+    assert response.status_code == 200
+    assert captured["group_id"] == "tag-group:network-domain"
+    assert isinstance(captured["req"], UpdateTagGroupRequest)
+    assert captured["req"].active is False
+    assert response.json()["active"] is False
 
 
 def test_update_table_classification_passes_request_and_returns_category_path(monkeypatch):
