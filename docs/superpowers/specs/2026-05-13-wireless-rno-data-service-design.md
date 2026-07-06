@@ -195,6 +195,34 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
 | 9 | `eval_user_score` | L5-EVAL | StarRocks | imsi, date, qoe_score, signal_quality, mobility_score, service_continuity | `ads_cell_profile` |
 | 10 | `eval_net_health` | L5-EVAL | StarRocks | area_id, date, health_index, alarm_severity_weighted, user_complaint_ratio, degradation_trend | `dws_area_traffic`, `ods_gnb_alarm`, `eval_user_score` |
 
+#### 2.2.1 示例表默认分类与标签纳管
+
+元数据管理左侧导航采用“主分类树 + 标签”的混合模型。每张表必须且只能有一个主分类路径，标签可多选。以下映射作为种子数据初始化到 Neo4j；后续可在 `/metadata` 分类/标签管理界面调整。
+
+| 表名 | 默认主分类路径 | 默认标签 |
+|------|----------------|----------|
+| `ods_ue_signal` | `源数据 / CHR` | `覆盖`, `质量`, `射频`, `标识信息` |
+| `ods_gnb_alarm` | `源数据 / 配置` | `BBU`, `电源`, `机房`, `质量` |
+| `dwd_session_qos` | `网络 / 质量` | `速率`, `时延`, `丢包`, `保持`, `标识信息` |
+| `dwd_ho_event` | `网络 / 移动` | `保持`, `接入`, `质量`, `标识信息` |
+| `dws_cell_hourly` | `网络 / 覆盖` | `话务`, `速率`, `保持`, `质量` |
+| `dws_area_traffic` | `网络 / 话务` | `容量`, `速率`, `时延`, `活动信息` |
+| `ads_cell_profile` | `网络 / 覆盖` | `容量`, `质量`, `射频` |
+| `ads_neighbor_pair` | `网络 / 移动` | `保持`, `质量`, `工参` |
+| `eval_user_score` | `用户 / 业务信息` | `覆盖`, `移动`, `业务信息`, `活动信息` |
+| `eval_net_health` | `网络 / 质量` | `覆盖`, `话务`, `机房`, `业务信息` |
+
+默认分类树初始化如下：
+
+| 大分类 | 小分类 |
+|------|------|
+| 环境 | 地理、场景、天气、机房 |
+| 设备 | 前传、时钟、回传、天馈、电源、射频、BBU |
+| 网络 | 覆盖、干扰、话务、容量、速率、时延、质量、接入、保持、移动、丢包、能耗 |
+| 用户 | 标识信息、终端信息、套餐信息、位置信息、业务信息、活动信息 |
+| 业务 | 直播、视频、游戏、网页、扫码、上传下载、即时通信、生产、Mobile AI |
+| 源数据 | 话统、CHR、配置、工参、电子地图 |
+
 ### 2.3 Neo4j Schema
 
 技术栈中已不再使用 SQLite。表/字段/血缘/审计变更全部以图模型持久化在 Neo4j。
@@ -232,6 +260,8 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
 // 元数据变更审计节点 (schema_evolve 路径写入)
 (:Change {
     id,
+    target_type,         // TABLE / FIELD / CATEGORY / TAG / TAG_GROUP
+    target_id,           // target node id snapshot
     table_name,          // 字符串字段, 删除目标后仍可查
     field_name,          // 可空 (表级变更时为空)
     operation,           // ADD_TABLE / ADD_FIELD / UPDATE_FIELD / DELETE_FIELD / DELETE_TABLE
@@ -240,6 +270,41 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
     old_value,           // JSON 字符串, 旧值快照
     new_value,           // JSON 字符串, 新值快照
     changed_at           // ISO8601 字符串
+})
+
+// 元数据分类节点
+(:MetaCategory {
+    id,
+    code,                // stable business code
+    name,
+    level,               // 1 = root category, 2 = child category
+    sort_order,
+    protected,           // built-in root category protection
+    active,
+    created_at,
+    updated_at
+})
+
+// 标签分组节点
+(:MetaTagGroup {
+    id,
+    code,
+    name,
+    sort_order,
+    active,
+    created_at,
+    updated_at
+})
+
+// 标签节点
+(:MetaTag {
+    id,
+    code,
+    name,
+    sort_order,
+    active,
+    created_at,
+    updated_at
 })
 ```
 
@@ -258,6 +323,18 @@ L1 接入层 (ODS)         L2 明细层 (DWD)        L3 汇总层 (DWS)        L
     created_at,
     updated_at
 }]->(Field)
+
+// Category tree
+(MetaCategory)-[:HAS_CHILD]->(MetaCategory)
+
+// Table primary category. Each table has exactly one active leaf category.
+(Table)-[:IN_CATEGORY]->(MetaCategory)
+
+// Tag group and flat tags
+(MetaTagGroup)-[:HAS_TAG]->(MetaTag)
+
+// Table tags. Each table can have zero or more tags.
+(Table)-[:TAGGED_WITH]->(MetaTag)
 ```
 
 #### 约束与索引
@@ -267,10 +344,19 @@ CREATE CONSTRAINT table_id_unique FOR (t:Table) REQUIRE t.id IS UNIQUE;
 CREATE CONSTRAINT table_name_unique FOR (t:Table) REQUIRE t.name IS UNIQUE;
 CREATE CONSTRAINT field_id_unique FOR (f:Field) REQUIRE f.id IS UNIQUE;
 CREATE CONSTRAINT change_id_unique FOR (c:Change) REQUIRE c.id IS UNIQUE;
+CREATE CONSTRAINT category_id_unique FOR (c:MetaCategory) REQUIRE c.id IS UNIQUE;
+CREATE CONSTRAINT category_code_unique FOR (c:MetaCategory) REQUIRE c.code IS UNIQUE;
+CREATE CONSTRAINT tag_group_id_unique FOR (g:MetaTagGroup) REQUIRE g.id IS UNIQUE;
+CREATE CONSTRAINT tag_group_code_unique FOR (g:MetaTagGroup) REQUIRE g.code IS UNIQUE;
+CREATE CONSTRAINT tag_id_unique FOR (t:MetaTag) REQUIRE t.id IS UNIQUE;
+CREATE CONSTRAINT tag_code_unique FOR (t:MetaTag) REQUIRE t.code IS UNIQUE;
 
 CREATE INDEX field_name_idx FOR (f:Field) ON (f.name);
 CREATE INDEX change_changed_at_idx FOR (c:Change) ON (c.changed_at);
 CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
+CREATE INDEX category_name_idx FOR (c:MetaCategory) ON (c.name);
+CREATE INDEX category_sort_idx FOR (c:MetaCategory) ON (c.sort_order);
+CREATE INDEX tag_name_idx FOR (t:MetaTag) ON (t.name);
 ```
 
 应用层强制约束（写入前 Cypher 校验）：
@@ -278,6 +364,8 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 - `DERIVES_FROM` 不能成环：写入新边前执行 `MATCH (target)-[:DERIVES_FROM*1..]->(target) RETURN count(*)`，结果必须为 0
 - `DERIVES_FROM.calc_type` 必须来自固定枚举；`calc_params` 必须符合该计算类型的最小参数约束
 - `Table.sql_logic` 只保存当前生效或用户确认同步的 SQL，不保存历史版本；历史 SQL 进入 `Change.old_value/new_value`
+- 每张 `Table` 必须且只能有一个主分类；历史未分类表在 API 层归入虚拟“未归类”，编辑保存时必须选择真实叶子分类
+- 内置大分类不允许硬删除；分类或标签被表引用时第一版只允许停用，不做物理删除
 
 #### 写入语义
 
@@ -285,6 +373,8 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 - 审计 `Change` 节点为孤立节点，不与 Table/Field 建关系：删除操作的目标节点已不存在，关系会丢，字符串属性 `table_name`/`field_name` 独立保存即可。审计为只读追加日志，不参与图遍历
 - 血缘图编辑动作即时写入 `DERIVES_FROM`；写入成功后前端重新拉取规范化图数据并刷新 SQL 预览
 - SQL 逻辑预览不自动覆盖 `Table.sql_logic`；第一版通过 SQL 导入抽屉的“确认应用”写入 Table 节点并追加 `Change`，右侧 SQL 预览区的“同步到表定义”按钮先保留为后续直接写回入口
+- 分类、标签、标签分组的新增、改名、移动、排序、停用均写入 `Change`
+- 表主分类变更和表标签集合变更写入 `Change`；第一版只提供审计查看，不提供版本回滚
 
 #### 派生查询
 
@@ -295,6 +385,9 @@ CREATE INDEX change_table_name_idx FOR (c:Change) ON (c.table_name);
 - 表分区键集合：`MATCH (t:Table {name:$n})-[:HAS_FIELD]->(f:Field {is_partition:true}) RETURN f.name`
 - 血缘工作台图数据：以目标表为中心实时聚合表节点、表级边、字段清单和字段级边；不在 Neo4j 中冗余表级边
 - 表 SQL 预览：根据当前目标表字段、直接上游 `DERIVES_FROM` 边、`calc_type/calc_params/transform_expr` 生成 Spark/Hive SELECT SQL
+- 分类树：`MATCH p=(root:MetaCategory {level:1})-[:HAS_CHILD*0..]->(c:MetaCategory) RETURN p ORDER BY root.sort_order, c.sort_order`
+- 分类过滤表：`MATCH (t:Table)-[:IN_CATEGORY]->(c:MetaCategory)`；勾选“含子类”时先展开目标分类后代再过滤
+- 标签过滤表：`MATCH (t:Table)-[:TAGGED_WITH]->(tag:MetaTag)`；`tag_match=all` 时要求表拥有全部选中标签，`tag_match=any` 时拥有任一标签即可
 
 ### 2.4 元数据演进策略
 
@@ -1390,7 +1483,7 @@ class SandboxController:
 
 | 路由 | 页面 | 核心功能 |
 |------|------|----------|
-| `/metadata` | 元数据管理 | 表浏览/搜索/CRUD + 字段编辑 + YAML 导出 |
+| `/metadata` | 元数据管理 | 分类树/标签导航 + 表浏览/搜索/CRUD + 字段编辑 + YAML 导出 |
 | `/metadata/lineage` | 血缘工作台 | 表级血缘主图 + 字段展开血缘 + 结构化边编辑 + SQL 生成/导入 + 跳转 /chat |
 | `/chat` | NL 对话 | 对话面板 + 代码卡片 + dry-run 预览 |
 | `/pipeline` | Pipeline 可视化 | 正向 ETL DAG + 反向合成链路，只读消费血缘结果 |
@@ -1452,6 +1545,30 @@ class SandboxController:
 | YAML 预览 | 表卡片 [预览 YAML] | 只读弹窗展示当前表 YAML 内容 (Monaco 语法高亮)，不落盘 |
 | 查看血缘 | 表卡片 [查看血缘] | 跳转到 `/metadata/lineage?table=xxx` |
 | 创建下游表 | 表卡片 [创建下游表] | 打开新建表弹窗，预填上游引用 |
+
+#### 分类与标签导航管理
+
+`/metadata` 左侧导航从单一分层过滤升级为“主分类树 + 标签筛选”：
+
+- 分类树单选：展示 `环境/设备/网络/用户/业务/源数据` 六个大分类及其小分类，节点显示表数量；点击小分类后按该分类过滤表列表。
+- 标签多选：标签平铺展示，可按 `MetaTagGroup` 折叠；支持 `tag_match=any|all` 切换，默认 `any`。
+- 搜索组合：顶部搜索、分类、标签、layer/storage 过滤条件同时生效。
+- 未归类治理：历史无分类表进入虚拟节点“未归类”；保存表编辑时必须选择真实叶子分类。
+- 表列表展示：表卡片显示主分类路径和标签 chips，便于确认当前纳管状态。
+
+左侧顶部提供“管理分类/标签”按钮，打开抽屉：
+
+| Tab | 能力 | 边界 |
+|-----|------|------|
+| 分类 | 新增子分类、改名、移动、排序、停用 | 内置大分类不允许硬删除；允许改名、排序、停用；小分类可移动到其他大类 |
+| 标签 | 新增标签、改名、排序、停用、调整分组 | 标签平铺，不做标签树；停用标签默认不出现在普通筛选中 |
+| 标签分组 | 新增/改名/排序/停用分组 | 分组只影响展示，不改变标签过滤语义 |
+
+表详情或表编辑抽屉新增“主分类路径 + 标签”区：
+
+- 主分类路径使用树选择器，只能选择启用状态的叶子分类。
+- 标签使用多选器，可选择已有标签；新建标签走管理抽屉，避免表编辑时产生无治理的临时标签。
+- 保存后调用 `PUT /api/tables/:id/classification`，成功后刷新左侧计数、表列表和表详情。
 
 #### 新建/编辑表弹窗
 
@@ -1749,11 +1866,23 @@ context_prompt = """
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/tables` | 表列表 (支持 ?layer= ?search=) |
+| GET | `/api/tables` | 表列表 (支持 ?layer= ?storage= ?search= ?category_id= ?include_descendants=true ?tag_ids= ?tag_match=any/all) |
 | GET | `/api/tables/:id` | 表详情 + 字段列表 |
 | POST | `/api/tables` | 新建表 |
 | PUT | `/api/tables/:id` | 编辑表 |
+| PUT | `/api/tables/:id/classification` | 更新表主分类和标签集合，写入 `IN_CATEGORY` / `TAGGED_WITH` 并追加 `Change` |
 | DELETE | `/api/tables/:id` | 删除表 (含下游校验) |
+| GET | `/api/metadata/categories/tree` | 分类树，返回大分类/小分类、表数量、active/protected/sort_order |
+| POST | `/api/metadata/categories` | 新增分类；第一版只允许新增小分类 |
+| PUT | `/api/metadata/categories/:id` | 改名、排序、描述等基础属性 |
+| PATCH | `/api/metadata/categories/:id/move` | 移动小分类到其他大分类下 |
+| PATCH | `/api/metadata/categories/:id/status` | 启用/停用分类 |
+| GET | `/api/metadata/tags` | 标签分组和标签清单 |
+| POST | `/api/metadata/tag-groups` | 新增标签分组 |
+| PUT | `/api/metadata/tag-groups/:id` | 更新标签分组名称、排序、状态 |
+| POST | `/api/metadata/tags` | 新增标签 |
+| PUT | `/api/metadata/tags/:id` | 更新标签名称、分组、排序 |
+| PATCH | `/api/metadata/tags/:id/status` | 启用/停用标签 |
 | GET | `/api/fields/:id` | 字段详情 + 上游引用 |
 | POST | `/api/fields` | 新建字段 |
 | PUT | `/api/fields/:id` | 编辑字段 (含表达式/上游引用) |
