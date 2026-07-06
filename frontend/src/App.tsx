@@ -7,7 +7,7 @@ import {
   HeartOutlined,
   HistoryOutlined,
 } from '@ant-design/icons'
-import { Badge, Input, Layout, Menu, Space, Typography } from 'antd'
+import { Layout, Menu, Typography } from 'antd'
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Chat from './pages/Chat'
 import Health from './pages/Health'
@@ -16,7 +16,7 @@ import Metadata from './pages/Metadata'
 import Pipeline from './pages/Pipeline'
 import SchemaEvolution from './pages/SchemaEvolution'
 
-const { Header, Sider, Content } = Layout
+const { Sider, Content } = Layout
 
 const navItems = [
   { key: '/metadata', icon: <DatabaseOutlined />, label: <Link to="/metadata">元数据</Link> },
@@ -53,20 +53,6 @@ export default function App() {
         />
       </Sider>
       <Layout>
-        <Header className="app-header">
-          <Input.Search
-            className="global-search"
-            placeholder="搜索表名、字段、描述"
-            allowClear
-            onSearch={(value) => {
-              if (value.trim()) window.location.href = `/metadata?search=${encodeURIComponent(value.trim())}`
-            }}
-          />
-          <Space size={16}>
-            <Badge status="processing" text="FastAPI :8000" />
-            <Badge status="success" text="Neo4j metadata" />
-          </Space>
-        </Header>
         <Content className="app-content">
           <Routes>
             <Route path="/" element={<Navigate to="/metadata" replace />} />

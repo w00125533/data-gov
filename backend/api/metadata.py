@@ -61,7 +61,7 @@ def list_tables_endpoint(
     category_id: Optional[str] = None,
     include_children: bool = True,
     tag_ids: list[str] = Query(default=[]),
-    tag_match: str = Query("any", pattern="^(any|all)$"),
+    tag_match: str = Query("all", pattern="^(any|all)$"),
     uncategorized: bool = False,
 ):
     return service.list_tables(

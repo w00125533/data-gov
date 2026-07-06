@@ -188,6 +188,30 @@ def test_list_tables_passes_taxonomy_filters(monkeypatch):
     }
 
 
+def test_list_tables_defaults_tag_filter_to_all(monkeypatch):
+    captured = {}
+
+    def fake_list_tables(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(metadata.service, "list_tables", fake_list_tables)
+
+    response = _client().get(
+        "/api/tables",
+        params=[
+            ("category_id", "category:network"),
+            ("tag_ids", "tag:network.coverage"),
+            ("tag_ids", "tag:network.quality"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert captured["category_id"] == "category:network"
+    assert captured["tag_ids"] == ["tag:network.coverage", "tag:network.quality"]
+    assert captured["tag_match"] == "all"
+
+
 def test_create_table_requires_and_forwards_classification(monkeypatch):
     captured = {}
 

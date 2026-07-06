@@ -356,35 +356,18 @@ function buildFieldEdge(edge: LineageEdge, selectedEdgeKey?: string): Edge.Metad
     attrs: {
       line: {
         stroke: selected ? '#2563eb' : '#64748b',
-        strokeWidth: selected ? 3 : 2,
-        strokeDasharray: '5 5',
-        targetMarker: { name: 'block', width: 8, height: 6 },
+        strokeWidth: selected ? 2.2 : 1.4,
+        strokeDasharray: '4 6',
+        opacity: selected ? 0.95 : 0.72,
+        targetMarker: {
+          name: 'path',
+          d: 'M 4 -3 0 0 4 3',
+          fill: 'none',
+          stroke: selected ? '#2563eb' : '#64748b',
+          strokeWidth: 1,
+        },
       },
     },
-    tools: [
-      {
-        name: 'source-arrowhead',
-        args: {
-          attrs: {
-            fill: '#2563eb',
-            stroke: '#ffffff',
-            'stroke-width': 2,
-            cursor: 'move',
-          },
-        },
-      },
-      {
-        name: 'target-arrowhead',
-        args: {
-          attrs: {
-            fill: '#2563eb',
-            stroke: '#ffffff',
-            'stroke-width': 2,
-            cursor: 'move',
-          },
-        },
-      },
-    ],
     data: { kind: 'field-edge', edge, lineageEdgeKey: edgeKey(edge) },
     zIndex: selected ? 4 : 3,
   }

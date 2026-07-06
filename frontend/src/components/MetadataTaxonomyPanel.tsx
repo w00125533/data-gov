@@ -1,75 +1,55 @@
-import { SettingOutlined } from '@ant-design/icons'
-import { Button, Checkbox, Input, Radio, Select, Space, Tree, Typography } from 'antd'
-import type { DataNode } from 'antd/es/tree'
-import { useMemo } from 'react'
-import type { CategoryNode, TagGroup } from '../api/client'
+import { PlusOutlined, SettingOutlined } from '@ant-design/icons'
+import { Button, Input, Select, Space, Tree, Typography } from 'antd'
+import { useMemo, useState } from 'react'
+import type { CategoryNode, TableSummary, TagGroup } from '../api/client'
+import { buildCategoryTreeNodes, taxonomyLabel } from './metadataTaxonomyTree'
 
 type MetadataTaxonomyPanelProps = {
   categories?: CategoryNode[]
+  tables?: TableSummary[]
   tagGroups?: TagGroup[]
   selectedCategoryId?: string
-  includeChildren: boolean
+  selectedTableId?: string
   selectedTagIds: string[]
-  tagMatch: 'any' | 'all'
-  layer: string
   search: string
-  layers: string[]
   onSearchChange: (value: string) => void
   onSearchSubmit: (value: string) => void
-  onLayerChange: (value: string) => void
   onCategoryChange: (value?: string) => void
-  onIncludeChildrenChange: (value: boolean) => void
+  onTableSelect: (table: TableSummary) => void
   onTagsChange: (value: string[]) => void
-  onTagMatchChange: (value: 'any' | 'all') => void
+  onCreateTable: () => void
   onOpenManager: () => void
 }
 
-const taxonomyLabels: Record<string, string> = {
-  network: '网络',
-  'network.coverage': '覆盖',
-  'network.quality': '质量',
-  'source-data': '源数据',
-  'source-data.chr': 'CHR',
-  'network-domain': '网络域',
-}
-
-function taxonomyLabel(item: { code: string; name: string }) {
-  return taxonomyLabels[item.code] ?? item.name
-}
-
-function treeNodes(categories: CategoryNode[]): DataNode[] {
-  return categories.map((category) => ({
-    key: category.id,
-    title: `${taxonomyLabel(category)} (${category.table_count})`,
-    children: treeNodes(category.children),
-  }))
-}
-
-function categoryIds(categories: CategoryNode[]): string[] {
-  return categories.flatMap((category) => [category.id, ...categoryIds(category.children)])
+function expandableCategoryIds(categories: CategoryNode[]): Set<string> {
+  return categories.reduce((ids, category) => {
+    if (category.children.length > 0) {
+      ids.add(category.id)
+      expandableCategoryIds(category.children).forEach((id) => ids.add(id))
+    }
+    return ids
+  }, new Set<string>())
 }
 
 export default function MetadataTaxonomyPanel({
   categories = [],
+  tables = [],
   tagGroups = [],
   selectedCategoryId,
-  includeChildren,
+  selectedTableId,
   selectedTagIds,
-  tagMatch,
-  layer,
   search,
-  layers,
   onSearchChange,
   onSearchSubmit,
-  onLayerChange,
   onCategoryChange,
-  onIncludeChildrenChange,
+  onTableSelect,
   onTagsChange,
-  onTagMatchChange,
+  onCreateTable,
   onOpenManager,
 }: MetadataTaxonomyPanelProps) {
-  const categoryTree = useMemo(() => treeNodes(categories), [categories])
-  const expandedCategoryIds = useMemo(() => categoryIds(categories), [categories])
+  const [expandedCategoryIds, setExpandedCategoryIds] = useState<string[]>([])
+  const categoryTree = useMemo(() => buildCategoryTreeNodes(categories, tables), [categories, tables])
+  const expandableCategories = useMemo(() => expandableCategoryIds(categories), [categories])
   const tagOptions = useMemo(
     () =>
       tagGroups.flatMap((group) =>
@@ -80,16 +60,17 @@ export default function MetadataTaxonomyPanel({
       ),
     [tagGroups],
   )
+  const tableByKey = useMemo(
+    () => new Map(tables.map((table) => [`table:${table.id}`, table])),
+    [tables],
+  )
 
   return (
-    <Space direction="vertical" size={14} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={14} style={{ width: '100%' }}>
       <div className="metadata-taxonomy-header">
         <Typography.Title level={4} style={{ margin: 0 }}>
           元数据管理
         </Typography.Title>
-        <Button icon={<SettingOutlined />} onClick={onOpenManager}>
-          管理分类
-        </Button>
       </div>
 
       <Input.Search
@@ -100,45 +81,49 @@ export default function MetadataTaxonomyPanel({
         onSearch={onSearchSubmit}
       />
 
-      <Select
-        value={layer}
-        onChange={onLayerChange}
-        options={layers.map((value) => ({ value, label: value === 'ALL' ? '全部层级' : value }))}
-        style={{ width: '100%' }}
-      />
-
       <div className="metadata-filter-block">
-        <div className="metadata-filter-block-title">
-          <Typography.Text strong>主分类</Typography.Text>
-          <Checkbox checked={includeChildren} onChange={(event) => onIncludeChildrenChange(event.target.checked)}>
-            包含子类
-          </Checkbox>
-        </div>
-        <Button type="link" size="small" className="metadata-taxonomy-all" onClick={() => onCategoryChange(undefined)}>
-          全部
-        </Button>
+        <Space className="metadata-taxonomy-actions" size={8} wrap>
+          <Button type="link" size="small" className="metadata-taxonomy-all" onClick={() => onCategoryChange(undefined)}>
+            全部
+          </Button>
+          <Button size="small" icon={<PlusOutlined />} onClick={onCreateTable}>
+            新建表
+          </Button>
+          <Button size="small" icon={<SettingOutlined />} onClick={onOpenManager}>
+            管理分类
+          </Button>
+        </Space>
         <Tree
           blockNode
-          selectedKeys={selectedCategoryId ? [selectedCategoryId] : []}
+          selectedKeys={selectedCategoryId ? [selectedCategoryId] : selectedTableId ? [`table:${selectedTableId}`] : []}
           expandedKeys={expandedCategoryIds}
+          onExpand={(keys, info) => {
+            setExpandedCategoryIds(keys.map(String))
+            const key = String(info.node.key)
+            if (!tableByKey.has(key)) {
+              onCategoryChange(key)
+            }
+          }}
           treeData={categoryTree}
-          onSelect={(keys) => onCategoryChange(typeof keys[0] === 'string' ? keys[0] : undefined)}
+          onSelect={(keys) => {
+            const key = typeof keys[0] === 'string' ? keys[0] : undefined
+            if (!key) return
+            const table = tableByKey.get(key)
+            if (table) {
+              onTableSelect(table)
+              return
+            }
+            if (expandableCategories.has(key) && !expandedCategoryIds.includes(key)) {
+              setExpandedCategoryIds((currentKeys) => [...currentKeys, key])
+            }
+            onCategoryChange(key)
+          }}
         />
       </div>
 
       <div className="metadata-filter-block">
         <div className="metadata-filter-block-title">
           <Typography.Text strong>标签</Typography.Text>
-          <Radio.Group
-            size="small"
-            value={tagMatch}
-            onChange={(event) => onTagMatchChange(event.target.value as 'any' | 'all')}
-            optionType="button"
-            buttonStyle="solid"
-          >
-            <Radio.Button value="any">任一</Radio.Button>
-            <Radio.Button value="all">全部</Radio.Button>
-          </Radio.Group>
         </div>
         <Select
           mode="multiple"

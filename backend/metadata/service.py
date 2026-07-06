@@ -191,6 +191,7 @@ def _load_table_taxonomy(table_id: str) -> tuple[Optional[CategoryRef], list[Tag
         OPTIONAL MATCH (parent:MetaCategory)-[:HAS_CHILD]->(category)
         WITH t, category, parent
         OPTIONAL MATCH (t)-[:TAGGED_WITH]->(tag:MetaTag)
+        WHERE tag IS NULL OR NOT tag.code STARTS WITH 'tag:'
         WITH category, parent, tag
         ORDER BY tag.sort_order, tag.name
         WITH category, parent,
@@ -228,7 +229,7 @@ def list_tables(
     category_id: Optional[str] = None,
     include_children: bool = True,
     tag_ids: Optional[list[str]] = None,
-    tag_match: str = "any",
+    tag_match: str = "all",
     uncategorized: bool = False,
 ) -> list[TableSummary]:
     if tag_match not in ("any", "all"):
@@ -573,6 +574,7 @@ def list_tags() -> list[TagGroupResponse]:
         """
         MATCH (group:MetaTagGroup)
         OPTIONAL MATCH (group)-[:HAS_TAG]->(tag:MetaTag)
+        WHERE tag IS NULL OR NOT tag.code STARTS WITH 'tag:'
         WITH group, tag
         ORDER BY group.sort_order, group.name, tag.sort_order, tag.name
         WITH group,

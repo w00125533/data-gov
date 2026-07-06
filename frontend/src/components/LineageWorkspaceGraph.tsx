@@ -6,6 +6,7 @@ import '@antv/x6/dist/index.css'
 import type { DragEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LineageEdge, LineageGraphResponse } from '../api/client'
+import { formatLineageFieldTooltip } from './lineageFieldTooltip'
 import { buildLineageX6GraphData, edgeKey } from './graphShared/lineageX6Adapter'
 
 type EdgeEndpoint = 'from' | 'to'
@@ -17,7 +18,9 @@ type Props = {
   resetVersion?: number
   onToggleTable: (table: string) => void
   onSelectFieldEdge: (edge: LineageEdge) => void
+  onCreateFieldEdge: (edge: LineageEdge) => void
   onMoveEdgeEndpoint: (edge: LineageEdge, endpoint: EdgeEndpoint, table: string, field: string) => void
+  onContextMenu?: (payload: { x: number; y: number; targetType: 'node' | 'edge' | 'canvas'; targetId?: string }) => void
 }
 
 type PendingMove = {
@@ -68,10 +71,7 @@ function terminalParts(edge: Edge, endpoint: EdgeEndpoint) {
 function renderTooltipContent(edge: LineageEdge) {
   return (
     <div className="lineage-x6-tooltip-content">
-      <Typography.Text strong>{edge.from_table}.{edge.from_field}</Typography.Text>
-      <Typography.Text strong>{edge.to_table}.{edge.to_field}</Typography.Text>
-      <Typography.Text>{edge.calc_type ?? 'UNKNOWN'}</Typography.Text>
-      <Typography.Text>{edge.transform_expr || '-'}</Typography.Text>
+      <Typography.Text>{formatLineageFieldTooltip(edge)}</Typography.Text>
     </div>
   )
 }
@@ -83,12 +83,14 @@ export default function LineageWorkspaceGraph({
   resetVersion = 0,
   onToggleTable,
   onSelectFieldEdge,
+  onCreateFieldEdge,
   onMoveEdgeEndpoint,
+  onContextMenu,
 }: Props) {
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const minimapRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<Graph | null>(null)
-  const callbacksRef = useRef({ onToggleTable, onSelectFieldEdge, onMoveEdgeEndpoint })
+  const callbacksRef = useRef({ onToggleTable, onSelectFieldEdge, onCreateFieldEdge, onMoveEdgeEndpoint, onContextMenu })
   const payloadRef = useRef(payload)
   const [pendingMove, setPendingMove] = useState<PendingMove | undefined>()
   const [tooltip, setTooltip] = useState<TooltipState | undefined>()
@@ -109,8 +111,8 @@ export default function LineageWorkspaceGraph({
   }, [payload, expandedTables])
 
   useEffect(() => {
-    callbacksRef.current = { onToggleTable, onSelectFieldEdge, onMoveEdgeEndpoint }
-  }, [onToggleTable, onSelectFieldEdge, onMoveEdgeEndpoint])
+    callbacksRef.current = { onToggleTable, onSelectFieldEdge, onCreateFieldEdge, onMoveEdgeEndpoint, onContextMenu }
+  }, [onToggleTable, onSelectFieldEdge, onCreateFieldEdge, onMoveEdgeEndpoint, onContextMenu])
 
   useEffect(() => {
     payloadRef.current = payload
@@ -153,7 +155,6 @@ export default function LineageWorkspaceGraph({
       },
       mousewheel: {
         enabled: true,
-        modifiers: ['ctrl', 'meta'],
         minScale: 0.4,
         maxScale: 1.8,
       },
@@ -200,6 +201,36 @@ export default function LineageWorkspaceGraph({
       }
     })
 
+    graph.on('node:contextmenu', ({ node, e }) => {
+      e.preventDefault()
+      callbacksRef.current.onContextMenu?.({
+        x: e.clientX,
+        y: e.clientY,
+        targetType: 'node',
+        targetId: node.id,
+      })
+    })
+
+    graph.on('edge:contextmenu', ({ edge, e }) => {
+      e.preventDefault()
+      const data = edge.getData<FieldEdgeData & { lineageEdgeKey?: string }>()
+      callbacksRef.current.onContextMenu?.({
+        x: e.clientX,
+        y: e.clientY,
+        targetType: 'edge',
+        targetId: data?.lineageEdgeKey ?? edge.id,
+      })
+    })
+
+    graph.on('blank:contextmenu', ({ e }) => {
+      e.preventDefault()
+      callbacksRef.current.onContextMenu?.({
+        x: e.clientX,
+        y: e.clientY,
+        targetType: 'canvas',
+      })
+    })
+
     graph.on('edge:mouseenter', ({ edge, e }) => {
       const data = edge.getData<FieldEdgeData>()
       if (data?.kind === 'field-edge' && data.edge) {
@@ -218,7 +249,20 @@ export default function LineageWorkspaceGraph({
 
     graph.on('edge:connected', ({ edge, isNew, type }) => {
       if (isNew) {
+        const source = terminalParts(edge, 'from')
+        const target = terminalParts(edge, 'to')
         edge.remove()
+        if (source && target) {
+          callbacksRef.current.onCreateFieldEdge({
+            from_table: source.table,
+            from_field: source.field,
+            to_table: target.table,
+            to_field: target.field,
+            transform_expr: source.field,
+            calc_type: 'DIRECT',
+            calc_params: {},
+          })
+        }
         return
       }
 
@@ -234,7 +278,29 @@ export default function LineageWorkspaceGraph({
     graphRef.current = graph
     setGraphReady(true)
 
+    const handleNativeContextMenu = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : undefined
+      if (!target) return
+
+      const nodeElement = target.closest('.x6-node') as HTMLElement | null
+      const edgeElement = target.closest('.x6-edge') as HTMLElement | null
+      const targetElement = nodeElement ?? edgeElement
+      const targetType = nodeElement ? 'node' : edgeElement ? 'edge' : 'canvas'
+      const targetId = targetElement?.dataset.cellId
+
+      event.preventDefault()
+      callbacksRef.current.onContextMenu?.({
+        x: event.clientX,
+        y: event.clientY,
+        targetType,
+        targetId,
+      })
+    }
+
+    canvasRef.current.addEventListener('contextmenu', handleNativeContextMenu)
+
     return () => {
+      canvasRef.current?.removeEventListener('contextmenu', handleNativeContextMenu)
       graph.dispose()
       graphRef.current = null
       setGraphReady(false)
@@ -267,8 +333,8 @@ export default function LineageWorkspaceGraph({
 
       const selected = data.lineageEdgeKey === selectedEdgeKey
       edge.attr('line/stroke', selected ? '#2563eb' : '#64748b')
-      edge.attr('line/strokeWidth', selected ? 3 : 2)
-      edge.attr('line/opacity', selectedEdgeKey ? (selected ? 1 : 0.45) : 1)
+      edge.attr('line/strokeWidth', selected ? 2.2 : 1.4)
+      edge.attr('line/opacity', selectedEdgeKey ? (selected ? 0.95 : 0.45) : 0.72)
       edge.setZIndex(selected ? 4 : 3)
     })
   }, [selectedEdgeKey, graphData, graphReady])
@@ -307,7 +373,19 @@ export default function LineageWorkspaceGraph({
         <div className="lineage-x6-graph-host" ref={setCanvasRef} />
       </div>
       <div className="lineage-x6-minimap" ref={setMinimapRef} />
-      <Tooltip open={Boolean(tooltip)} title={tooltip ? renderTooltipContent(tooltip.edge) : null}>
+      <Tooltip
+        open={Boolean(tooltip)}
+        title={tooltip ? renderTooltipContent(tooltip.edge) : null}
+        color="#ffffff"
+        rootClassName="lineage-x6-tooltip"
+        styles={{
+          container: {
+            color: '#172033',
+            border: '1px solid #cbd5e1',
+            boxShadow: '0 10px 28px rgba(15, 23, 42, 0.16)',
+          },
+        }}
+      >
         <span
           className="lineage-x6-tooltip-anchor"
           style={{ left: tooltip?.left ?? -9999, top: tooltip?.top ?? -9999 }}

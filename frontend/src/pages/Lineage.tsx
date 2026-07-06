@@ -1,13 +1,16 @@
 import { CommentOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Checkbox, Input, Modal, Slider, Space, Typography, message } from 'antd'
-import { useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Button, Checkbox, Drawer, Input, Modal, Select, Slider, Space, Typography, message } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type LineageEdge, type LineageGraphResponse, type LineageSqlImportPreviewResponse } from '../api/client'
+import LineageContextMenu from '../components/LineageContextMenu'
 import LineageEdgeEditor from '../components/LineageEdgeEditor'
 import LineageSqlImportDrawer from '../components/LineageSqlImportDrawer'
 import LineageSqlPanel from '../components/LineageSqlPanel'
 import LineageWorkspaceGraph from '../components/LineageWorkspaceGraph'
+import type { LineageMenuAction } from '../components/lineageContextMenuActions'
+import { buildLineageTableSelectOptions, selectedLineageTableCard } from '../components/lineageTableSearch'
 
 type EdgeModal = {
   mode: 'create' | 'edit'
@@ -22,6 +25,14 @@ type EdgeEndpoint = 'from' | 'to'
 type ImportPreviewState = {
   preview: LineageSqlImportPreviewResponse
   graphVersion?: string
+}
+
+type ContextMenuState = {
+  open: boolean
+  x: number
+  y: number
+  targetType: 'node' | 'edge' | 'canvas'
+  targetId?: string
 }
 
 function splitRef(value?: string) {
@@ -63,6 +74,7 @@ function filterWorkspacePayload(payload: LineageGraphResponse | undefined, inclu
 
 export default function Lineage() {
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [apiMessage, holder] = message.useMessage()
   const [table, setTable] = useState(params.get('table') ?? 'dws_cell_hourly')
@@ -72,11 +84,18 @@ export default function Lineage() {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set())
   const [graphResetVersion, setGraphResetVersion] = useState(0)
   const [edge, setEdge] = useState<LineageEdge | undefined>()
+  const [edgeEditorMode, setEdgeEditorMode] = useState<'edit' | 'create'>('edit')
   const [nodeId, setNodeId] = useState<string | undefined>()
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>()
   const [edgeModal, setEdgeModal] = useState<EdgeModal | undefined>()
   const [importOpen, setImportOpen] = useState(false)
   const [importPreviewState, setImportPreviewState] = useState<ImportPreviewState | undefined>()
   const importPreviewGeneration = useRef(0)
+
+  const tablesQuery = useQuery({
+    queryKey: ['tables', 'lineage-search'],
+    queryFn: () => api.tables(),
+  })
 
   const lineageQuery = useQuery({
     queryKey: ['lineage-graph', table, depth, includeUpstream, includeDownstream],
@@ -89,6 +108,14 @@ export default function Lineage() {
   })
 
   const workspacePayload = filterWorkspacePayload(lineageQuery.data, includeUpstream, includeDownstream)
+  const tableSelectOptions = useMemo(
+    () => buildLineageTableSelectOptions(tablesQuery.data),
+    [tablesQuery.data],
+  )
+  const selectedTableCard = useMemo(
+    () => selectedLineageTableCard(tablesQuery.data, table) ?? { name: table, description: '当前根表' },
+    [tablesQuery.data, table],
+  )
   const invalidateLineage = () => queryClient.invalidateQueries({ queryKey: ['lineage-graph'] })
 
   const sqlPreviewQuery = useQuery({
@@ -134,18 +161,21 @@ export default function Lineage() {
 
   useEffect(() => {
     if (!edge) return
+    if (edgeEditorMode === 'create') return
     const selectedEdgeId = edgeId(edge)
     const stillVisible = (workspacePayload?.field_edges ?? []).some((candidate) => edgeId(candidate) === selectedEdgeId)
     if (!stillVisible) {
       const handle = window.setTimeout(() => setEdge(undefined), 0)
       return () => window.clearTimeout(handle)
     }
-  }, [edge, workspacePayload])
+  }, [edge, edgeEditorMode, workspacePayload])
 
   const createEdgeMutation = useMutation({
     mutationFn: api.createLineageEdge,
     onSuccess: () => {
       apiMessage.success('血缘边已创建')
+      setEdge(undefined)
+      setEdgeEditorMode('edit')
       setEdgeModal(undefined)
       void invalidateLineage()
       void sqlPreviewQuery.refetch()
@@ -161,6 +191,7 @@ export default function Lineage() {
     onSuccess: (next) => {
       apiMessage.success('边配置已更新')
       setEdge(next)
+      setEdgeEditorMode('edit')
       setEdgeModal(undefined)
       void invalidateLineage()
       void sqlPreviewQuery.refetch()
@@ -204,6 +235,16 @@ export default function Lineage() {
     if (next.table) search.set('table', next.table)
     if (next.depth) search.set('depth', String(next.depth))
     setParams(search)
+  }
+
+  function selectRootTable(nextTable: string) {
+    setTable(nextTable)
+    setEdge(undefined)
+    setEdgeEditorMode('edit')
+    setNodeId(undefined)
+    setExpandedTables(new Set())
+    setContextMenu(undefined)
+    updateUrl({ table: nextTable })
   }
 
   function closeImportDrawer() {
@@ -271,24 +312,84 @@ export default function Lineage() {
     moveEndpointMutation.mutate({ id: edgeId(selectedEdge), nextEdge })
   }
 
+  function createDraftFieldEdge(next: LineageEdge) {
+    setEdge(next)
+    setEdgeEditorMode('create')
+    setNodeId(undefined)
+  }
+
+  function saveDrawerEdge(next: LineageEdge) {
+    if (edgeEditorMode === 'create') {
+      createEdgeMutation.mutate({
+        from_table: next.from_table,
+        from_field: next.from_field,
+        to_table: next.to_table,
+        to_field: next.to_field,
+        transform_expr: next.transform_expr,
+        calc_type: next.calc_type,
+        calc_params: next.calc_params,
+      })
+      return
+    }
+    updateEdgeMutation.mutate(next)
+  }
+
+  function handleContextMenuAction(action: LineageMenuAction) {
+    const targetTable = contextMenu?.targetType === 'node' ? contextMenu.targetId : undefined
+    setContextMenu(undefined)
+
+    if (action === 'create-downstream') {
+      if (!targetTable) return
+      navigate(`/metadata?table=${encodeURIComponent(targetTable)}&create_downstream=1`)
+      return
+    }
+
+    if (action === 'create-edge') {
+      setEdgeModal({ mode: 'create', transform_expr: 'passthrough' })
+      return
+    }
+
+    if (action === 'chat') {
+      navigate(chatHref())
+      return
+    }
+
+    if (action === 'new-table') {
+      navigate('/metadata?create_table=1')
+      return
+    }
+
+    apiMessage.info('该右键操作将在后续版本完善')
+  }
+
   return (
-    <div className="three-panel-grid">
+    <div className="lineage-page-grid">
       {holder}
       <section className="panel panel-pad">
         <Typography.Title level={4} style={{ marginTop: 0 }}>血缘工作区</Typography.Title>
         <Space orientation="vertical" style={{ width: '100%' }}>
-          <Input.Search
+          <Select
+            showSearch
             value={table}
-            onChange={(event) => setTable(event.target.value)}
-            onSearch={(value) => {
-              updateUrl({ table: value })
-            }}
+            placeholder="搜索并选择根表"
+            style={{ width: '100%' }}
+            options={tableSelectOptions.map((option) => ({
+              value: option.value,
+              label: option.label,
+              searchText: option.searchText,
+            }))}
+            filterOption={(input, option) => String(option?.searchText ?? '').toLowerCase().includes(input.toLowerCase())}
+            onChange={selectRootTable}
           />
-          <Space>
+          <div className="lineage-selected-table-card">
+            <Typography.Text strong>{selectedTableCard.name}</Typography.Text>
+            <Typography.Text className="muted">{selectedTableCard.description}</Typography.Text>
+          </div>
+          <Space className="lineage-depth-controls" wrap>
+            <Typography.Text className="muted">展开层级: {depth}</Typography.Text>
             <Checkbox checked={includeDownstream} onChange={(event) => setIncludeDownstream(event.target.checked)}>前向</Checkbox>
             <Checkbox checked={includeUpstream} onChange={(event) => setIncludeUpstream(event.target.checked)}>后向</Checkbox>
           </Space>
-          <Typography.Text className="muted">展开层级: {depth}</Typography.Text>
           <Slider
             min={1}
             max={5}
@@ -298,11 +399,21 @@ export default function Lineage() {
               updateUrl({ depth: value })
             }}
           />
-          <Button onClick={openImportDrawer}>导入 SQL</Button>
-          <Button onClick={() => setEdgeModal({ mode: 'create', transform_expr: 'passthrough' })}>新建血缘边</Button>
-          <Link to={chatHref()}>
-            <Button icon={<CommentOutlined />} type="primary">用 NL 修改</Button>
-          </Link>
+          <LineageSqlPanel
+            preview={sqlPreviewQuery.data}
+            loading={sqlPreviewQuery.isFetching}
+            onRefresh={() => { void sqlPreviewQuery.refetch() }}
+            onSync={() => apiMessage.info('SQL 同步将在导入/应用流程中执行')}
+            workflowActions={(
+              <>
+                <Button onClick={openImportDrawer}>导入 SQL</Button>
+                <Button onClick={() => setEdgeModal({ mode: 'create', transform_expr: 'passthrough' })}>新建血缘边</Button>
+                <Link to={chatHref()}>
+                  <Button icon={<CommentOutlined />} type="primary">用 NL 修改</Button>
+                </Link>
+              </>
+            )}
+          />
         </Space>
       </section>
       <section className="panel panel-pad">
@@ -314,30 +425,39 @@ export default function Lineage() {
           onToggleTable={toggleTable}
           onSelectFieldEdge={(next) => {
             setEdge(next)
+            setEdgeEditorMode('edit')
             setNodeId(undefined)
           }}
+          onCreateFieldEdge={createDraftFieldEdge}
           onMoveEdgeEndpoint={moveEndpoint}
+          onContextMenu={(payload) => {
+            setNodeId(payload.targetType === 'node' ? payload.targetId : undefined)
+            setContextMenu({ open: true, ...payload })
+          }}
         />
       </section>
-      <section className="panel panel-pad">
-        <Space orientation="vertical" style={{ width: '100%' }} size="large">
-          <LineageEdgeEditor
-            edge={edge}
-            saving={updateEdgeMutation.isPending}
-            onSave={(next) => updateEdgeMutation.mutate(next)}
-            onDelete={() => edge && deleteEdgeMutation.mutate(edgeId(edge))}
-          />
-          <LineageSqlPanel
-            preview={sqlPreviewQuery.data}
-            loading={sqlPreviewQuery.isFetching}
-            onRefresh={() => { void sqlPreviewQuery.refetch() }}
-            onSync={() => apiMessage.info('SQL 同步将在导入/应用流程中执行')}
-          />
-          <Link to={chatHref()}>
-            <Button icon={<CommentOutlined />}>用 NL 修改</Button>
-          </Link>
-        </Space>
-      </section>
+      <Drawer
+        title="字段级血缘边"
+        open={Boolean(edge)}
+        size={420}
+        onClose={() => setEdge(undefined)}
+        destroyOnHidden
+      >
+        <LineageEdgeEditor
+          edge={edge}
+          saving={updateEdgeMutation.isPending || createEdgeMutation.isPending}
+          onSave={saveDrawerEdge}
+          onDelete={() => {
+            if (!edge) return
+            if (edgeEditorMode === 'create') {
+              setEdge(undefined)
+              setEdgeEditorMode('edit')
+              return
+            }
+            deleteEdgeMutation.mutate(edgeId(edge))
+          }}
+        />
+      </Drawer>
       <Modal
         title={edgeModal?.mode === 'edit' ? '编辑血缘边' : '新建血缘边'}
         open={Boolean(edgeModal)}
@@ -367,6 +487,14 @@ export default function Lineage() {
         onClose={closeImportDrawer}
         onPreview={previewImportedSql}
         onApply={() => importApplyMutation.mutate()}
+      />
+      <LineageContextMenu
+        open={Boolean(contextMenu?.open)}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        targetType={contextMenu?.targetType}
+        onAction={handleContextMenuAction}
+        onClose={() => setContextMenu(undefined)}
       />
     </div>
   )

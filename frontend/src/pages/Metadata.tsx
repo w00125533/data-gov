@@ -12,6 +12,7 @@ import Editor from '@monaco-editor/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
+  Cascader,
   Checkbox,
   Descriptions,
   Drawer,
@@ -27,7 +28,7 @@ import {
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -49,8 +50,10 @@ import MetadataTaxonomyPanel from '../components/MetadataTaxonomyPanel'
 import MetadataTaxonomyDrawer from '../components/MetadataTaxonomyDrawer'
 
 const layers: Array<Layer | 'ALL'> = ['ALL', 'ODS', 'DWD', 'DWS', 'ADS', 'EVAL']
+const tableLayers: Layer[] = ['ODS', 'DWD', 'DWS', 'ADS', 'EVAL']
 const fieldTypes = ['STRING', 'INT', 'BIGINT', 'DOUBLE', 'TIMESTAMP', 'DATE']
 const storageTypes = ['KAFKA', 'HIVE', 'STARROCKS']
+const layerPathRoot = 'table-layer'
 
 const taxonomyLabels: Record<string, string> = {
   network: '网络',
@@ -102,7 +105,9 @@ function activeTagOptions(tagGroups: TagGroup[]) {
   )
 }
 
-type TableFormValues = CreateTablePayload & {
+type TableFormValues = Omit<CreateTablePayload, 'layer'> & {
+  layer?: Layer
+  category_path?: string[]
   category_id?: string
   tag_ids?: string[]
   fields?: Array<{
@@ -113,6 +118,54 @@ type TableFormValues = CreateTablePayload & {
     expression?: string
     description?: string
   }>
+}
+
+function categoryPath(categories: CategoryNode[], leafId?: string): string[] | undefined {
+  if (!leafId) return undefined
+  for (const root of categories) {
+    if (root.id === leafId) return [root.id]
+    if (root.children.some((child) => child.id === leafId)) return [root.id, leafId]
+  }
+  return undefined
+}
+
+function categoryCascaderOptions(categories: CategoryNode[]) {
+  return categories
+    .filter((root) => root.active)
+    .map((root) => ({
+      value: root.id,
+      label: taxonomyLabel(root),
+      disabled: root.children.filter((child) => child.active).length === 0,
+      children: root.children
+        .filter((child) => child.active)
+        .map((child) => ({
+          value: child.id,
+          label: taxonomyLabel(child),
+        })),
+    }))
+}
+
+function layerTagId(tagGroups: TagGroup[], layer?: Layer) {
+  if (!layer) return undefined
+  const layerGroup = tagGroups.find((group) => group.code === layerPathRoot)
+  return layerGroup?.tags.find((tag) => tag.code === layer || tag.name === layer)?.id
+}
+
+type NormalizedTableFormValues = TableFormValues & { layer: Layer }
+
+function withLayerTag(values: TableFormValues, tagGroups: TagGroup[]): NormalizedTableFormValues {
+  const layerGroup = tagGroups.find((group) => group.code === layerPathRoot)
+  const selectedLayerTag = layerGroup?.tags.find((tag) => (values.tag_ids ?? []).includes(tag.id))
+  const selectedLayer = tableLayers.find((layer) => selectedLayerTag?.code === layer || selectedLayerTag?.name === layer)
+  const layer = selectedLayer ?? values.layer ?? 'ODS'
+  const tagId = layerTagId(tagGroups, layer)
+  const layerTagIds = new Set(layerGroup?.tags.map((tag) => tag.id) ?? [])
+  const tagIds = (values.tag_ids ?? []).filter((id) => !layerTagIds.has(id))
+  return {
+    ...values,
+    layer,
+    tag_ids: tagId && !tagIds.includes(tagId) ? [tagId, ...tagIds] : tagIds,
+  }
 }
 
 type FieldFormValues = {
@@ -129,12 +182,12 @@ export default function Metadata() {
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [apiMessage, holder] = message.useMessage()
-  const appliedLayer = params.get('layer') ?? 'ALL'
   const appliedSearch = params.get('search') ?? ''
   const appliedCategoryId = params.get('category_id') ?? undefined
-  const appliedIncludeChildren = params.get('include_children') !== 'false'
   const appliedTagIds = params.getAll('tag_ids')
-  const appliedTagMatch = params.get('tag_match') === 'all' ? 'all' : 'any'
+  const requestedTableName = params.get('table') ?? undefined
+  const shouldCreateTable = params.get('create_table') === '1'
+  const shouldCreateDownstream = params.get('create_downstream') === '1'
   const [searchState, setSearchState] = useState(() => ({ applied: appliedSearch, draft: appliedSearch }))
   const search = searchState.applied === appliedSearch ? searchState.draft : appliedSearch
   if (searchState.applied !== appliedSearch) {
@@ -143,9 +196,12 @@ export default function Metadata() {
   const [taxonomyDrawerOpen, setTaxonomyDrawerOpen] = useState(false)
   const [selected, setSelected] = useState<TableSummary | undefined>()
   const [yamlTable, setYamlTable] = useState<string | undefined>()
-  const [tableModal, setTableModal] = useState<'create' | 'edit' | undefined>()
+  const [tableModal, setTableModal] = useState<'create' | undefined>()
+  const [tableDrawerOpen, setTableDrawerOpen] = useState(false)
   const [fieldDrawer, setFieldDrawer] = useState<{ mode: 'create' | 'edit'; field?: FieldResponse } | undefined>()
-  const [tableForm] = Form.useForm<TableFormValues>()
+  const handledCreateRequestRef = useRef<string | undefined>()
+  const [createTableForm] = Form.useForm<TableFormValues>()
+  const [editTableForm] = Form.useForm<TableFormValues>()
   const [fieldForm] = Form.useForm<FieldFormValues>()
   const expressionValue = Form.useWatch('expression', fieldForm)
 
@@ -162,21 +218,28 @@ export default function Metadata() {
   const categoryOptions = useMemo(() => categoryLeafOptions(categoriesQuery.data ?? []), [categoriesQuery.data])
   const tagOptions = useMemo(() => activeTagOptions(tagsQuery.data ?? []), [tagsQuery.data])
 
+  const taxonomyTablesQuery = useQuery({
+    queryKey: ['tables', 'taxonomy-tree-all'],
+    queryFn: () => api.tables(),
+  })
+
   const tableQuery = useQuery({
-    queryKey: ['tables', appliedLayer, appliedSearch, appliedCategoryId, appliedIncludeChildren, appliedTagIds, appliedTagMatch],
+    queryKey: ['tables', 'filtered', appliedSearch, appliedCategoryId, appliedTagIds],
     queryFn: () => api.tables({
-      layer: appliedLayer === 'ALL' ? undefined : appliedLayer,
       search: appliedSearch,
       category_id: appliedCategoryId,
-      include_children: appliedCategoryId ? appliedIncludeChildren : undefined,
+      include_children: appliedCategoryId ? true : undefined,
       tag_ids: appliedTagIds.length ? appliedTagIds : undefined,
-      tag_match: appliedTagIds.length ? appliedTagMatch : undefined,
+      tag_match: appliedTagIds.length ? 'all' : undefined,
     }),
   })
 
-  const selectedTable = selected && tableQuery.data?.some((table) => table.id === selected.id)
+  const requestedTable = requestedTableName
+    ? tableQuery.data?.find((item) => item.name === requestedTableName)
+    : undefined
+  const selectedTable = selected
     ? selected
-    : tableQuery.data?.[0]
+    : requestedTable ?? tableQuery.data?.[0]
 
   const detailQuery = useQuery({
     queryKey: ['table', selectedTable?.id],
@@ -230,42 +293,35 @@ export default function Metadata() {
     setSearchState({ applied: appliedSearch, draft: value })
   }
 
-  function handleLayerChange(value: string) {
-    resetSelectedTable()
-    updateUrl({ layer: value === 'ALL' ? undefined : value })
-  }
-
   function handleCategoryChange(value?: string) {
     resetSelectedTable()
-    updateUrl({ category_id: value })
-  }
-
-  function handleIncludeChildrenChange(value: boolean) {
-    resetSelectedTable()
-    updateUrl({ include_children: value ? undefined : 'false' })
+    setSearchState({ applied: '', draft: '' })
+    updateUrl({
+      category_id: value,
+      include_children: undefined,
+      search: undefined,
+      tag_ids: [],
+      tag_match: undefined,
+    })
   }
 
   function handleTagsChange(value: string[]) {
     resetSelectedTable()
-    updateUrl({ tag_ids: value })
-  }
-
-  function handleTagMatchChange(value: 'any' | 'all') {
-    resetSelectedTable()
-    updateUrl({ tag_match: value === 'any' ? undefined : value })
+    updateUrl({ tag_ids: value, tag_match: undefined })
   }
 
   const createTableMutation = useMutation({
     mutationFn: async (values: TableFormValues) => {
+      const normalizedValues = withLayerTag(values, tagsQuery.data ?? [])
       const table = await api.createTable({
-        name: values.name,
-        layer: values.layer,
-        storage_type: values.storage_type,
-        description: values.description,
-        category_id: values.category_id!,
-        tag_ids: values.tag_ids ?? [],
+        name: normalizedValues.name,
+        layer: normalizedValues.layer,
+        storage_type: normalizedValues.storage_type,
+        description: normalizedValues.description,
+        category_id: normalizedValues.category_id!,
+        tag_ids: normalizedValues.tag_ids ?? [],
       })
-      const initialFields = (values.fields ?? []).filter((field) => field.name)
+      const initialFields = (normalizedValues.fields ?? []).filter((field) => field.name)
       for (const field of initialFields) {
         await api.createField({
           table_id: table.id,
@@ -283,7 +339,7 @@ export default function Metadata() {
     onSuccess: (table) => {
       apiMessage.success('表已创建')
       setTableModal(undefined)
-      tableForm.resetFields()
+      createTableForm.resetFields()
       refreshMetadata(table)
     },
     onError: (error) => apiMessage.error(`创建失败: ${(error as Error).message}`),
@@ -291,20 +347,21 @@ export default function Metadata() {
 
   const editTableMutation = useMutation({
     mutationFn: async ({ tableId, values }: { tableId: string; values: TableFormValues }) => {
+      const normalizedValues = withLayerTag(values, tagsQuery.data ?? [])
       await api.updateTable(tableId, {
-        layer: values.layer,
-        storage_type: values.storage_type,
-        description: values.description,
+        layer: normalizedValues.layer,
+        storage_type: normalizedValues.storage_type,
+        description: normalizedValues.description,
       })
       await api.updateTableClassification(tableId, {
-        category_id: values.category_id!,
-        tag_ids: values.tag_ids ?? [],
+        category_id: normalizedValues.category_id!,
+        tag_ids: normalizedValues.tag_ids ?? [],
       })
       return api.table(tableId)
     },
     onSuccess: (table) => {
       apiMessage.success('表信息已更新')
-      setTableModal(undefined)
+      setTableDrawerOpen(false)
       refreshMetadata(table)
       queryClient.invalidateQueries({ queryKey: ['metadata-categories'] })
       queryClient.invalidateQueries({ queryKey: ['metadata-categories-tree'] })
@@ -319,7 +376,7 @@ export default function Metadata() {
       if (payload.passed) {
         apiMessage.success('已保存并同步 YAML')
         setTableModal(undefined)
-        tableForm.resetFields()
+        createTableForm.resetFields()
         queryClient.invalidateQueries({ queryKey: ['tables'] })
       } else {
         apiMessage.warning(`校验未通过: ${JSON.stringify(payload.errors)}`)
@@ -429,22 +486,26 @@ export default function Metadata() {
       },
     ]
 
-  function openCreateTable() {
-    tableForm.resetFields()
-    tableForm.setFieldsValue({
-      layer: 'ODS',
+  const openCreateTable = useCallback(() => {
+    const defaultLayer = 'ODS'
+    const defaultLayerTagId = layerTagId(tagsQuery.data ?? [], defaultLayer)
+    const defaultCategoryId = categoryOptions[0]?.value
+    createTableForm.resetFields()
+    createTableForm.setFieldsValue({
+      layer: defaultLayer,
       storage_type: 'HIVE',
       description: '',
-      category_id: categoryOptions[0]?.value,
-      tag_ids: [],
+      category_id: defaultCategoryId,
+      category_path: categoryPath(categoriesQuery.data ?? [], defaultCategoryId),
+      tag_ids: defaultLayerTagId ? [defaultLayerTagId] : [],
       fields: [{ data_type: 'STRING', nullable: true, partition: false }],
     })
     setTableModal('create')
-  }
+  }, [categoriesQuery.data, categoryOptions, createTableForm, tagsQuery.data])
 
   function openEditTable() {
     if (!detailQuery.data) return
-    tableForm.setFieldsValue({
+    editTableForm.setFieldsValue({
       name: detailQuery.data.name,
       layer: detailQuery.data.layer,
       storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
@@ -452,28 +513,30 @@ export default function Metadata() {
       tag_ids: detailQuery.data.tags?.map((tag) => tag.id) ?? [],
       description: detailQuery.data.description,
     })
-    setTableModal('edit')
+    setTableDrawerOpen(true)
   }
 
   function submitTable(saveAndExport: boolean) {
-    tableForm.validateFields().then((values) => {
-      if (tableModal === 'edit') {
+    const activeForm = tableDrawerOpen ? editTableForm : createTableForm
+    activeForm.validateFields().then((values) => {
+      if (tableDrawerOpen) {
         if (!detailQuery.data) return
         editTableMutation.mutate({ tableId: detailQuery.data.id, values })
         return
       }
       if (saveAndExport) {
+        const normalizedValues = withLayerTag(values, tagsQuery.data ?? [])
         schemaApplyMutation.mutate({
           diff: [
             {
               operation: 'ADD_TABLE',
-              table: values.name,
-              layer: values.layer,
-              storage_type: values.storage_type,
-              description: values.description,
-              category_id: values.category_id,
-              tag_ids: values.tag_ids ?? [],
-              fields: (values.fields ?? [])
+              table: normalizedValues.name,
+              layer: normalizedValues.layer,
+              storage_type: normalizedValues.storage_type,
+              description: normalizedValues.description,
+              category_id: normalizedValues.category_id,
+              tag_ids: normalizedValues.tag_ids ?? [],
+              fields: (normalizedValues.fields ?? [])
                 .filter((field) => field.name)
                 .map((field) => ({
                   name: field.name,
@@ -550,49 +613,73 @@ export default function Metadata() {
     }
   }
 
-  function openCreateDownstreamTable() {
+  const openCreateDownstreamTable = useCallback(() => {
     if (!detailQuery.data) return
-    tableForm.resetFields()
-    tableForm.setFieldsValue({
+    createTableForm.resetFields()
+    createTableForm.setFieldsValue({
       name: `${detailQuery.data.name}_downstream`,
       layer: detailQuery.data.layer,
       storage_type: detailQuery.data.storage_type as CreateTablePayload['storage_type'],
       category_id: detailQuery.data.category?.id ?? categoryOptions[0]?.value,
+      category_path: categoryPath(categoriesQuery.data ?? [], detailQuery.data.category?.id ?? categoryOptions[0]?.value),
       tag_ids: detailQuery.data.tags?.map((tag) => tag.id) ?? [],
       description: `下游表，来源: ${detailQuery.data.name}`,
       fields: [{ data_type: 'STRING', nullable: true, partition: false, description: `来自 ${detailQuery.data.name}` }],
     })
     setTableModal('create')
-  }
+  }, [categoriesQuery.data, categoryOptions, createTableForm, detailQuery.data])
+
+  useEffect(() => {
+    if (!shouldCreateTable) return
+    if (handledCreateRequestRef.current === 'create-table') return
+    if (!categoryOptions.length) return
+
+    handledCreateRequestRef.current = 'create-table'
+    const handle = window.setTimeout(() => openCreateTable(), 0)
+    return () => window.clearTimeout(handle)
+  }, [categoryOptions.length, openCreateTable, shouldCreateTable])
+
+  useEffect(() => {
+    if (!shouldCreateDownstream || !detailQuery.data) return
+    const requestKey = `create-downstream:${detailQuery.data.name}`
+    if (handledCreateRequestRef.current === requestKey) return
+    if (requestedTableName && detailQuery.data.name !== requestedTableName) return
+
+    handledCreateRequestRef.current = requestKey
+    const handle = window.setTimeout(() => openCreateDownstreamTable(), 0)
+    return () => window.clearTimeout(handle)
+  }, [detailQuery.data, openCreateDownstreamTable, requestedTableName, shouldCreateDownstream])
 
   return (
-    <div className="page-grid">
+    <div className="metadata-page-grid">
       {holder}
-      <section className="panel panel-pad">
+      <section className="panel panel-pad metadata-taxonomy-panel">
         <MetadataTaxonomyPanel
           categories={categoriesQuery.data}
+          tables={taxonomyTablesQuery.data}
           tagGroups={tagsQuery.data}
           selectedCategoryId={appliedCategoryId}
-          includeChildren={appliedIncludeChildren}
+          selectedTableId={selectedTable?.id}
           selectedTagIds={appliedTagIds}
-          tagMatch={appliedTagMatch}
-          layer={appliedLayer}
           search={search}
-          layers={layers}
           onSearchChange={handleSearchChange}
           onSearchSubmit={handleSearchSubmit}
-          onLayerChange={handleLayerChange}
           onCategoryChange={handleCategoryChange}
-          onIncludeChildrenChange={handleIncludeChildrenChange}
+          onTableSelect={setSelected}
           onTagsChange={handleTagsChange}
-          onTagMatchChange={handleTagMatchChange}
+          onCreateTable={openCreateTable}
           onOpenManager={() => setTaxonomyDrawerOpen(true)}
         />
-        <Space className="metadata-left-actions" wrap>
-          <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(undefined)} loading={yamlExportMutation.isPending}>导出 YAML</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateTable}>新建表</Button>
-        </Space>
-        <div className="table-list" style={{ marginTop: 14 }}>
+      </section>
+
+      <section className="panel panel-pad metadata-result-list-panel">
+        <div className="toolbar">
+          <Typography.Title level={4} style={{ margin: 0 }}>查询结果</Typography.Title>
+          <Space className="metadata-left-actions" wrap>
+            <Button icon={<ExportOutlined />} onClick={() => yamlExportMutation.mutate(undefined)} loading={yamlExportMutation.isPending}>导出 YAML</Button>
+          </Space>
+        </div>
+        <div className="table-list">
           {tableQuery.data?.map((table) => (
             <button
               type="button"
@@ -618,15 +705,15 @@ export default function Metadata() {
         </div>
       </section>
 
-      <section className="panel panel-pad">
+      <section className="panel panel-pad metadata-detail-panel">
         {detailQuery.data ? (
           <>
-            <div className="toolbar">
-              <div>
+            <div className="metadata-detail-header">
+              <div className="metadata-detail-title-row">
                 <Typography.Title level={3} style={{ margin: 0 }}>{detailQuery.data.name}</Typography.Title>
                 <Typography.Text className="muted">{detailQuery.data.description}</Typography.Text>
               </div>
-              <Space wrap>
+              <Space className="metadata-detail-action-row" wrap>
                 <Button icon={<EditOutlined />} onClick={openEditTable}>编辑表</Button>
                 <Button icon={<PlusOutlined />} onClick={() => {
                   fieldForm.resetFields()
@@ -646,11 +733,10 @@ export default function Metadata() {
               </Space>
             </div>
             <Descriptions bordered size="small" column={4}>
-              <Descriptions.Item label="层级">{detailQuery.data.layer}</Descriptions.Item>
+              <Descriptions.Item label="层级">{categoryPathLabel(selectedTable?.category ?? detailQuery.data.category)}</Descriptions.Item>
               <Descriptions.Item label="优先级">{detailQuery.data.layer_priority}</Descriptions.Item>
               <Descriptions.Item label="存储">{detailQuery.data.storage_type}</Descriptions.Item>
               <Descriptions.Item label="字段数">{detailQuery.data.fields.length}</Descriptions.Item>
-              <Descriptions.Item label="主分类">{categoryPathLabel(selectedTable?.category ?? detailQuery.data.category)}</Descriptions.Item>
               <Descriptions.Item label="标签">
                 {(selectedTable?.tags ?? detailQuery.data.tags ?? []).length
                   ? (selectedTable?.tags ?? detailQuery.data.tags ?? []).map((tag) => tagLabel(tag)).join('、')
@@ -672,46 +758,49 @@ export default function Metadata() {
       </section>
 
       <Modal
-        title={tableModal === 'edit' ? '编辑表' : '新建表'}
+        title="新建表"
         open={Boolean(tableModal)}
         onCancel={() => setTableModal(undefined)}
         width={760}
         footer={[
           <Button key="cancel" onClick={() => setTableModal(undefined)}>取消</Button>,
-          tableModal === 'create' ? (
-            <Button key="save-export" icon={<SaveOutlined />} onClick={() => submitTable(true)} loading={schemaApplyMutation.isPending}>
-              保存并导出 YAML
-            </Button>
-          ) : null,
+          <Button key="save-export" icon={<SaveOutlined />} onClick={() => submitTable(true)} loading={schemaApplyMutation.isPending}>
+            保存并导出 YAML
+          </Button>,
           <Button
             key="save"
             type="primary"
             onClick={() => submitTable(false)}
-            loading={createTableMutation.isPending || editTableMutation.isPending}
+            loading={createTableMutation.isPending}
           >
-            {tableModal === 'edit' ? '保存分类' : '保存'}
+            保存
           </Button>,
         ]}
       >
-        <Form layout="vertical" form={tableForm}>
-          <Form.Item name="name" label="表名" rules={[{ required: true }]}><Input disabled={tableModal === 'edit'} /></Form.Item>
+        <Form layout="vertical" form={createTableForm}>
+          <Form.Item name="name" label="表名" rules={[{ required: true }]}><Input /></Form.Item>
           <Space style={{ width: '100%' }} align="start">
-            <Form.Item name="layer" label="层级" rules={[{ required: true }]}><Select options={layers.filter((item) => item !== 'ALL').map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
+            <Form.Item name="category_path" label="层级" rules={[{ required: true, message: '请选择层级' }]}>
+              <Cascader
+                options={categoryCascaderOptions(categoriesQuery.data ?? [])}
+                allowClear={false}
+                style={{ width: 260 }}
+                onChange={(value) => createTableForm.setFieldValue('category_id', value.at(-1) as string | undefined)}
+              />
+            </Form.Item>
             <Form.Item name="storage_type" label="存储" rules={[{ required: true }]}><Select options={storageTypes.map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-          <>
-              <Form.Item name="category_id" label="主分类" rules={[{ required: true, message: '请选择主分类' }]}>
-                <Select options={categoryOptions} />
-              </Form.Item>
-              <Form.Item name="tag_ids" label="标签">
-                <Select mode="multiple" allowClear options={tagOptions} />
-              </Form.Item>
-          </>
+          <Form.Item name="category_id" hidden rules={[{ required: true, message: '请选择层级' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="tag_ids" label="标签">
+            <Select mode="multiple" allowClear options={tagOptions} />
+          </Form.Item>
           {tableModal === 'create' ? (
             <Form.List name="fields">
               {(fields, { add, remove }) => (
-                <Space direction="vertical" style={{ width: '100%' }}>
+                <Space orientation="vertical" style={{ width: '100%' }}>
                   <Typography.Text strong>初始字段</Typography.Text>
                   {fields.map((field) => (
                     <Space key={field.key} align="baseline" wrap>
@@ -731,6 +820,36 @@ export default function Metadata() {
         </Form>
       </Modal>
 
+      <Drawer
+        title="编辑表"
+        open={tableDrawerOpen}
+        onClose={() => setTableDrawerOpen(false)}
+        size="large"
+        extra={
+          <Space>
+            <Button onClick={() => setTableDrawerOpen(false)}>取消</Button>
+            <Button type="primary" onClick={() => submitTable(false)} loading={editTableMutation.isPending}>
+              保存分类
+            </Button>
+          </Space>
+        }
+      >
+        <Form layout="vertical" form={editTableForm}>
+          <Form.Item name="name" label="表名" rules={[{ required: true }]}><Input disabled /></Form.Item>
+          <Space style={{ width: '100%' }} align="start">
+            <Form.Item name="layer" label="层级" rules={[{ required: true }]}><Select options={layers.filter((item) => item !== 'ALL').map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
+            <Form.Item name="storage_type" label="存储" rules={[{ required: true }]}><Select options={storageTypes.map((value) => ({ value, label: value }))} style={{ width: 180 }} /></Form.Item>
+          </Space>
+          <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="category_id" label="主分类" rules={[{ required: true, message: '请选择主分类' }]}>
+            <Select options={categoryOptions} />
+          </Form.Item>
+          <Form.Item name="tag_ids" label="标签">
+            <Select mode="multiple" allowClear options={tagOptions} />
+          </Form.Item>
+        </Form>
+      </Drawer>
+
       <MetadataTaxonomyDrawer
         open={taxonomyDrawerOpen}
         categories={categoriesQuery.data}
@@ -742,7 +861,7 @@ export default function Metadata() {
         title={fieldDrawer?.mode === 'edit' ? '编辑字段' : '新建字段'}
         open={Boolean(fieldDrawer)}
         onClose={() => setFieldDrawer(undefined)}
-        width={560}
+        size="large"
         extra={<Button type="primary" onClick={submitField} loading={createFieldMutation.isPending || updateFieldMutation.isPending}>保存</Button>}
       >
         <Form layout="vertical" form={fieldForm}>
@@ -768,7 +887,7 @@ export default function Metadata() {
         </Form>
       </Drawer>
 
-      <Drawer title={`${yamlTable ?? ''} YAML`} open={Boolean(yamlTable)} onClose={() => setYamlTable(undefined)} width={720}>
+      <Drawer title={`${yamlTable ?? ''} YAML`} open={Boolean(yamlTable)} onClose={() => setYamlTable(undefined)} size="large">
         <pre>{yamlQuery.data?.content ?? 'loading...'}</pre>
       </Drawer>
     </div>

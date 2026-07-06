@@ -217,14 +217,21 @@ def seed_table_classification() -> int:
             WITH t, category, existing_category
             WHERE existing_category IS NULL
             MERGE (t)-[:IN_CATEGORY]->(category)
+            RETURN count(DISTINCT t) AS categorized
+            """,
+            table=table_name,
+            category_code=category_code,
+        )
+        run_query(
+            """
+            MATCH (t:Table {name: $table})
             WITH t
             MATCH (tag:MetaTag)
             WHERE tag.code IN $tag_codes
             MERGE (t)-[:TAGGED_WITH]->(tag)
-            RETURN count(DISTINCT t) AS classified
+            RETURN count(DISTINCT t) AS tagged
             """,
             table=table_name,
-            category_code=category_code,
             tag_codes=tag_codes,
         )
         rows = run_query(

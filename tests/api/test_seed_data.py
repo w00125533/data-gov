@@ -42,6 +42,20 @@ def test_layer_priority_complete():
     assert LAYER_PRIORITY == {"ODS": 1, "DWD": 2, "DWS": 3, "ADS": 4, "EVAL": 5}
 
 
+def test_layer_tags_are_generic_tags():
+    layer_group = next(group for group in DEFAULT_TAG_GROUPS if group["code"] == "table-layer")
+
+    assert layer_group["name"] == "表层级"
+    assert [tag["name"] for tag in layer_group["tags"]] == ["ODS", "DWD", "DWS", "ADS", "EVAL"]
+    assert [tag["code"] for tag in layer_group["tags"]] == [
+        "layer.ods",
+        "layer.dwd",
+        "layer.dws",
+        "layer.ads",
+        "layer.eval",
+    ]
+
+
 def test_default_category_tree_matches_approved_design():
     tree = {root["name"]: [child["name"] for child in root["children"]] for root in DEFAULT_CATEGORY_TREE}
     assert tree == {
@@ -66,6 +80,7 @@ def test_table_classification_covers_all_seed_tables():
         assert classification["category_path"]
         assert len(classification["category_path"]) == 2, table_name
         assert classification["tags"], table_name
+        assert table_name.split("_", 1)[0].upper() in classification["tags"], table_name
         assert classification["category_code"], table_name
         assert classification["tag_codes"], table_name
         assert len(classification["tags"]) == len(classification["tag_codes"]), table_name
@@ -97,3 +112,19 @@ def test_table_classification_references_known_categories_and_tags():
         assert set(classification["tags"]).issubset(tag_names)
         assert classification["category_code"] in category_codes
         assert set(classification["tag_codes"]).issubset(explicit_tag_codes)
+
+
+def test_network_coverage_tag_matches_network_coverage_category_seed_tables():
+    filtered = {
+        table_name
+        for table_name, classification in TABLE_CLASSIFICATION.items()
+        if classification["category_code"].startswith("network.")
+        and "network.coverage" in classification["tag_codes"]
+    }
+    network_coverage_tables = {
+        table_name
+        for table_name, classification in TABLE_CLASSIFICATION.items()
+        if classification["category_code"] == "network.coverage"
+    }
+
+    assert filtered == network_coverage_tables

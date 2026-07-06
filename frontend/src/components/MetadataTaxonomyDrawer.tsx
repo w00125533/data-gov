@@ -203,7 +203,7 @@ export default function MetadataTaxonomyDrawer({
       title="分类与标签管理"
       open={open}
       onClose={onClose}
-      width={640}
+      size="large"
       extra={<Button onClick={onClose}>关闭</Button>}
     >
       {holder}
