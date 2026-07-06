@@ -42,6 +42,22 @@ def _tag_id(code: str) -> str:
     return f"tag:{_tag_code(code)}"
 
 
+def _category_path_code_map() -> dict[tuple[str, str], str]:
+    return {
+        (root["name"], child["name"]): child["code"]
+        for root in DEFAULT_CATEGORY_TREE
+        for child in root["children"]
+    }
+
+
+def _tag_name_code_map() -> dict[str, str]:
+    return {
+        tag["name"]: _tag_code(tag["code"])
+        for group in DEFAULT_TAG_GROUPS
+        for tag in group["tags"]
+    }
+
+
 def seed_taxonomy() -> tuple[int, int, int]:
     category_count = 0
     group_count = 0
@@ -207,29 +223,31 @@ def seed_lineage() -> int:
 
 def seed_table_classification() -> int:
     classified_count = 0
+    category_codes_by_path = _category_path_code_map()
+    tag_codes_by_name = _tag_name_code_map()
     for table_name, classification in TABLE_CLASSIFICATION.items():
-        root_name, child_name = classification["category_path"]
+        category_code = category_codes_by_path[tuple(classification["category_path"])]
+        tag_codes = [tag_codes_by_name[tag_name] for tag_name in classification["tags"]]
         run_query(
             """
             MATCH (t:Table {name: $table})
-            MATCH (:MetaCategory {name: $root_name})-[:HAS_CHILD]->(category:MetaCategory {name: $child_name})
+            MATCH (category:MetaCategory {code: $category_code})
             OPTIONAL MATCH (t)-[old:IN_CATEGORY]->(:MetaCategory)
             DELETE old
             MERGE (t)-[:IN_CATEGORY]->(category)
             """,
             table=table_name,
-            root_name=root_name,
-            child_name=child_name,
+            category_code=category_code,
         )
-        for tag_name in classification["tags"]:
+        for tag_code in tag_codes:
             run_query(
                 """
                 MATCH (t:Table {name: $table})
-                MATCH (tag:MetaTag {name: $tag_name})
+                MATCH (tag:MetaTag {code: $tag_code})
                 MERGE (t)-[:TAGGED_WITH]->(tag)
                 """,
                 table=table_name,
-                tag_name=tag_name,
+                tag_code=tag_code,
             )
         classified_count += 1
     return classified_count

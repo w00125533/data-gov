@@ -1,6 +1,11 @@
 from tests.api.init_scripts_import import load_script_module
 
 
+def _seed_script_source() -> str:
+    module = load_script_module("06_neo4j_seed.py")
+    return module.__loader__.get_source(module.__name__)
+
+
 def test_neo4j_init_contains_taxonomy_constraints():
     module = load_script_module("05_neo4j_init.py")
     statements = "\n".join(module.CONSTRAINTS + module.INDEXES)
@@ -22,3 +27,14 @@ def test_seed_script_has_taxonomy_seed_function():
     module = load_script_module("06_neo4j_seed.py")
     assert hasattr(module, "seed_taxonomy")
     assert hasattr(module, "seed_table_classification")
+
+
+def test_table_classification_matches_taxonomy_by_code():
+    source = _seed_script_source()
+    assert "category_code" in source
+    assert "tag_codes" in source
+    assert "MetaCategory {code: $category_code}" in source
+    assert "MetaTag {code: $tag_code}" in source
+    assert "MetaCategory {name: $root_name}" not in source
+    assert "MetaCategory {name: $child_name}" not in source
+    assert "MetaTag {name: $tag_name}" not in source
