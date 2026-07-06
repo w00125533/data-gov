@@ -14,6 +14,207 @@ from __future__ import annotations
 LAYER_PRIORITY = {"ODS": 1, "DWD": 2, "DWS": 3, "ADS": 4, "EVAL": 5}
 
 
+DEFAULT_CATEGORY_TREE: list[dict] = [
+    {
+        "code": "environment",
+        "name": "环境",
+        "children": [
+            {"code": "environment.geo", "name": "地理"},
+            {"code": "environment.scenario", "name": "场景"},
+            {"code": "environment.weather", "name": "天气"},
+            {"code": "environment.machine-room", "name": "机房"},
+        ],
+    },
+    {
+        "code": "equipment",
+        "name": "设备",
+        "children": [
+            {"code": "equipment.fronthaul", "name": "前传"},
+            {"code": "equipment.clock", "name": "时钟"},
+            {"code": "equipment.backhaul", "name": "回传"},
+            {"code": "equipment.antenna-feeder", "name": "天馈"},
+            {"code": "equipment.power", "name": "电源"},
+            {"code": "equipment.rf", "name": "射频"},
+            {"code": "equipment.bbu", "name": "BBU"},
+        ],
+    },
+    {
+        "code": "network",
+        "name": "网络",
+        "children": [
+            {"code": "network.coverage", "name": "覆盖"},
+            {"code": "network.interference", "name": "干扰"},
+            {"code": "network.traffic", "name": "话务"},
+            {"code": "network.capacity", "name": "容量"},
+            {"code": "network.rate", "name": "速率"},
+            {"code": "network.latency", "name": "时延"},
+            {"code": "network.quality", "name": "质量"},
+            {"code": "network.access", "name": "接入"},
+            {"code": "network.retain", "name": "保持"},
+            {"code": "network.mobility", "name": "移动"},
+            {"code": "network.packet-loss", "name": "丢包"},
+            {"code": "network.energy", "name": "能耗"},
+        ],
+    },
+    {
+        "code": "user",
+        "name": "用户",
+        "children": [
+            {"code": "user.identity", "name": "标识信息"},
+            {"code": "user.terminal", "name": "终端信息"},
+            {"code": "user.plan", "name": "套餐信息"},
+            {"code": "user.location", "name": "位置信息"},
+            {"code": "user.service", "name": "业务信息"},
+            {"code": "user.activity", "name": "活动信息"},
+        ],
+    },
+    {
+        "code": "business",
+        "name": "业务",
+        "children": [
+            {"code": "business.live", "name": "直播"},
+            {"code": "business.video", "name": "视频"},
+            {"code": "business.game", "name": "游戏"},
+            {"code": "business.web", "name": "网页"},
+            {"code": "business.scan", "name": "扫码"},
+            {"code": "business.upload-download", "name": "上传下载"},
+            {"code": "business.im", "name": "即时通信"},
+            {"code": "business.production", "name": "生产"},
+            {"code": "business.mobile-ai", "name": "Mobile AI"},
+        ],
+    },
+    {
+        "code": "source-data",
+        "name": "源数据",
+        "children": [
+            {"code": "source-data.counter", "name": "话统"},
+            {"code": "source-data.chr", "name": "CHR"},
+            {"code": "source-data.config", "name": "配置"},
+            {"code": "source-data.engineering", "name": "工参"},
+            {"code": "source-data.map", "name": "电子地图"},
+        ],
+    },
+]
+
+
+DEFAULT_TAG_GROUPS: list[dict] = [
+    {
+        "code": "source",
+        "name": "来源类型",
+        "tags": [
+            {"code": "source.counter", "name": "话统"},
+            {"code": "source.chr", "name": "CHR"},
+            {"code": "source.config", "name": "配置"},
+            {"code": "source.engineering", "name": "工参"},
+            {"code": "source.map", "name": "电子地图"},
+        ],
+    },
+    {
+        "code": "network-domain",
+        "name": "网络域",
+        "tags": [
+            {"code": "network.coverage", "name": "覆盖"},
+            {"code": "network.interference", "name": "干扰"},
+            {"code": "network.traffic", "name": "话务"},
+            {"code": "network.capacity", "name": "容量"},
+            {"code": "network.rate", "name": "速率"},
+            {"code": "network.latency", "name": "时延"},
+            {"code": "network.quality", "name": "质量"},
+            {"code": "network.access", "name": "接入"},
+            {"code": "network.retain", "name": "保持"},
+            {"code": "network.mobility", "name": "移动"},
+            {"code": "network.packet-loss", "name": "丢包"},
+            {"code": "network.energy", "name": "能耗"},
+        ],
+    },
+    {
+        "code": "equipment-domain",
+        "name": "设备域",
+        "tags": [
+            {"code": "equipment.fronthaul", "name": "前传"},
+            {"code": "equipment.clock", "name": "时钟"},
+            {"code": "equipment.backhaul", "name": "回传"},
+            {"code": "equipment.antenna-feeder", "name": "天馈"},
+            {"code": "equipment.power", "name": "电源"},
+            {"code": "equipment.rf", "name": "射频"},
+            {"code": "equipment.bbu", "name": "BBU"},
+            {"code": "equipment.machine-room", "name": "机房"},
+        ],
+    },
+    {
+        "code": "user-domain",
+        "name": "用户域",
+        "tags": [
+            {"code": "user.identity", "name": "标识信息"},
+            {"code": "user.terminal", "name": "终端信息"},
+            {"code": "user.plan", "name": "套餐信息"},
+            {"code": "user.location", "name": "位置信息"},
+            {"code": "user.service", "name": "业务信息"},
+            {"code": "user.activity", "name": "活动信息"},
+        ],
+    },
+    {
+        "code": "business-domain",
+        "name": "业务域",
+        "tags": [
+            {"code": "business.live", "name": "直播"},
+            {"code": "business.video", "name": "视频"},
+            {"code": "business.game", "name": "游戏"},
+            {"code": "business.web", "name": "网页"},
+            {"code": "business.scan", "name": "扫码"},
+            {"code": "business.upload-download", "name": "上传下载"},
+            {"code": "business.im", "name": "即时通信"},
+            {"code": "business.production", "name": "生产"},
+            {"code": "business.mobile-ai", "name": "Mobile AI"},
+        ],
+    },
+]
+
+
+TABLE_CLASSIFICATION: dict[str, dict] = {
+    "ods_ue_signal": {
+        "category_path": ["源数据", "CHR"],
+        "tags": ["覆盖", "质量", "射频", "标识信息"],
+    },
+    "ods_gnb_alarm": {
+        "category_path": ["源数据", "配置"],
+        "tags": ["BBU", "电源", "机房", "质量"],
+    },
+    "dwd_session_qos": {
+        "category_path": ["网络", "质量"],
+        "tags": ["速率", "时延", "丢包", "保持", "标识信息"],
+    },
+    "dwd_ho_event": {
+        "category_path": ["网络", "移动"],
+        "tags": ["保持", "接入", "质量", "标识信息"],
+    },
+    "dws_cell_hourly": {
+        "category_path": ["网络", "覆盖"],
+        "tags": ["话务", "速率", "保持", "质量"],
+    },
+    "dws_area_traffic": {
+        "category_path": ["网络", "话务"],
+        "tags": ["容量", "速率", "时延", "活动信息"],
+    },
+    "ads_cell_profile": {
+        "category_path": ["网络", "覆盖"],
+        "tags": ["容量", "质量", "射频"],
+    },
+    "ads_neighbor_pair": {
+        "category_path": ["网络", "移动"],
+        "tags": ["保持", "质量", "工参"],
+    },
+    "eval_user_score": {
+        "category_path": ["用户", "业务信息"],
+        "tags": ["覆盖", "移动", "业务信息", "活动信息"],
+    },
+    "eval_net_health": {
+        "category_path": ["网络", "质量"],
+        "tags": ["覆盖", "话务", "机房", "业务信息"],
+    },
+}
+
+
 SEED_TABLES: list[dict] = [
     # ---- L1 ODS ----
     {
